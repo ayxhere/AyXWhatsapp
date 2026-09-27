@@ -820,7 +820,8 @@ fun GatewayApp() {
                 },
                 navigationIcon = {
                     if (openChat != null || screen == "settings" || screen == "newchat" || screen == "profile")
-                        IconButton(onClick = { if (openChat != null) openChat = null else screen = "chats" }) {
+                        IconButton(onClick = { if (openChat != null) openChat = null else screen = "chats" },
+                            modifier = Modifier.padding(start = 6.dp).clip(CircleShape).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, "back")
                         }
                     else if (status.registered && myJid != null)
@@ -831,16 +832,20 @@ fun GatewayApp() {
                         if (searchMode) {
                             IconButton(onClick = { searchMode = false; searchQuery = "" }) { Icon(Icons.Filled.Close, "close") }
                         } else {
-                            IconButton(onClick = { searchMode = true }) { Icon(Icons.Filled.Search, "search") }
-                            IconButton(onClick = { screen = "settings" }) { Icon(Icons.Filled.Settings, "settings") }
+                            Row(Modifier.padding(end = 4.dp).clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))) {
+                                IconButton(onClick = { searchMode = true }) { Icon(Icons.Filled.Search, "search") }
+                                IconButton(onClick = { screen = "settings" }) { Icon(Icons.Filled.Settings, "settings") }
+                            }
                         }
                     }
                     if (openChat != null) {
                         var menu by remember { mutableStateOf(false) }
                         val ocb = openChat
                         val isBlocked = ocb != null && ocb in blockedJids
-                        IconButton(onClick = { showSetName = true }) { Icon(Icons.Filled.Edit, "set name") }
-                        IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "menu") }
+                        Row(Modifier.padding(end = 4.dp).clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))) {
+                            IconButton(onClick = { showSetName = true }) { Icon(Icons.Filled.Edit, "set name") }
+                            IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "menu") }
+                        }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                             DropdownMenuItem(text = { Text("Change wallpaper") }, onClick = { menu = false; chatWallpaperPicker.launch("image/*") })
                             if (!isBlocked) DropdownMenuItem(text = { Text("Block contact") }, onClick = {

@@ -17,6 +17,7 @@ const {
   DisconnectReason,
   Browsers,
   downloadMediaMessage,
+  downloadContentFromMessage,
 } = require('@whiskeysockets/baileys')
 
 const PORT = parseInt(process.env.WAGW_PORT || '8765', 10)
@@ -137,9 +138,43 @@ async function loadAuth() {
   log('auth loaded from', AUTH_DIR, 'registered=', status.registered)
 }
 
+// last-resort: dig through nested message objects for any readable text field
+function deepText(obj, depth) {
+  if (!obj || typeof obj !== 'object' || depth > 6) return ''
+  const keys = ['conversation', 'text', 'caption', 'hydratedContentText', 'contentText', 'selectedDisplayText', 'displayText', 'title', 'description']
+  for (const k of keys) if (typeof obj[k] === 'string' && obj[k].trim()) return obj[k].trim()
+  for (const k of Object.keys(obj)) {
+    if (k === 'contextInfo' || k === 'key' || k === 'jpegThumbnail') continue
+    const v = obj[k]
+    if (v && typeof v === 'object') { const r = deepText(v, depth + 1); if (r) return r }
+  }
+  return ''
+}
+
+// CTA / quick-reply / url button labels from business (interactive/template/buttons) messages
+function buttonLines(m) {
+  const out = []
+  try {
+    const nf = m.interactiveMessage?.nativeFlowMessage?.buttons
+    if (Array.isArray(nf)) for (const b of nf) {
+      try { const p = JSON.parse(b.buttonParamsJson || '{}'); if (p.display_text) out.push('🔗 ' + p.display_text + (p.url ? ' → ' + p.url : '')) }
+      catch (_) { if (b.name) out.push('🔗 ' + b.name) }
+    }
+    const hb = m.templateMessage?.hydratedTemplate?.hydratedButtons || m.templateMessage?.hydratedFourRowTemplate?.hydratedButtons
+    if (Array.isArray(hb)) for (const b of hb) {
+      if (b.urlButton) out.push('🔗 ' + (b.urlButton.displayText || 'Open') + (b.urlButton.url ? ' → ' + b.urlButton.url : ''))
+      else if (b.callButton) out.push('📞 ' + (b.callButton.displayText || b.callButton.phoneNumber || ''))
+      else if (b.quickReplyButton) out.push('• ' + (b.quickReplyButton.displayText || ''))
+    }
+    const bb = m.buttonsMessage?.buttons
+    if (Array.isArray(bb)) for (const b of bb) { const t = b.buttonText?.displayText; if (t) out.push('• ' + t) }
+  } catch (_) {}
+  return out
+}
+
 function extractText(m) {
   if (!m) return ''
-  return m.conversation
+  let base = m.conversation
     || m.extendedTextMessage?.text
     || m.imageMessage?.caption
     || m.videoMessage?.caption
@@ -164,6 +199,17 @@ function extractText(m) {
     || m.pollCreationMessage?.name
     || m.eventMessage?.name
     || ''
+  // business/interactive messages: body may be nested deeper — dig for it
+  if (!base) base = deepText(m, 0)
+  const footer = m.interactiveMessage?.footer?.text
+    || m.templateMessage?.hydratedTemplate?.hydratedFooterText
+    || m.templateMessage?.hydratedFourRowTemplate?.hydratedFooterText
+    || m.buttonsMessage?.footerText || ''
+  const btns = buttonLines(m)
+  let full = base
+  if (footer && footer.trim() && footer.trim() !== base) full += (full ? '\n' : '') + footer.trim()
+  if (btns.length) full += (full ? '\n' : '') + btns.join('\n')
+  return full
 }
 
 function resolveName(msg, jid) {
@@ -310,16 +356,33 @@ function captureDelete(delId) {
   }
 }
 
-function mediaKind(m) {
-  if (m.imageMessage) return ['image', m.imageMessage, 'jpg']
-  if (m.videoMessage) return ['video', m.videoMessage, 'mp4']
-  if (m.audioMessage) return ['audio', m.audioMessage, 'ogg']
-  if (m.stickerMessage) return ['sticker', m.stickerMessage, 'webp']
-  if (m.documentMessage) {
-    const fn = m.documentMessage.fileName || ''
+function pickMedia(node) {
+  if (!node) return null
+  if (node.imageMessage) return ['image', node.imageMessage, 'jpg']
+  if (node.videoMessage) return ['video', node.videoMessage, 'mp4']
+  if (node.audioMessage) return ['audio', node.audioMessage, 'ogg']
+  if (node.stickerMessage) return ['sticker', node.stickerMessage, 'webp']
+  if (node.documentMessage) {
+    const fn = node.documentMessage.fileName || ''
     const ext = fn.includes('.') ? fn.split('.').pop() : 'bin'
-    return ['document', m.documentMessage, ext]
+    return ['document', node.documentMessage, ext]
   }
+  return null
+}
+
+function mediaKind(m) {
+  const direct = pickMedia(m)
+  if (direct) return direct
+  // business/interactive/template/buttons header media is nested
+  const cands = [
+    m.interactiveMessage?.header,
+    m.templateMessage?.hydratedTemplate,
+    m.templateMessage?.hydratedFourRowTemplate,
+    m.templateMessage?.fourRowTemplate,
+    m.buttonsMessage,
+  ]
+  for (const c of cands) { const r = pickMedia(c); if (r) return r }
+  if (m.productMessage?.product?.productImage) return ['image', m.productMessage.product.productImage, 'jpg']
   return null
 }
 
@@ -359,7 +422,18 @@ async function enrichMedia(msg, entry) {
   if (!entry.text) entry.text = caption
   if (settings.saveMedia || type === 'image' || type === 'video' || type === 'sticker') {
     try {
-      const buf = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage })
+      // top-level media downloads via downloadMediaMessage; nested business-header
+      // media (interactive/template/buttons) must download the node directly.
+      const topLevel = !!pickMedia(msg.message)
+      let buf
+      if (topLevel) {
+        buf = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage })
+      } else {
+        const stream = await downloadContentFromMessage(node, type)
+        const chunks = []
+        for await (const ch of stream) chunks.push(ch)
+        buf = Buffer.concat(chunks)
+      }
       fs.mkdirSync(MEDIA_DIR, { recursive: true })
       fs.writeFileSync(path.join(MEDIA_DIR, name), buf)
       entry.media.saved = true
