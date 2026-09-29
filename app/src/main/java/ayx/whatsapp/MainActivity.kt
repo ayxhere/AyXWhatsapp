@@ -26,6 +26,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -821,11 +822,10 @@ fun GatewayApp() {
             }
         },
         topBar = {
-            // chat header uses adjustable frost (Chat header blur setting); other screens blend flat with the status bar
-            val headerBg = if (openChat != null) MaterialTheme.colorScheme.surface.copy(alpha = ChatStyle.headerAlpha())
-                           else MaterialTheme.colorScheme.surface
+            // Chat screen renders edge-to-edge with its own floating glass header, so the shared app bar is drawn only off-chat.
+            if (openChat == null) {
             CenterAlignedTopAppBar(
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = headerBg),
+                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
                 title = {
                     if (searchMode && openChat == null && screen == "chats") {
                         OutlinedTextField(searchQuery, { searchQuery = it }, placeholder = { Text("Search chats") },
@@ -899,37 +899,57 @@ fun GatewayApp() {
                     }
                 }
             )
+            }
         }
     ) { pad ->
+        Box(Modifier.fillMaxSize()) {
+        if (openChat != null && status.registered) {
+            // ===== Edge-to-edge chat: wallpaper + messages full-bleed, floating glass header on top =====
+            val ocChat = openChat!!
+            ChatDetail(
+                chat = ocChat,
+                messages = messages.filter { it.chat == ocChat },
+                optimistic = optimistic.filter { it.chat == ocChat },
+                canSend = status.connection == "open",
+                onSend = { text ->
+                    optimistic.add(OptMsg(ocChat, text, System.currentTimeMillis()))
+                    scope.launch { try { GatewayClient.sendToJid(ocChat, text) } catch (e: Exception) { notify("send error: ${e.message}") } }
+                },
+                onMedia = { openMedia(it) },
+                onShare = { shareMedia(scope, ctx, it) { s -> notify(s) } },
+                onDownload = { downloadMedia(scope, ctx, it) { s -> notify(s) } },
+                onReact = { m, e -> scope.launch { m.id?.let { GatewayClient.react(m.chat, it, e, m.fromMe) } } },
+                onDeleteMsg = { m, everyone -> scope.launch { GatewayClient.deleteMessage(m.chat, m.id, m.text, m.ts, everyone, m.fromMe); messages = GatewayClient.getMessages() } },
+                onAttach = { picker.launch("*/*") },
+                onCamera = { openCamera() },
+                onReplySend = { text, qid, qtext ->
+                    optimistic.add(OptMsg(ocChat, text, System.currentTimeMillis(), qtext))
+                    scope.launch { try { GatewayClient.sendReply(ocChat, text, qid) } catch (e: Exception) { notify("send error: ${e.message}") } }
+                },
+                previewCache = previewCache,
+                dpCache = dpCache,
+                wallpaper = chatWp,
+                headerInset = 96.dp
+            )
+            val ocBlocked = ocChat in blockedJids
+            ChatGlassHeader(
+                jid = ocChat,
+                name = title,
+                presence = chatPresence,
+                dpCache = dpCache,
+                isBlocked = ocBlocked,
+                onBack = { openChat = null },
+                onEdit = { showSetName = true },
+                onWallpaper = { chatWallpaperPicker.launch("image/*") },
+                onBlock = { scope.launch { runCatching { GatewayClient.blockChat(ocChat, true) }.onSuccess { notify("blocked"); blockedJids = blockedJids + ocChat; blkPrefs.edit().putStringSet("blocked", blockedJids).apply() }.onFailure { notify("failed: ${it.message}") } } },
+                onUnblock = { scope.launch { runCatching { GatewayClient.blockChat(ocChat, false) }.onSuccess { notify("unblocked"); blockedJids = blockedJids - ocChat; blkPrefs.edit().putStringSet("blocked", blockedJids).apply() }.onFailure { notify("failed: ${it.message}") } } }
+            )
+        } else {
         Box(Modifier.fillMaxSize().padding(pad).consumeWindowInsets(pad)) {
             when {
                 !status.registered -> LinkScreen(qr, status.pairingCode,
                     onPair = { n -> scope.launch { try { notify("code: " + GatewayClient.pair(n)) } catch (e: Exception) { notify("pair error: ${e.message}") } } },
                     onReset = { scope.launch { GatewayClient.logout(); notify("reset") } })
-                openChat != null -> ChatDetail(
-                    chat = openChat!!,
-                    messages = messages.filter { it.chat == openChat },
-                    optimistic = optimistic.filter { it.chat == openChat },
-                    canSend = status.connection == "open",
-                    onSend = { text ->
-                        optimistic.add(OptMsg(openChat!!, text, System.currentTimeMillis()))
-                        scope.launch { try { GatewayClient.sendToJid(openChat!!, text) } catch (e: Exception) { notify("send error: ${e.message}") } }
-                    },
-                    onMedia = { openMedia(it) },
-                    onShare = { shareMedia(scope, ctx, it) { s -> notify(s) } },
-                    onDownload = { downloadMedia(scope, ctx, it) { s -> notify(s) } },
-                    onReact = { m, e -> scope.launch { m.id?.let { GatewayClient.react(m.chat, it, e, m.fromMe) } } },
-                    onDeleteMsg = { m, everyone -> scope.launch { GatewayClient.deleteMessage(m.chat, m.id, m.text, m.ts, everyone, m.fromMe); messages = GatewayClient.getMessages() } },
-                    onAttach = { picker.launch("*/*") },
-                    onCamera = { openCamera() },
-                    onReplySend = { text, qid, qtext ->
-                        optimistic.add(OptMsg(openChat!!, text, System.currentTimeMillis(), qtext))
-                        scope.launch { try { GatewayClient.sendReply(openChat!!, text, qid) } catch (e: Exception) { notify("send error: ${e.message}") } }
-                    },
-                    previewCache = previewCache,
-                    dpCache = dpCache,
-                    wallpaper = chatWp
-                )
                 screen == "settings" -> SettingsScreen(status, settings, page = settingsPage, onPage = { settingsPage = it }, wallpaperVersion = wallpaperVersion,
                     onToggle = { patch -> scope.launch { settings = GatewayClient.patchSettings(patch) } },
                     onRules = { r -> scope.launch { settings = GatewayClient.setRules(r) } },
@@ -958,6 +978,9 @@ fun GatewayApp() {
                         } else openChat = jid
                     })
             }
+        }
+        }
+            // ===== shared overlays: shown on every screen, including the edge-to-edge chat =====
             toast?.let {
                 Surface(color = MaterialTheme.colorScheme.inverseSurface, shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 90.dp)) {
@@ -1080,6 +1103,7 @@ private fun ChatDetail(
     previewCache: MutableMap<String, ImageBitmap?>,
     dpCache: MutableMap<String, ImageBitmap?>,
     wallpaper: ImageBitmap?,
+    headerInset: androidx.compose.ui.unit.Dp = 0.dp,
 ) {
     var input by remember { mutableStateOf("") }
     var replyTo by remember { mutableStateOf<GatewayClient.Msg?>(null) }
@@ -1109,8 +1133,10 @@ private fun ChatDetail(
 
     Box(Modifier.fillMaxSize()) {
         wallpaper?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
-        Column(Modifier.fillMaxSize().imePadding()) {
+        // full-bleed column; only bottom (nav bar + keyboard) is inset, top stays under the floating header
+        Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))) {
         LazyColumn(state = listState, reverseLayout = true, modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp),
+            contentPadding = PaddingValues(top = headerInset, bottom = 4.dp),
             verticalArrangement = Arrangement.spacedBy(3.dp)) {
             item { Spacer(Modifier.height(6.dp)) }
             itemsIndexed(rows, key = { i, m -> "${m.ts}-$i" }) { _, m -> Box(Modifier.fillMaxWidth().animateItem()) { MessageBubble(m, previewCache, dpCache, onMedia, onShare, onDownload, onReply = { replyTo = it }) { reactMsg = it } } }
@@ -1140,6 +1166,75 @@ private fun ChatDetail(
                 }
             }, enabled = input.isNotBlank() && canSend) { Icon(Icons.AutoMirrored.Filled.Send, "send") }
         }
+        }
+    }
+}
+
+/**
+ * Floating, rounded, frosted chat header (Gemini / Telegram / ChatGPT style).
+ * Drawn OVER the edge-to-edge chat, so the wallpaper and messages show behind the
+ * translucent glass. The "Chat header blur" setting drives how see-through it is.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ChatGlassHeader(
+    jid: String,
+    name: String,
+    presence: GatewayClient.Presence?,
+    dpCache: MutableMap<String, ImageBitmap?>,
+    isBlocked: Boolean,
+    onBack: () -> Unit,
+    onEdit: () -> Unit,
+    onWallpaper: () -> Unit,
+    onBlock: () -> Unit,
+    onUnblock: () -> Unit,
+) {
+    val dark = isSystemInDarkTheme()
+    val frost = ChatStyle.headerAlpha()                       // 1f = solid, lower = more see-through
+    val pill = MaterialTheme.colorScheme.surface.copy(alpha = frost)
+    val onPill = MaterialTheme.colorScheme.onSurface
+    val borderCol = onPill.copy(alpha = 0.12f)
+    // a faint top sheen makes the translucent pill read like real glass
+    val sheen = Brush.verticalGradient(listOf(Color.White.copy(alpha = if (dark) 0.06f else 0.28f), Color.Transparent))
+    val backShape = CircleShape
+    val pillShape = RoundedCornerShape(26.dp)
+    var menu by remember { mutableStateOf(false) }
+
+    Row(
+        Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        // circular back chip
+        Box(
+            Modifier.size(44.dp).clip(backShape).background(pill).border(1.dp, borderCol, backShape).clickable { onBack() },
+            contentAlignment = Alignment.Center
+        ) {
+            Box(Modifier.matchParentSize().background(sheen))
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, "back", tint = onPill)
+        }
+        // main frosted pill: avatar + name + presence + actions
+        Box(Modifier.weight(1f).clip(pillShape).background(pill).border(1.dp, borderCol, pillShape)) {
+            Box(Modifier.matchParentSize().background(sheen))
+            Row(Modifier.padding(start = 6.dp, end = 2.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                Avatar(jid, name, dpCache, 38.dp, CircleShape)
+                Spacer(Modifier.width(9.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(name, maxLines = 1, fontWeight = FontWeight.Bold, color = onPill,
+                        style = MaterialTheme.typography.titleMedium, modifier = Modifier.basicMarquee())
+                    val sub = presence?.let { pr -> if (pr.online) "online" else if (pr.lastSeen > 0) "last seen " + fmt(pr.lastSeen * 1000) else "" } ?: ""
+                    if (sub.isNotEmpty()) Text(sub, style = MaterialTheme.typography.labelSmall, color = onPill.copy(alpha = 0.7f), maxLines = 1)
+                }
+                IconButton(onClick = onEdit) { Icon(Icons.Filled.Edit, "set name", tint = onPill) }
+                Box {
+                    IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "menu", tint = onPill) }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(text = { Text("Change wallpaper") }, onClick = { menu = false; onWallpaper() })
+                        if (!isBlocked) DropdownMenuItem(text = { Text("Block contact") }, onClick = { menu = false; onBlock() })
+                        else DropdownMenuItem(text = { Text("Unblock contact") }, onClick = { menu = false; onUnblock() })
+                    }
+                }
+            }
         }
     }
 }
