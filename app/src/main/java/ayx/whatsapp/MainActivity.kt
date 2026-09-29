@@ -89,6 +89,21 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.QuestionAnswer
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Wallpaper
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.DoneAll
+import androidx.compose.material.icons.filled.PermMedia
+import androidx.compose.material.icons.filled.RemoveRedEye
+import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
@@ -110,6 +125,11 @@ import androidx.compose.foundation.basicMarquee
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.buildAnnotatedString
@@ -184,9 +204,23 @@ class MainActivity : ComponentActivity() {
 
         StatusData.init(applicationContext)
         SetName.init(applicationContext)
+        ThemeStore.init(applicationContext)
         setContent {
-            val dark = isSystemInDarkTheme()
-            MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
+            val sysDark = isSystemInDarkTheme()
+            val mode = ThemeStore.mode.value
+            val amoled = mode == "amoled"
+            val dark = when (mode) { "light" -> false; "dark", "amoled" -> true; else -> sysDark }
+            val accent = ThemeStore.accentColor()
+            val base = if (dark) darkColorScheme() else lightColorScheme()
+            val scheme = base.copy(
+                primary = accent,
+                secondary = accent,
+                tertiary = accent,
+                background = if (amoled) Color(0xFF000000) else base.background,
+                surface = if (amoled) Color(0xFF0B090D) else base.surface,
+                surfaceVariant = if (amoled) Color(0xFF161318) else base.surfaceVariant,
+            )
+            MaterialTheme(colorScheme = scheme) {
                 val view = LocalView.current
                 val barColor = MaterialTheme.colorScheme.surface
                 SideEffect {
@@ -1232,66 +1266,159 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
     onToggle: (JSONObject) -> Unit, onRules: (List<GatewayClient.Rule>) -> Unit, onLogout: () -> Unit, ctx: Context,
     onPickWallpaper: () -> Unit, onRemoveWallpaper: () -> Unit, onPickPhoto: () -> Unit,
     onSaveName: (String) -> Unit) {
-    var section by remember { mutableStateOf("general") }
-    fun toggle(name: String) { section = if (section == name) "" else name }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        ElevatedCard {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("Engine: " + if (status.reachable) "up" else status.connection)
-                Text("Connection: " + status.connection)
-                Text("Linked: " + if (status.registered) "yes" else "no")
-            }
+    var page by remember { mutableStateOf("home") }
+    AnimatedContent(targetState = page, transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(140)) }, label = "setpage") { p ->
+        when (p) {
+            "general" -> SettingsSubPage("General", null, { page = "home" }) { GeneralSettings(settings, onToggle) }
+            "autoreply" -> SettingsSubPage("Auto-reply", null, { page = "home" }) { AutoReplySection(settings, onToggle, onRules) }
+            "ai" -> SettingsSubPage("AI Assistant", "Powered by Groq AI", { page = "home" }) { AiSettings(settings, onToggle) }
+            "wallpaper" -> SettingsSubPage("Chat Wallpaper", null, { page = "home" }) { WallpaperSettings(ctx, onPickWallpaper, onRemoveWallpaper) }
+            "appearance" -> SettingsSubPage("Appearance", null, { page = "home" }) { AppearanceSettings() }
+            "about" -> SettingsSubPage("About", null, { page = "home" }) { AboutSettings(ctx, onLogout) }
+            else -> SettingsHome(status) { page = it }
         }
+    }
+}
 
-        SectionHeader("General", section == "general") { toggle("general") }
-        AnimatedVisibility(section == "general") {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                ToggleRow("Always online", settings.alwaysOnline) { onToggle(JSONObject().put("alwaysOnline", it)) }
-                ToggleRow("Auto-read messages", settings.autoRead) { onToggle(JSONObject().put("autoRead", it)) }
-                ToggleRow("Save media (photos/videos)", settings.saveMedia) { onToggle(JSONObject().put("saveMedia", it)) }
-                ToggleRow("Hide status view (don't show you saw)", settings.hideStatusRead) { onToggle(JSONObject().put("hideStatusRead", it)) }
-                Text("On = incoming media downloaded (needed for view/play/share + deleted media). Uses storage.", style = MaterialTheme.typography.bodySmall)
-                ToggleRow("Freeze last seen (stay offline)", settings.stayOffline) { onToggle(JSONObject().put("stayOffline", it)) }
-                Text("On = never broadcasts online. (Overrides Always online.)", style = MaterialTheme.typography.bodySmall)
-            }
-        }
+// category accent colors (subtle, per-category)
+private val CAT_GENERAL = Color(0xFFB69DF8)
+private val CAT_AUTOREPLY = Color(0xFFFFB26B)
+private val CAT_AI = Color(0xFF82AAFF)
+private val CAT_WALLPAPER = Color(0xFF4DD0C4)
+private val CAT_APPEARANCE = Color(0xFFFF7EB6)
+private val CAT_ABOUT = Color(0xFF6BA8FF)
+private val OK_GREEN = Color(0xFF4DD07A)
+private val WARN_AMBER = Color(0xFFFFC24D)
+private val ERR_RED = Color(0xFFFF5A5A)
 
-
-        SectionHeader("Chat wallpaper", section == "wallpaper") { toggle("wallpaper") }
-        AnimatedVisibility(section == "wallpaper") {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onPickWallpaper, modifier = Modifier.fillMaxWidth()) { Text("Set wallpaper from gallery") }
-                OutlinedButton(onClick = onRemoveWallpaper, modifier = Modifier.fillMaxWidth()) { Text("Remove wallpaper") }
-                Text("Wallpaper shows behind all chats.", style = MaterialTheme.typography.bodySmall)
-            }
-        }
-
-        SectionHeader("Auto-reply", section == "autoreply") { toggle("autoreply") }
-        AnimatedVisibility(section == "autoreply") {
-            Column { AutoReplySection(settings, onToggle, onRules) }
-        }
-
-        SectionHeader("About", section == "about") { toggle("about") }
-        AnimatedVisibility(section == "about") {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(APP_NAME, style = MaterialTheme.typography.bodyMedium)
-                Text("Runs locally on your device. No data is collected. AI reply (if enabled) sends message text only to the API you configure.", style = MaterialTheme.typography.bodySmall)
-            }
-        }
-
+@Composable
+private fun SettingsHome(status: GatewayClient.Status, onOpen: (String) -> Unit) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Spacer(Modifier.height(4.dp))
-        OutlinedButton(onClick = onLogout, modifier = Modifier.fillMaxWidth()) { Text("Unlink / reset") }
+        StatusCard(status)
+        Spacer(Modifier.height(2.dp))
+        CategoryCard(Icons.Filled.Tune, CAT_GENERAL, "General", "Online, privacy and messages") { onOpen("general") }
+        CategoryCard(Icons.Filled.QuestionAnswer, CAT_AUTOREPLY, "Auto-reply", "Keyword rules and automatic replies") { onOpen("autoreply") }
+        CategoryCard(Icons.Filled.AutoAwesome, CAT_AI, "AI Assistant", "AI replies, groups and language") { onOpen("ai") }
+        CategoryCard(Icons.Filled.Wallpaper, CAT_WALLPAPER, "Chat Wallpaper", "Customize your chat background") { onOpen("wallpaper") }
+        CategoryCard(Icons.Filled.Palette, CAT_APPEARANCE, "Appearance", "Theme and accent color") { onOpen("appearance") }
+        CategoryCard(Icons.Filled.Info, CAT_ABOUT, "About", "App information and reset") { onOpen("about") }
+        Spacer(Modifier.height(16.dp))
     }
 }
 
 @Composable
-private fun SectionHeader(title: String, expanded: Boolean, onClick: () -> Unit) {
-    Surface(onClick = onClick, color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.padding(horizontal = 16.dp, vertical = 14.dp).fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Icon(if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, null)
+private fun StatusCard(status: GatewayClient.Status) {
+    val connected = status.registered && status.connection == "open"
+    val dot = when { connected -> OK_GREEN; status.connection == "connecting" -> WARN_AMBER; else -> ERR_RED }
+    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f), modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            PulseDot(dot)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(if (connected) "Connected" else if (status.registered) "Reconnecting…" else "Not linked", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
+                Text("Engine " + (if (status.reachable) "up" else "down") + " · " + status.connection + " · linked " + (if (status.registered) "yes" else "no"),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
+    }
+}
+
+@Composable
+private fun PulseDot(color: Color) {
+    val t = rememberInfiniteTransition(label = "dot")
+    val a by t.animateFloat(0.4f, 1f, infiniteRepeatable(tween(950), repeatMode = RepeatMode.Reverse), label = "a")
+    Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(20.dp).clip(CircleShape).background(color.copy(alpha = a * 0.22f)))
+        Box(Modifier.size(10.dp).clip(CircleShape).background(color.copy(alpha = a)))
+    }
+}
+
+@Composable
+private fun CategoryCard(icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color, title: String, desc: String, onClick: () -> Unit) {
+    Surface(onClick = onClick, shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(14.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconChip(icon, tint)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                Text(desc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun IconChip(icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color) {
+    Box(Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(tint.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
+        Icon(icon, null, tint = tint, modifier = Modifier.size(21.dp))
+    }
+}
+
+@Composable
+private fun SettingsSubPage(title: String, subtitle: String?, onBack: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Spacer(Modifier.height(4.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)).clickable { onBack() }, contentAlignment = Alignment.Center) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, "back")
+            }
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        content()
+        Spacer(Modifier.height(20.dp))
+    }
+}
+
+@Composable
+private fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(title.uppercase(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp, bottom = 2.dp))
+        Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(vertical = 4.dp, horizontal = 12.dp), content = content)
+        }
+    }
+}
+
+@Composable
+private fun SettingRow(icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color, title: String, desc: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconChip(icon, tint)
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            if (desc != null) Text(desc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+@Composable
+private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit) {
+    SettingsGroup("Online & Privacy") {
+        SettingRow(Icons.Filled.Bolt, CAT_GENERAL, "Always online", "Keep showing online", settings.alwaysOnline) { onToggle(JSONObject().put("alwaysOnline", it)) }
+        SettingRow(Icons.Filled.CloudOff, Color(0xFFFF7EB6), "Freeze last seen", "Never broadcast online (overrides Always online)", settings.stayOffline) { onToggle(JSONObject().put("stayOffline", it)) }
+        SettingRow(Icons.Filled.RemoveRedEye, Color(0xFF82AAFF), "Hide status view", "Don't show senders you saw their status", settings.hideStatusRead) { onToggle(JSONObject().put("hideStatusRead", it)) }
+    }
+    SettingsGroup("Messages & Media") {
+        SettingRow(Icons.Filled.DoneAll, CAT_WALLPAPER, "Auto-read messages", "Mark incoming chats as read", settings.autoRead) { onToggle(JSONObject().put("autoRead", it)) }
+        SettingRow(Icons.Filled.PermMedia, CAT_AUTOREPLY, "Save media", "Download incoming photos/videos (needed for view, deleted media)", settings.saveMedia) { onToggle(JSONObject().put("saveMedia", it)) }
+    }
+}
+
+@Composable
+private fun EmptyState(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, desc: String) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 26.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(Modifier.size(56.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)), contentAlignment = Alignment.Center) {
+            Icon(icon, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(26.dp))
+        }
+        Text(title, style = MaterialTheme.typography.titleSmall)
+        Text(desc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
     }
 }
 
@@ -1300,43 +1427,147 @@ private fun AutoReplySection(settings: GatewayClient.Settings, onToggle: (JSONOb
     var match by remember { mutableStateOf("") }
     var reply by remember { mutableStateOf("") }
     var mode by remember { mutableStateOf("contains") }
-    Text("Auto-reply", style = MaterialTheme.typography.titleMedium)
-    ToggleRow("Auto-reply enabled", settings.autoReplyEnabled) { onToggle(JSONObject().put("autoReplyEnabled", it)) }
-    if (settings.rules.isEmpty()) Text("No rules yet.", style = MaterialTheme.typography.bodySmall)
-    settings.rules.forEachIndexed { i, r ->
-        ElevatedCard(Modifier.fillMaxWidth()) {
-            Row(Modifier.padding(10.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("[${r.mode}] " + r.match, style = MaterialTheme.typography.labelMedium)
-                    Text("→ " + r.reply, style = MaterialTheme.typography.bodySmall)
+    SettingsGroup("Automatic replies") {
+        SettingRow(Icons.Filled.QuestionAnswer, CAT_AUTOREPLY, "Auto-reply enabled", "Reply automatically to incoming messages", settings.autoReplyEnabled) { onToggle(JSONObject().put("autoReplyEnabled", it)) }
+    }
+    Text("RULES", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
+    if (settings.rules.isEmpty()) {
+        EmptyState(Icons.Filled.QuestionAnswer, "No auto-reply rules", "Create a keyword rule to automatically respond to messages.")
+    } else {
+        settings.rules.forEachIndexed { i, r ->
+            Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+                Row(Modifier.padding(14.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(r.match, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, false))
+                            Spacer(Modifier.width(8.dp))
+                            Surface(shape = RoundedCornerShape(8.dp), color = CAT_AUTOREPLY.copy(alpha = 0.18f)) {
+                                Text(r.mode, style = MaterialTheme.typography.labelSmall, color = CAT_AUTOREPLY, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp))
+                            }
+                        }
+                        Text("→ " + r.reply, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                    IconButton(onClick = { onRules(settings.rules.toMutableList().also { it.removeAt(i) }) }) { Icon(Icons.Filled.Delete, "delete", tint = ERR_RED) }
                 }
-                TextButton(onClick = { onRules(settings.rules.toMutableList().also { it.removeAt(i) }) }) { Text("Delete") }
             }
         }
     }
-    OutlinedTextField(match, { match = it }, label = { Text("If message (keyword)") }, modifier = Modifier.fillMaxWidth())
-    OutlinedTextField(reply, { reply = it }, label = { Text("Reply with") }, modifier = Modifier.fillMaxWidth())
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf("contains", "exact", "starts").forEach { md -> FilterChip(selected = mode == md, onClick = { mode = md }, label = { Text(md) }) }
+    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("New rule", style = MaterialTheme.typography.titleSmall)
+            OutlinedTextField(match, { match = it }, label = { Text("If message contains…") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(reply, { reply = it }, label = { Text("Reply with…") }, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("contains", "exact", "starts").forEach { md ->
+                    FilterChip(selected = mode == md, onClick = { mode = md }, label = { Text(md) })
+                }
+            }
+            Button(onClick = { if (match.isNotBlank() && reply.isNotBlank()) { onRules(settings.rules + GatewayClient.Rule(match.trim(), reply.trim(), mode)); match = ""; reply = "" } },
+                enabled = match.isNotBlank() && reply.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("Add rule") }
+        }
     }
-    Button(onClick = { if (match.isNotBlank() && reply.isNotBlank()) { onRules(settings.rules + GatewayClient.Rule(match.trim(), reply.trim(), mode)); match = ""; reply = "" } },
-        enabled = match.isNotBlank() && reply.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("Add rule") }
-    HorizontalDivider()
-    Text("AI auto-reply", style = MaterialTheme.typography.titleMedium)
-    Text("Replies with AI when no keyword rule matches. Free key: console.groq.com.", style = MaterialTheme.typography.bodySmall)
-    ToggleRow("AI reply enabled", settings.aiReplyEnabled) { onToggle(JSONObject().put("aiReplyEnabled", it)) }
-    ToggleRow("Group AI reply", settings.groupAiEnabled) { onToggle(JSONObject().put("groupAiEnabled", it)) }
-    Text("In groups: auto-replies to greetings/questions (max 10/day per group) and replies in the group's language. Anyone can type \"/ai your question\" to ask directly (no limit). Uses the same API key above.", style = MaterialTheme.typography.bodySmall)
+}
+
+@Composable
+private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit) {
+    SettingsGroup("Replies") {
+        SettingRow(Icons.Filled.AutoAwesome, CAT_AI, "AI reply enabled", "Reply with AI when no keyword rule matches", settings.aiReplyEnabled) { onToggle(JSONObject().put("aiReplyEnabled", it)) }
+        SettingRow(Icons.Filled.QuestionAnswer, Color(0xFFB69DF8), "Group AI reply", "Answer greetings/questions in groups (max 10/day); /ai works anytime", settings.groupAiEnabled) { onToggle(JSONObject().put("groupAiEnabled", it)) }
+    }
     var url by remember { mutableStateOf(settings.aiApiUrl) }
     var key by remember { mutableStateOf(settings.aiApiKey) }
     var model by remember { mutableStateOf(settings.aiModel) }
     var sys by remember { mutableStateOf(settings.aiSystemPrompt) }
-    OutlinedTextField(url, { url = it }, label = { Text("API URL") }, modifier = Modifier.fillMaxWidth())
-    OutlinedTextField(key, { key = it }, label = { Text("API key") }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-    OutlinedTextField(model, { model = it }, label = { Text("Model") }, modifier = Modifier.fillMaxWidth())
-    OutlinedTextField(sys, { sys = it }, label = { Text("System prompt (optional)") }, modifier = Modifier.fillMaxWidth())
-    Button(onClick = { onToggle(JSONObject().put("aiApiUrl", url.trim()).put("aiApiKey", key.trim()).put("aiModel", model.trim()).put("aiSystemPrompt", sys)) },
-        modifier = Modifier.fillMaxWidth()) { Text("Save AI settings") }
+    var showKey by remember { mutableStateOf(false) }
+    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("API configuration", style = MaterialTheme.typography.titleSmall)
+            Text("Free key: console.groq.com", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedTextField(url, { url = it }, label = { Text("API URL") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(key, { key = it }, label = { Text("API key") }, singleLine = true, shape = RoundedCornerShape(14.dp),
+                visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = { IconButton(onClick = { showKey = !showKey }) { Icon(if (showKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, "toggle key") } },
+                modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(model, { model = it }, label = { Text("Model") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(sys, { sys = it }, label = { Text("System prompt (optional)") }, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+            Button(onClick = { onToggle(JSONObject().put("aiApiUrl", url.trim()).put("aiApiKey", key.trim()).put("aiModel", model.trim()).put("aiSystemPrompt", sys)) },
+                modifier = Modifier.fillMaxWidth()) { Text("Save AI settings") }
+        }
+    }
+}
+
+@Composable
+private fun WallpaperSettings(ctx: Context, onPickWallpaper: () -> Unit, onRemoveWallpaper: () -> Unit) {
+    val wp = remember { runCatching { val f = File(ctx.filesDir, "wallpaper.jpg"); if (f.exists()) BitmapFactory.decodeFile(f.absolutePath)?.asImageBitmap() else null }.getOrNull() }
+    Text("PREVIEW", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
+    Box(Modifier.fillMaxWidth().height(200.dp).clip(RoundedCornerShape(20.dp)).background(if (wp == null) Color(0xFF0E1621) else Color.Black)) {
+        if (wp != null) Image(wp, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        Column(Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Surface(shape = RoundedCornerShape(14.dp), color = Color(0xFF2C2C2E)) {
+                Text("Hey! 👋", color = Color.White, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Surface(shape = RoundedCornerShape(14.dp), color = IOS_BLUE) {
+                    Text("This is your wallpaper", color = Color.White, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+                }
+            }
+        }
+    }
+    Button(onClick = onPickWallpaper, modifier = Modifier.fillMaxWidth()) { Text("Set wallpaper from gallery") }
+    OutlinedButton(onClick = onRemoveWallpaper, modifier = Modifier.fillMaxWidth()) { Text("Remove wallpaper") }
+    Text("Wallpaper shows behind all chats. Changing it re-opens the chat to apply.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+@Composable
+private fun AppearanceSettings() {
+    val mode = ThemeStore.mode.value
+    val accent = ThemeStore.accent.value
+    SettingsGroup("Theme") {
+        Row(Modifier.padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("system" to "System", "light" to "Light", "dark" to "Dark", "amoled" to "AMOLED").forEach { (k, lbl) ->
+                FilterChip(selected = mode == k, onClick = { ThemeStore.setMode(k) }, label = { Text(lbl) })
+            }
+        }
+    }
+    SettingsGroup("Accent color") {
+        Row(Modifier.padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            ThemeStore.accents.forEach { (key, color) ->
+                Box(Modifier.size(38.dp).clip(CircleShape).background(color).clickable { ThemeStore.setAccent(key) },
+                    contentAlignment = Alignment.Center) {
+                    if (accent == key) Box(Modifier.size(14.dp).clip(CircleShape).background(Color.White))
+                }
+            }
+        }
+    }
+    Text("Theme and accent apply instantly across the whole app.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+@Composable
+private fun AboutSettings(ctx: Context, onLogout: () -> Unit) {
+    val ver = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "" }
+    var confirm by remember { mutableStateOf(false) }
+    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(APP_NAME, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("Version " + ver, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Runs locally on your device. No data is collected. AI reply (if enabled) sends message text only to the API you configure.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+    Text("ACCOUNT", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
+    OutlinedButton(onClick = { confirm = true }, modifier = Modifier.fillMaxWidth(),
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = ERR_RED),
+        border = androidx.compose.foundation.BorderStroke(1.dp, ERR_RED.copy(alpha = 0.6f))) {
+        Icon(Icons.AutoMirrored.Filled.Logout, null); Spacer(Modifier.width(8.dp)); Text("Unlink / reset")
+    }
+    if (confirm) {
+        AlertDialog(onDismissRequest = { confirm = false },
+            icon = { Icon(Icons.AutoMirrored.Filled.Logout, null, tint = ERR_RED) },
+            title = { Text("Unlink this device?") },
+            text = { Text("This logs out the WhatsApp session and clears local data (chats, statuses, media cache). You'll need to link again with QR or pairing code.") },
+            confirmButton = { TextButton(onClick = { confirm = false; onLogout() }) { Text("Unlink", color = ERR_RED) } },
+            dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancel") } })
+    }
 }
 
 @Composable
