@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
+import android.provider.Settings
 import android.util.Base64
 import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
@@ -70,6 +71,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -100,6 +102,8 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.DoneAll
+import androidx.compose.material.icons.filled.Done
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.PermMedia
 import androidx.compose.material.icons.filled.RemoveRedEye
 import androidx.compose.material.icons.filled.CloudOff
@@ -928,8 +932,7 @@ fun GatewayApp() {
                 },
                 previewCache = previewCache,
                 dpCache = dpCache,
-                wallpaper = chatWp,
-                headerInset = 96.dp
+                wallpaper = chatWp
             )
             val ocBlocked = ocChat in blockedJids
             ChatGlassHeader(
@@ -1103,7 +1106,6 @@ private fun ChatDetail(
     previewCache: MutableMap<String, ImageBitmap?>,
     dpCache: MutableMap<String, ImageBitmap?>,
     wallpaper: ImageBitmap?,
-    headerInset: androidx.compose.ui.unit.Dp = 0.dp,
 ) {
     var input by remember { mutableStateOf("") }
     var replyTo by remember { mutableStateOf<GatewayClient.Msg?>(null) }
@@ -1130,13 +1132,15 @@ private fun ChatDetail(
         (messages + optimistic.map { GatewayClient.Msg(chat, "", true, it.text, it.ts, quotedText = it.quotedText) }).sortedByDescending { it.ts }
     }
     val listState = rememberLazyListState()
+    // clear the floating header: status bar + header card height, so the top message is never hidden
+    val topClear = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 78.dp
 
     Box(Modifier.fillMaxSize()) {
         wallpaper?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
         // full-bleed column; only bottom (nav bar + keyboard) is inset, top stays under the floating header
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))) {
         LazyColumn(state = listState, reverseLayout = true, modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp),
-            contentPadding = PaddingValues(top = headerInset, bottom = 4.dp),
+            contentPadding = PaddingValues(top = topClear, bottom = 4.dp),
             verticalArrangement = Arrangement.spacedBy(3.dp)) {
             item { Spacer(Modifier.height(6.dp)) }
             itemsIndexed(rows, key = { i, m -> "${m.ts}-$i" }) { _, m -> Box(Modifier.fillMaxWidth().animateItem()) { MessageBubble(m, previewCache, dpCache, onMedia, onShare, onDownload, onReply = { replyTo = it }) { reactMsg = it } } }
@@ -1196,29 +1200,17 @@ private fun ChatGlassHeader(
     val borderCol = onPill.copy(alpha = 0.12f)
     // a faint top sheen makes the translucent pill read like real glass
     val sheen = Brush.verticalGradient(listOf(Color.White.copy(alpha = if (dark) 0.06f else 0.28f), Color.Transparent))
-    val backShape = CircleShape
-    val pillShape = RoundedCornerShape(26.dp)
+    val pillShape = RoundedCornerShape(24.dp)
     var menu by remember { mutableStateOf(false) }
 
-    Row(
-        Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 10.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        // circular back chip
-        Box(
-            Modifier.size(44.dp).clip(backShape).background(pill).border(1.dp, borderCol, backShape).clickable { onBack() },
-            contentAlignment = Alignment.Center
-        ) {
+    // ONE floating frosted card: back + avatar + name/presence + edit + menu (original WhatsApp layout, no separate arrow chip)
+    Box(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 8.dp, top = 8.dp, bottom = 6.dp)) {
+        Box(Modifier.fillMaxWidth().clip(pillShape).background(pill).border(1.dp, borderCol, pillShape)) {
             Box(Modifier.matchParentSize().background(sheen))
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, "back", tint = onPill)
-        }
-        // main frosted pill: avatar + name + presence + actions
-        Box(Modifier.weight(1f).clip(pillShape).background(pill).border(1.dp, borderCol, pillShape)) {
-            Box(Modifier.matchParentSize().background(sheen))
-            Row(Modifier.padding(start = 6.dp, end = 2.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.padding(start = 2.dp, end = 2.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "back", tint = onPill) }
                 Avatar(jid, name, dpCache, 38.dp, CircleShape)
-                Spacer(Modifier.width(9.dp))
+                Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(name, maxLines = 1, fontWeight = FontWeight.Bold, color = onPill,
                         style = MaterialTheme.typography.titleMedium, modifier = Modifier.basicMarquee())
@@ -1272,10 +1264,30 @@ private fun AudioPlayer(url: String, tint: Color) {
     }
 }
 
+// delivery ticks for sent messages: clock -> single -> double -> blue double (read)
+@Composable
+private fun MsgTicks(status: Int, base: Color) {
+    val c = base.copy(alpha = 0.75f)
+    when {
+        status <= 1 -> Icon(Icons.Filled.Schedule, "sending", modifier = Modifier.size(12.dp), tint = base.copy(alpha = 0.55f))
+        status == 2 -> Icon(Icons.Filled.Done, "sent", modifier = Modifier.size(15.dp), tint = c)
+        status == 3 -> Icon(Icons.Filled.DoneAll, "delivered", modifier = Modifier.size(15.dp), tint = c)
+        else -> Icon(Icons.Filled.DoneAll, "read", modifier = Modifier.size(15.dp), tint = Color(0xFF34B7F1))
+    }
+}
+
 // bubble color/text/shape for the selected chat bubble style (reads ChatStyle live)
 private fun bubbleSpec(fromMe: Boolean, dark: Boolean): Triple<Color, Color, Shape> {
     val recvGrey = if (dark) Color(0xFF2C2C2E) else Color(0xFFE9E9EB)
     val recvText = if (dark) Color.White else Color.Black
+    val base = styleSpec(fromMe, dark, recvGrey, recvText)
+    // custom color override (keeps the style's shape); 0 = follow the style default
+    val custom = if (fromMe) ChatStyle.sentColor.value else ChatStyle.recvColor.value
+    if (custom != 0) return Triple(Color(custom), ChatStyle.textOn(custom), base.third)
+    return base
+}
+
+private fun styleSpec(fromMe: Boolean, dark: Boolean, recvGrey: Color, recvText: Color): Triple<Color, Color, Shape> {
     return when (ChatStyle.bubbleStyle.value) {
         "whatsapp" ->
             if (fromMe) Triple(if (dark) Color(0xFF005C4B) else Color(0xFFD9FDD3), if (dark) Color.White else Color.Black, RoundedCornerShape(8.dp, 8.dp, 2.dp, 8.dp))
@@ -1366,9 +1378,10 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                             Text(m.reaction, modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp))
                         }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(fmt(m.ts), style = MaterialTheme.typography.labelSmall,
                             color = if (m.fromMe) Color.White.copy(alpha = 0.7f) else textColor.copy(alpha = 0.6f))
+                        if (m.fromMe && !m.deleted) MsgTicks(m.status, textColor)
                         if (m.edited && !m.deleted) Text("edited", style = MaterialTheme.typography.labelSmall, fontStyle = FontStyle.Italic,
                             color = if (m.fromMe) Color.White.copy(alpha = 0.6f) else textColor.copy(alpha = 0.55f))
                         if (m.deleted) Text("deleted", color = Color(0xFFFF4D4D), style = MaterialTheme.typography.labelSmall, fontStyle = FontStyle.Italic)
@@ -1535,6 +1548,34 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
         SettingRow(Icons.Filled.DoneAll, CAT_WALLPAPER, "Auto-read messages", "Mark incoming chats as read", settings.autoRead) { onToggle(JSONObject().put("autoRead", it)) }
         SettingRow(Icons.Filled.PermMedia, CAT_AUTOREPLY, "Save media", "Download incoming photos/videos (needed for view, deleted media)", settings.saveMedia) { onToggle(JSONObject().put("saveMedia", it)) }
     }
+    val ctx = LocalContext.current
+    SettingsGroup("Background & battery") {
+        ActionRow(Icons.Filled.Bolt, WARN_AMBER, "Allow battery (no optimization)", "Keep the gateway alive in the background") {
+            runCatching {
+                val i = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + ctx.packageName)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                ctx.startActivity(i)
+            }.onFailure { runCatching { ctx.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }
+        }
+        ActionRow(Icons.Filled.Settings, CAT_GENERAL, "Allow app to open / autostart", "Open app settings to enable autostart & background") {
+            runCatching {
+                ctx.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + ctx.packageName)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
+        }
+    }
+}
+
+// tappable settings row (opens something) — same look as SettingRow but with a chevron
+@Composable
+private fun ActionRow(icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color, title: String, desc: String?, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { onClick() }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconChip(icon, tint)
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            if (desc != null) Text(desc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }
 
 @Composable
@@ -1649,12 +1690,22 @@ private fun WallpaperSettings(ctx: Context, version: Int, onPickWallpaper: () ->
 @Composable
 private fun ChatSettings(onOpenWallpaper: () -> Unit) {
     val dark = isSystemInDarkTheme()
-    Text("WALLPAPER", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
-    LinkRow(Icons.Filled.Wallpaper, CAT_WALLPAPER, "Chat Wallpaper", "Set or remove chat background") { onOpenWallpaper() }
 
-    Text("BUBBLE STYLE", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
-    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    SettingsGroup("Wallpaper") {
+        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { onOpenWallpaper() }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconChip(Icons.Filled.Wallpaper, CAT_WALLPAPER)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Chat Wallpaper", style = MaterialTheme.typography.bodyLarge)
+                Text("Set or remove chat background", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+
+    SettingsGroup("Bubble style") {
+        // live preview
+        Column(Modifier.padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             val inSpec = bubbleSpec(false, dark)
             val outSpec = bubbleSpec(true, dark)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
@@ -1664,32 +1715,62 @@ private fun ChatSettings(onOpenWallpaper: () -> Unit) {
                 Surface(color = outSpec.first, shape = outSpec.third) { Text("Looks great 🎉", color = outSpec.second, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)) }
             }
         }
-    }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        ChatStyle.bubbleStyles.chunked(2).forEach { row ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                row.forEach { (k, lbl) ->
-                    FilterChip(selected = ChatStyle.bubbleStyle.value == k, onClick = { ChatStyle.setBubble(k) }, label = { Text(lbl) }, modifier = Modifier.weight(1f))
+        Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            ChatStyle.bubbleStyles.chunked(2).forEach { row ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    row.forEach { (k, lbl) ->
+                        FilterChip(selected = ChatStyle.bubbleStyle.value == k, onClick = { ChatStyle.setBubble(k) }, label = { Text(lbl) }, modifier = Modifier.weight(1f))
+                    }
+                    if (row.size == 1) Spacer(Modifier.weight(1f))
                 }
-                if (row.size == 1) Spacer(Modifier.weight(1f))
             }
         }
     }
 
-    Text("CHAT HEADER BLUR", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        ChatStyle.blurSteps.chunked(4).forEach { row ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                row.forEach { dp ->
-                    FilterChip(selected = ChatStyle.headerBlurDp.value == dp, onClick = { ChatStyle.setHeaderBlur(dp) },
-                        label = { Text(if (dp == 0) "Off" else dp.toString() + "dp") }, modifier = Modifier.weight(1f))
+    SettingsGroup("Bubble color") {
+        Text("Sent (right side)", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 10.dp, start = 2.dp))
+        BubbleColorRow(ChatStyle.sentColor.value) { ChatStyle.setSentColor(it) }
+        Text("Received (left side)", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 6.dp, start = 2.dp))
+        BubbleColorRow(ChatStyle.recvColor.value) { ChatStyle.setRecvColor(it) }
+        Spacer(Modifier.height(4.dp))
+    }
+
+    SettingsGroup("Chat header blur") {
+        Column(Modifier.padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            ChatStyle.blurSteps.chunked(4).forEach { row ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    row.forEach { dp ->
+                        FilterChip(selected = ChatStyle.headerBlurDp.value == dp, onClick = { ChatStyle.setHeaderBlur(dp) },
+                            label = { Text(if (dp == 0) "Off" else dp.toString() + "dp") }, modifier = Modifier.weight(1f))
+                    }
+                    repeat(4 - row.size) { Spacer(Modifier.weight(1f)) }
                 }
-                repeat(4 - row.size) { Spacer(Modifier.weight(1f)) }
+            }
+            Text("Higher = more see-through frosted header over your wallpaper. Applies instantly.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+// horizontal swatch picker; first swatch (0) = follow the bubble-style default
+@Composable
+private fun BubbleColorRow(selected: Int, onPick: (Int) -> Unit) {
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        ChatStyle.bubblePalette.forEach { argb ->
+            val isSel = selected == argb
+            val ring = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)
+            Box(
+                Modifier.size(38.dp).clip(CircleShape)
+                    .background(if (argb == 0) MaterialTheme.colorScheme.surfaceVariant else Color(argb))
+                    .border(if (isSel) 3.dp else 1.dp, ring, CircleShape)
+                    .clickable { onPick(argb) },
+                contentAlignment = Alignment.Center
+            ) {
+                if (argb == 0) Text("A", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                else if (isSel) Icon(Icons.Filled.Done, "selected", tint = ChatStyle.textOn(argb), modifier = Modifier.size(18.dp))
             }
         }
     }
-    Text("Higher = more see-through frosted chat header. Applies instantly. (True glass over wallpaper needs Android 12+; older devices show a clean translucent header.)",
-        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 @Composable

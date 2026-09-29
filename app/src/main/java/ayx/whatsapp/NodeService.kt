@@ -65,21 +65,25 @@ class NodeService : Service() {
     private fun buildNotification(): Notification {
         val mgr = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val ch = NotificationChannel(CHANNEL, "WA Gateway", NotificationManager.IMPORTANCE_LOW)
+            // IMPORTANCE_MIN keeps the mandatory foreground-service notice out of the status bar / shade top
+            val ch = NotificationChannel(CHANNEL, "Background service", NotificationManager.IMPORTANCE_MIN)
+            ch.setShowBadge(false)
+            ch.lockscreenVisibility = Notification.VISIBILITY_SECRET
             mgr.createNotificationChannel(ch)
         }
         val b = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
             Notification.Builder(this, CHANNEL) else @Suppress("DEPRECATION") Notification.Builder(this)
-        return b.setContentTitle("WA Gateway running")
-            .setContentText("Gateway engine is active")
+        return b.setContentTitle("AyX")
             .setSmallIcon(notifIcon(this))
             .setOngoing(true)
+            .setPriority(if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) Notification.PRIORITY_MIN else 0)
             .build()
     }
 
     companion object {
         @Volatile var currentOpenChat: String? = null
-        private const val CHANNEL = "wagw_engine"
+        // new channel id so the lowered importance actually applies on devices that had the old channel
+        private const val CHANNEL = "wagw_engine_min"
         private const val NOTIF_ID = 1
 
         fun start(ctx: Context) {

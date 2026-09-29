@@ -498,6 +498,7 @@ async function handleMessages({ messages, type }) {
       }
       const ts = msg.messageTimestamp ? Number(msg.messageTimestamp) * 1000 : Date.now()
       const entry = { chat: from, name: resolveName(msg, from), sender, fromMe, text: extractText(msg.message), ts, id }
+      if (fromMe) entry.status = (typeof msg.status === 'number' ? msg.status : 1)  // 1 pending,2 sent,3 delivered,4 read
       entry.quoted = quotedOf(msg.message)
       await enrichMedia(msg, entry)
       const text = entry.text
@@ -574,6 +575,14 @@ function handleUpdates(updates) {
       } else if (upd.messageStubType === 1 /* REVOKE stub */) {
         captureDelete(u.key?.id)
       }
+      // delivery/read receipts for messages we sent (2 sent, 3 delivered, 4 read, 5 played)
+      if (typeof upd.status === 'number' && u.key?.id) {
+        const e = msgStore.get(u.key.id)
+        if (e && e.fromMe) {
+          const s = upd.status | 0
+          if (s > (e.status | 0)) { e.status = s; saveMessagesDebounced() }
+        }
+      }
     } catch (_) {}
   }
 }
@@ -601,6 +610,7 @@ async function handleHistory({ messages, contacts: cts }) {
       const fromMe = !!msg.key.fromMe
       const ts = msg.messageTimestamp ? Number(msg.messageTimestamp) * 1000 : Date.now()
       const entry = { chat: from, name: resolveName(msg, from), fromMe, text: extractText(msg.message), ts, id: msg.key.id }
+      if (fromMe) entry.status = (typeof msg.status === 'number' ? msg.status : 0)
       if (msg.key.id) msgStore.set(msg.key.id, entry)
       msgLog.push(entry)
       n++
@@ -651,6 +661,14 @@ async function startSocket() {
           if (id && viewer) {
             if (!statusViewers[id]) statusViewers[id] = new Set()
             statusViewers[id].add(viewer)
+          }
+        } else if (k.fromMe && k.id) {
+          // normal chat delivery/read receipt -> bump tick status
+          const e = msgStore.get(k.id)
+          if (e) {
+            const rec = u.receipt || {}
+            const s = rec.readTimestamp ? 4 : (rec.receiptTimestamp ? 3 : 0)
+            if (s > (e.status | 0)) { e.status = s; saveMessagesDebounced() }
           }
         }
       } catch (_) {}
