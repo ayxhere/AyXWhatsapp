@@ -39,7 +39,7 @@ object GatewayClient {
     )
     data class Contact(val jid: String, val name: String, val number: String)
     data class Msg(val chat: String, val name: String, val fromMe: Boolean, val text: String, val ts: Long,
-                   val mediaName: String? = null, val mediaType: String? = null, val thumb: String? = null, val deleted: Boolean = false, val id: String? = null, val reaction: String? = null, val sender: String? = null, val quotedText: String? = null)
+                   val mediaName: String? = null, val mediaType: String? = null, val thumb: String? = null, val deleted: Boolean = false, val id: String? = null, val reaction: String? = null, val sender: String? = null, val quotedText: String? = null, val edited: Boolean = false)
 
     suspend fun status(): Status = withContext(Dispatchers.IO) {
         try {
@@ -343,6 +343,7 @@ object GatewayClient {
                     reaction = m.optString("reaction").ifEmpty { null },
                     sender = m.optString("sender").ifEmpty { null },
                     quotedText = m.optJSONObject("quoted")?.optString("text")?.ifEmpty { null },
+                    edited = m.optBoolean("edited", false),
                 ))
             }
         }

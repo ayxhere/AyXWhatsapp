@@ -347,6 +347,23 @@ function handleConnUpdate(u) {
   }
 }
 
+function applyEdit(origId, contentMsg, ts) {
+  if (!origId || !contentMsg) return
+  let c = contentMsg
+  if (c.editedMessage && c.editedMessage.message) c = c.editedMessage.message
+  else if (c.message) c = c.message
+  const newText = extractText(c)
+  if (!newText) return
+  const e = msgStore.get(origId)   // same object also lives in msgLog -> updates in place
+  if (e) {
+    e.text = newText
+    e.edited = true
+    if (ts) e.editedTs = ts
+    saveMessagesDebounced()
+    log('edited msg', origId)
+  }
+}
+
 function captureDelete(delId) {
   const orig = delId ? msgStore.get(delId) : null
   if (orig && !orig.deleted) {
@@ -460,6 +477,11 @@ async function handleMessages({ messages, type }) {
         captureDelete(proto.key?.id)
         continue
       }
+      if (proto && (proto.type === 14 || proto.type === 'MESSAGE_EDIT') && proto.editedMessage) {
+        const eTs = msg.messageTimestamp ? Number(msg.messageTimestamp) * 1000 : Date.now()
+        applyEdit(proto.key?.id, proto.editedMessage, eTs)
+        continue
+      }
 
       if (!from) continue
       if (from === 'status@broadcast') {
@@ -545,6 +567,10 @@ function handleUpdates(updates) {
       const proto = upd.message?.protocolMessage
       if ((proto && (proto.type === 0 || proto.type === 'REVOKE'))) {
         captureDelete(proto.key?.id || u.key?.id)
+      } else if (proto && (proto.type === 14 || proto.type === 'MESSAGE_EDIT') && proto.editedMessage) {
+        applyEdit(proto.key?.id || u.key?.id, proto.editedMessage, Date.now())
+      } else if (upd.message?.editedMessage) {
+        applyEdit(u.key?.id, upd.message.editedMessage, Date.now())
       } else if (upd.messageStubType === 1 /* REVOKE stub */) {
         captureDelete(u.key?.id)
       }

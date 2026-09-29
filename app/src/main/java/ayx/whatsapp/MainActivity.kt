@@ -102,6 +102,8 @@ import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.PermMedia
 import androidx.compose.material.icons.filled.RemoveRedEye
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Pause
@@ -401,6 +403,7 @@ fun GatewayApp() {
 
     var screen by remember { mutableStateOf("chats") }
     var openChat by remember { mutableStateOf<String?>(null) }
+    var settingsPage by remember { mutableStateOf("home") }
     var showSetName by remember { mutableStateOf(false) }
     var viewImg by remember { mutableStateOf<ImageBitmap?>(null) }
     var viewVideoUrl by remember { mutableStateOf<String?>(null) }
@@ -614,6 +617,7 @@ fun GatewayApp() {
             viewImg != null -> viewImg = null
             viewVideoUrl != null -> viewVideoUrl = null
             openChat != null -> openChat = null
+            screen == "settings" && settingsPage != "home" -> settingsPage = "home"
             else -> screen = "chats"
         }
     }
@@ -765,7 +769,7 @@ fun GatewayApp() {
     val title = when {
         !status.registered -> "Link device"
         openChat != null -> chatName ?: "Chat"
-        screen == "settings" -> "Settings"
+        screen == "settings" -> if (settingsPage == "home") "Settings" else settingsTitle(settingsPage)
         screen == "newchat" -> "New chat"
         screen == "profile" -> "Profile"
         else -> APP_NAME
@@ -854,7 +858,7 @@ fun GatewayApp() {
                 },
                 navigationIcon = {
                     if (openChat != null || screen == "settings" || screen == "newchat" || screen == "profile")
-                        IconButton(onClick = { if (openChat != null) openChat = null else screen = "chats" },
+                        IconButton(onClick = { if (openChat != null) openChat = null else if (screen == "settings" && settingsPage != "home") settingsPage = "home" else screen = "chats" },
                             modifier = Modifier.padding(start = 6.dp).clip(CircleShape).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, "back")
                         }
@@ -868,7 +872,7 @@ fun GatewayApp() {
                         } else {
                             Row(Modifier.padding(end = 4.dp).clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))) {
                                 IconButton(onClick = { searchMode = true }) { Icon(Icons.Filled.Search, "search") }
-                                IconButton(onClick = { screen = "settings" }) { Icon(Icons.Filled.Settings, "settings") }
+                                IconButton(onClick = { settingsPage = "home"; screen = "settings" }) { Icon(Icons.Filled.Settings, "settings") }
                             }
                         }
                     }
@@ -927,7 +931,7 @@ fun GatewayApp() {
                     dpCache = dpCache,
                     wallpaper = chatWp
                 )
-                screen == "settings" -> SettingsScreen(status, settings,
+                screen == "settings" -> SettingsScreen(status, settings, page = settingsPage, onPage = { settingsPage = it },
                     onToggle = { patch -> scope.launch { settings = GatewayClient.patchSettings(patch) } },
                     onRules = { r -> scope.launch { settings = GatewayClient.setRules(r) } },
                     onLogout = { scope.launch { GatewayClient.logout(); notify("logged out") } }, ctx = ctx,
@@ -1245,6 +1249,8 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(fmt(m.ts), style = MaterialTheme.typography.labelSmall,
                             color = if (m.fromMe) Color.White.copy(alpha = 0.7f) else textColor.copy(alpha = 0.6f))
+                        if (m.edited && !m.deleted) Text("edited", style = MaterialTheme.typography.labelSmall, fontStyle = FontStyle.Italic,
+                            color = if (m.fromMe) Color.White.copy(alpha = 0.6f) else textColor.copy(alpha = 0.55f))
                         if (m.deleted) Text("deleted", color = Color(0xFFFF4D4D), style = MaterialTheme.typography.labelSmall, fontStyle = FontStyle.Italic)
                         if (m.mediaName != null) {
                             IconButton(onClick = { onDownload(m) }, modifier = Modifier.size(22.dp)) {
@@ -1261,21 +1267,27 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
     }
 }
 
+// sub-page title shown in the top app bar (single source of the back arrow)
+private fun settingsTitle(page: String): String = when (page) {
+    "general" -> "General"; "autoreply" -> "Auto-reply"; "ai" -> "AI Assistant"
+    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "about" -> "About"; else -> "Settings"
+}
+
 @Composable
-private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient.Settings,
+private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient.Settings, page: String, onPage: (String) -> Unit,
     onToggle: (JSONObject) -> Unit, onRules: (List<GatewayClient.Rule>) -> Unit, onLogout: () -> Unit, ctx: Context,
     onPickWallpaper: () -> Unit, onRemoveWallpaper: () -> Unit, onPickPhoto: () -> Unit,
     onSaveName: (String) -> Unit) {
-    var page by remember { mutableStateOf("home") }
+    // back arrow + title live in the top app bar; sub-pages have no second arrow
     AnimatedContent(targetState = page, transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(140)) }, label = "setpage") { p ->
         when (p) {
-            "general" -> SettingsSubPage("General", null, { page = "home" }) { GeneralSettings(settings, onToggle) }
-            "autoreply" -> SettingsSubPage("Auto-reply", null, { page = "home" }) { AutoReplySection(settings, onToggle, onRules) }
-            "ai" -> SettingsSubPage("AI Assistant", "Powered by Groq AI", { page = "home" }) { AiSettings(settings, onToggle) }
-            "wallpaper" -> SettingsSubPage("Chat Wallpaper", null, { page = "home" }) { WallpaperSettings(ctx, onPickWallpaper, onRemoveWallpaper) }
-            "appearance" -> SettingsSubPage("Appearance", null, { page = "home" }) { AppearanceSettings() }
-            "about" -> SettingsSubPage("About", null, { page = "home" }) { AboutSettings(ctx, onLogout) }
-            else -> SettingsHome(status) { page = it }
+            "general" -> SettingsSubPage { GeneralSettings(settings, onToggle) }
+            "autoreply" -> SettingsSubPage { AutoReplySection(settings, onToggle, onRules) }
+            "ai" -> SettingsSubPage { AiSettings(settings, onToggle) }
+            "wallpaper" -> SettingsSubPage { WallpaperSettings(ctx, onPickWallpaper, onRemoveWallpaper) }
+            "appearance" -> SettingsSubPage { AppearanceSettings() }
+            "about" -> SettingsSubPage { AboutSettings(ctx, onLogout) }
+            else -> SettingsHome(status) { onPage(it) }
         }
     }
 }
@@ -1357,19 +1369,10 @@ private fun IconChip(icon: androidx.compose.ui.graphics.vector.ImageVector, tint
 }
 
 @Composable
-private fun SettingsSubPage(title: String, subtitle: String?, onBack: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+private fun SettingsSubPage(content: @Composable ColumnScope.() -> Unit) {
+    // title + the single back arrow are provided by the top app bar
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Spacer(Modifier.height(4.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)).clickable { onBack() }, contentAlignment = Alignment.Center) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, "back")
-            }
-            Spacer(Modifier.width(12.dp))
-            Column {
-                Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
+        Spacer(Modifier.height(6.dp))
         content()
         Spacer(Modifier.height(20.dp))
     }
@@ -1470,6 +1473,7 @@ private fun AutoReplySection(settings: GatewayClient.Settings, onToggle: (JSONOb
 
 @Composable
 private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit) {
+    Text("Powered by Groq AI", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
     SettingsGroup("Replies") {
         SettingRow(Icons.Filled.AutoAwesome, CAT_AI, "AI reply enabled", "Reply with AI when no keyword rule matches", settings.aiReplyEnabled) { onToggle(JSONObject().put("aiReplyEnabled", it)) }
         SettingRow(Icons.Filled.QuestionAnswer, Color(0xFFB69DF8), "Group AI reply", "Answer greetings/questions in groups (max 10/day); /ai works anytime", settings.groupAiEnabled) { onToggle(JSONObject().put("groupAiEnabled", it)) }
@@ -1543,9 +1547,32 @@ private fun AppearanceSettings() {
 }
 
 @Composable
+private fun openUrl(ctx: Context, url: String) {
+    runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+}
+
+@Composable
+private fun LinkRow(icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color, title: String, sub: String?, onClick: () -> Unit) {
+    Surface(onClick = onClick, shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(14.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconChip(icon, tint)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyLarge)
+                if (sub != null) Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
 private fun AboutSettings(ctx: Context, onLogout: () -> Unit) {
     val ver = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "" }
     var confirm by remember { mutableStateOf(false) }
+    val artId = remember { ctx.resources.getIdentifier("about_art", "drawable", ctx.packageName) }
+    val art = remember(artId) { if (artId != 0) runCatching { BitmapFactory.decodeResource(ctx.resources, artId)?.asImageBitmap() }.getOrNull() else null }
+
     Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(APP_NAME, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -1554,6 +1581,26 @@ private fun AboutSettings(ctx: Context, onLogout: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
+
+    if (art != null) Image(art, null, Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)), contentScale = ContentScale.FillWidth)
+
+    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Hey, I'm AyX by ƦΛjᑌ", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text("If you love my project, please give me a ⭐ on my GitHub project.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Button(onClick = { openUrl(ctx, "https://github.com/ifaxy/AyXWhatsapp") }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Filled.Star, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Star on GitHub")
+            }
+        }
+    }
+
+    Text("CONNECT", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
+    LinkRow(Icons.Filled.PhotoCamera, Color(0xFFFF7EB6), "imayx1", "Instagram") { openUrl(ctx, "https://www.instagram.com/imayx1?stkn=MXg4ZWYwbml5eGdxYg==") }
+    LinkRow(Icons.AutoMirrored.Filled.Send, CAT_AI, "AyX here", "Telegram") { openUrl(ctx, "https://t.me/ayxhere") }
+
+    Text("If I'm available everywhere, kindly contact me here.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp, top = 2.dp))
+    LinkRow(Icons.Filled.Language, CAT_WALLPAPER, "Website", "Personal site") { openUrl(ctx, "https://imayx.in/") }
+
     Text("ACCOUNT", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
     OutlinedButton(onClick = { confirm = true }, modifier = Modifier.fillMaxWidth(),
         colors = ButtonDefaults.outlinedButtonColors(contentColor = ERR_RED),
