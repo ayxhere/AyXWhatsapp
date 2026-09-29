@@ -104,6 +104,9 @@ import androidx.compose.material.icons.filled.RemoveRedEye
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.ChatBubbleOutline
+import androidx.compose.material.icons.filled.BlurOn
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Pause
@@ -207,6 +210,7 @@ class MainActivity : ComponentActivity() {
         StatusData.init(applicationContext)
         SetName.init(applicationContext)
         ThemeStore.init(applicationContext)
+        ChatStyle.init(applicationContext)
         setContent {
             val sysDark = isSystemInDarkTheme()
             val mode = ThemeStore.mode.value
@@ -404,6 +408,7 @@ fun GatewayApp() {
     var screen by remember { mutableStateOf("chats") }
     var openChat by remember { mutableStateOf<String?>(null) }
     var settingsPage by remember { mutableStateOf("home") }
+    var wallpaperVersion by remember { mutableStateOf(0) }
     var showSetName by remember { mutableStateOf(false) }
     var viewImg by remember { mutableStateOf<ImageBitmap?>(null) }
     var viewVideoUrl by remember { mutableStateOf<String?>(null) }
@@ -518,7 +523,7 @@ fun GatewayApp() {
                     File(ctx.filesDir, "wallpaper.jpg").outputStream().use { input.copyTo(it) }
                 }
             }
-            loadWallpaper(); notify("wallpaper set")
+            loadWallpaper(); wallpaperVersion++; notify("wallpaper set")
         }
     }
     val profilePicPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
@@ -617,7 +622,7 @@ fun GatewayApp() {
             viewImg != null -> viewImg = null
             viewVideoUrl != null -> viewVideoUrl = null
             openChat != null -> openChat = null
-            screen == "settings" && settingsPage != "home" -> settingsPage = "home"
+            screen == "settings" && settingsPage != "home" -> settingsPage = settingsParent(settingsPage)
             else -> screen = "chats"
         }
     }
@@ -816,17 +821,11 @@ fun GatewayApp() {
             }
         },
         topBar = {
-            val barTop = MaterialTheme.colorScheme.surface
-            val barBottom = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f)
-            val hairline = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f)
+            // chat header uses adjustable frost (Chat header blur setting); other screens blend flat with the status bar
+            val headerBg = if (openChat != null) MaterialTheme.colorScheme.surface.copy(alpha = ChatStyle.headerAlpha())
+                           else MaterialTheme.colorScheme.surface
             CenterAlignedTopAppBar(
-                modifier = Modifier
-                    .background(Brush.verticalGradient(listOf(barTop, barBottom)))
-                    .drawBehind {
-                        val y = size.height - 0.5.dp.toPx()
-                        drawLine(hairline, Offset(0f, y), Offset(size.width, y), 1.2f)
-                    },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
+                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = headerBg),
                 title = {
                     if (searchMode && openChat == null && screen == "chats") {
                         OutlinedTextField(searchQuery, { searchQuery = it }, placeholder = { Text("Search chats") },
@@ -858,7 +857,7 @@ fun GatewayApp() {
                 },
                 navigationIcon = {
                     if (openChat != null || screen == "settings" || screen == "newchat" || screen == "profile")
-                        IconButton(onClick = { if (openChat != null) openChat = null else if (screen == "settings" && settingsPage != "home") settingsPage = "home" else screen = "chats" },
+                        IconButton(onClick = { if (openChat != null) openChat = null else if (screen == "settings" && settingsPage != "home") settingsPage = settingsParent(settingsPage) else screen = "chats" },
                             modifier = Modifier.padding(start = 6.dp).clip(CircleShape).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, "back")
                         }
@@ -931,12 +930,12 @@ fun GatewayApp() {
                     dpCache = dpCache,
                     wallpaper = chatWp
                 )
-                screen == "settings" -> SettingsScreen(status, settings, page = settingsPage, onPage = { settingsPage = it },
+                screen == "settings" -> SettingsScreen(status, settings, page = settingsPage, onPage = { settingsPage = it }, wallpaperVersion = wallpaperVersion,
                     onToggle = { patch -> scope.launch { settings = GatewayClient.patchSettings(patch) } },
                     onRules = { r -> scope.launch { settings = GatewayClient.setRules(r) } },
                     onLogout = { scope.launch { GatewayClient.logout(); notify("logged out") } }, ctx = ctx,
                     onPickWallpaper = { wallpaperPicker.launch("image/*") },
-                    onRemoveWallpaper = { File(ctx.filesDir, "wallpaper.jpg").delete(); loadWallpaper(); notify("wallpaper removed") },
+                    onRemoveWallpaper = { File(ctx.filesDir, "wallpaper.jpg").delete(); loadWallpaper(); wallpaperVersion++; notify("wallpaper removed") },
                     onPickPhoto = { profilePicPicker.launch("image/*") },
                     onSaveName = { n -> scope.launch { runCatching { GatewayClient.setProfileName(n) }.onSuccess { notify("name updated") }.onFailure { notify("name: ${it.message}") } } })
                 screen == "newchat" -> NewChatScreen(deviceContacts, contactsLoading, dpCache,
@@ -1178,15 +1177,41 @@ private fun AudioPlayer(url: String, tint: Color) {
     }
 }
 
+// bubble color/text/shape for the selected chat bubble style (reads ChatStyle live)
+private fun bubbleSpec(fromMe: Boolean, dark: Boolean): Triple<Color, Color, Shape> {
+    val recvGrey = if (dark) Color(0xFF2C2C2E) else Color(0xFFE9E9EB)
+    val recvText = if (dark) Color.White else Color.Black
+    return when (ChatStyle.bubbleStyle.value) {
+        "whatsapp" ->
+            if (fromMe) Triple(if (dark) Color(0xFF005C4B) else Color(0xFFD9FDD3), if (dark) Color.White else Color.Black, RoundedCornerShape(8.dp, 8.dp, 2.dp, 8.dp))
+            else Triple(if (dark) Color(0xFF202C33) else Color.White, recvText, RoundedCornerShape(8.dp, 8.dp, 8.dp, 2.dp))
+        "material" ->
+            if (fromMe) Triple(ThemeStore.accentColor(), Color.Black, RoundedCornerShape(14.dp))
+            else Triple(if (dark) Color(0xFF2A2A2E) else Color(0xFFE7E0EC), recvText, RoundedCornerShape(14.dp))
+        "rounded" ->
+            if (fromMe) Triple(IOS_BLUE, Color.White, RoundedCornerShape(22.dp))
+            else Triple(recvGrey, recvText, RoundedCornerShape(22.dp))
+        "compact" ->
+            if (fromMe) Triple(IOS_BLUE, Color.White, RoundedCornerShape(9.dp))
+            else Triple(recvGrey, recvText, RoundedCornerShape(9.dp))
+        "gb" ->
+            if (fromMe) Triple(Color(0xFF128C7E), Color.White, RoundedCornerShape(14.dp, 14.dp, 4.dp, 14.dp))
+            else Triple(if (dark) Color(0xFF1F2C34) else Color(0xFFEAEAEA), recvText, RoundedCornerShape(14.dp, 14.dp, 14.dp, 4.dp))
+        else ->
+            if (fromMe) Triple(IOS_BLUE, Color.White, RoundedCornerShape(18.dp, 18.dp, 5.dp, 18.dp))
+            else Triple(recvGrey, recvText, RoundedCornerShape(18.dp, 18.dp, 18.dp, 5.dp))
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String, ImageBitmap?>, dpCache: MutableMap<String, ImageBitmap?>, onMedia: (GatewayClient.Msg) -> Unit, onShare: (GatewayClient.Msg) -> Unit, onDownload: (GatewayClient.Msg) -> Unit, onReply: (GatewayClient.Msg) -> Unit, onLongClick: (GatewayClient.Msg) -> Unit) {
     val ctx = LocalContext.current
     val dark = isSystemInDarkTheme()
-    val recvColor = if (dark) Color(0xFF2C2C2E) else Color(0xFFE9E9EB)
-    val bubbleColor = if (m.fromMe) IOS_BLUE else recvColor
-    val textColor = if (m.fromMe) Color.White else (if (dark) Color.White else Color.Black)
-    val shape = if (m.fromMe) RoundedCornerShape(18.dp, 18.dp, 5.dp, 18.dp) else RoundedCornerShape(18.dp, 18.dp, 18.dp, 5.dp)
+    val spec = bubbleSpec(m.fromMe, dark)
+    val bubbleColor = spec.first
+    val textColor = spec.second
+    val shape = spec.third
     val isVideo = m.mediaType == "video"
     val hasMedia = m.mediaType != null
 
@@ -1269,12 +1294,14 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
 
 // sub-page title shown in the top app bar (single source of the back arrow)
 private fun settingsTitle(page: String): String = when (page) {
-    "general" -> "General"; "autoreply" -> "Auto-reply"; "ai" -> "AI Assistant"
+    "general" -> "General"; "autoreply" -> "Auto-reply"; "ai" -> "AI Assistant"; "chat" -> "Chat Settings"
     "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "about" -> "About"; else -> "Settings"
 }
+// parent page for nested back (Wallpaper lives under Chat Settings)
+private fun settingsParent(page: String): String = if (page == "wallpaper") "chat" else "home"
 
 @Composable
-private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient.Settings, page: String, onPage: (String) -> Unit,
+private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient.Settings, page: String, onPage: (String) -> Unit, wallpaperVersion: Int,
     onToggle: (JSONObject) -> Unit, onRules: (List<GatewayClient.Rule>) -> Unit, onLogout: () -> Unit, ctx: Context,
     onPickWallpaper: () -> Unit, onRemoveWallpaper: () -> Unit, onPickPhoto: () -> Unit,
     onSaveName: (String) -> Unit) {
@@ -1284,7 +1311,8 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
             "general" -> SettingsSubPage { GeneralSettings(settings, onToggle) }
             "autoreply" -> SettingsSubPage { AutoReplySection(settings, onToggle, onRules) }
             "ai" -> SettingsSubPage { AiSettings(settings, onToggle) }
-            "wallpaper" -> SettingsSubPage { WallpaperSettings(ctx, onPickWallpaper, onRemoveWallpaper) }
+            "chat" -> SettingsSubPage { ChatSettings(onOpenWallpaper = { onPage("wallpaper") }) }
+            "wallpaper" -> SettingsSubPage { WallpaperSettings(ctx, wallpaperVersion, onPickWallpaper, onRemoveWallpaper) }
             "appearance" -> SettingsSubPage { AppearanceSettings() }
             "about" -> SettingsSubPage { AboutSettings(ctx, onLogout) }
             else -> SettingsHome(status) { onPage(it) }
@@ -1312,7 +1340,7 @@ private fun SettingsHome(status: GatewayClient.Status, onOpen: (String) -> Unit)
         CategoryCard(Icons.Filled.Tune, CAT_GENERAL, "General", "Online, privacy and messages") { onOpen("general") }
         CategoryCard(Icons.Filled.QuestionAnswer, CAT_AUTOREPLY, "Auto-reply", "Keyword rules and automatic replies") { onOpen("autoreply") }
         CategoryCard(Icons.Filled.AutoAwesome, CAT_AI, "AI Assistant", "AI replies, groups and language") { onOpen("ai") }
-        CategoryCard(Icons.Filled.Wallpaper, CAT_WALLPAPER, "Chat Wallpaper", "Customize your chat background") { onOpen("wallpaper") }
+        CategoryCard(Icons.Filled.Chat, CAT_WALLPAPER, "Chat", "Wallpaper, bubble style and header") { onOpen("chat") }
         CategoryCard(Icons.Filled.Palette, CAT_APPEARANCE, "Appearance", "Theme and accent color") { onOpen("appearance") }
         CategoryCard(Icons.Filled.Info, CAT_ABOUT, "About", "App information and reset") { onOpen("about") }
         Spacer(Modifier.height(16.dp))
@@ -1501,8 +1529,9 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
 }
 
 @Composable
-private fun WallpaperSettings(ctx: Context, onPickWallpaper: () -> Unit, onRemoveWallpaper: () -> Unit) {
-    val wp = remember { runCatching { val f = File(ctx.filesDir, "wallpaper.jpg"); if (f.exists()) BitmapFactory.decodeFile(f.absolutePath)?.asImageBitmap() else null }.getOrNull() }
+private fun WallpaperSettings(ctx: Context, version: Int, onPickWallpaper: () -> Unit, onRemoveWallpaper: () -> Unit) {
+    // decode keyed on `version` so the preview refreshes instantly after set/remove (no leave & reopen)
+    val wp = remember(version) { runCatching { val f = File(ctx.filesDir, "wallpaper.jpg"); if (f.exists()) BitmapFactory.decodeFile(f.absolutePath)?.asImageBitmap() else null }.getOrNull() }
     Text("PREVIEW", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
     Box(Modifier.fillMaxWidth().height(200.dp).clip(RoundedCornerShape(20.dp)).background(if (wp == null) Color(0xFF0E1621) else Color.Black)) {
         if (wp != null) Image(wp, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
@@ -1519,7 +1548,53 @@ private fun WallpaperSettings(ctx: Context, onPickWallpaper: () -> Unit, onRemov
     }
     Button(onClick = onPickWallpaper, modifier = Modifier.fillMaxWidth()) { Text("Set wallpaper from gallery") }
     OutlinedButton(onClick = onRemoveWallpaper, modifier = Modifier.fillMaxWidth()) { Text("Remove wallpaper") }
-    Text("Wallpaper shows behind all chats. Changing it re-opens the chat to apply.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text("Wallpaper shows behind all chats and applies immediately.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+@Composable
+private fun ChatSettings(onOpenWallpaper: () -> Unit) {
+    val dark = isSystemInDarkTheme()
+    Text("WALLPAPER", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
+    LinkRow(Icons.Filled.Wallpaper, CAT_WALLPAPER, "Chat Wallpaper", "Set or remove chat background") { onOpenWallpaper() }
+
+    Text("BUBBLE STYLE", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
+    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            val inSpec = bubbleSpec(false, dark)
+            val outSpec = bubbleSpec(true, dark)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+                Surface(color = inSpec.first, shape = inSpec.third) { Text("Hey! 👋", color = inSpec.second, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)) }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Surface(color = outSpec.first, shape = outSpec.third) { Text("Looks great 🎉", color = outSpec.second, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)) }
+            }
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        ChatStyle.bubbleStyles.chunked(2).forEach { row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                row.forEach { (k, lbl) ->
+                    FilterChip(selected = ChatStyle.bubbleStyle.value == k, onClick = { ChatStyle.setBubble(k) }, label = { Text(lbl) }, modifier = Modifier.weight(1f))
+                }
+                if (row.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+
+    Text("CHAT HEADER BLUR", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        ChatStyle.blurSteps.chunked(4).forEach { row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                row.forEach { dp ->
+                    FilterChip(selected = ChatStyle.headerBlurDp.value == dp, onClick = { ChatStyle.setHeaderBlur(dp) },
+                        label = { Text(if (dp == 0) "Off" else dp.toString() + "dp") }, modifier = Modifier.weight(1f))
+                }
+                repeat(4 - row.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
+    }
+    Text("Higher = more see-through frosted chat header. Applies instantly. (True glass over wallpaper needs Android 12+; older devices show a clean translucent header.)",
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 @Composable
@@ -1707,7 +1782,7 @@ private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, statuses: List<Ga
         while (pager.currentPage == 1) { onLoadStatuses(); delay(5000) }
     }
     Column(Modifier.fillMaxSize()) {
-        TabRow(selectedTabIndex = pager.currentPage) {
+        TabRow(selectedTabIndex = pager.currentPage, containerColor = MaterialTheme.colorScheme.surface, divider = {}) {
             Tab(selected = pager.currentPage == 0, onClick = { cs.launch { pager.animateScrollToPage(0) } }, text = { Text("Chats") })
             Tab(selected = pager.currentPage == 1, onClick = { cs.launch { pager.animateScrollToPage(1) } }, text = { Text("Status") })
         }
