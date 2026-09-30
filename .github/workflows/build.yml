@@ -99,10 +99,18 @@ jobs:
         if: env.KEYSTORE_B64 != ''
         run: gradle assembleRelease --no-daemon --stacktrace
 
+      - name: Upload APK artifact (always downloadable from this run)
+        if: env.KEYSTORE_B64 != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ayx-whatsapp-apk
+          path: app/build/outputs/apk/release/app-release.apk
+
       - name: Publish signed release APK
         if: env.KEYSTORE_B64 != ''
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: release
-          name: Signed release
-          files: app/build/outputs/apk/release/app-release.apk
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # ensure the stable "release" exists, then replace its APK asset (idempotent, no tag-move HttpError)
+          gh release create release --title "Signed release" --notes "AyX WhatsApp signed build" 2>/dev/null || true
+          gh release upload release app/build/outputs/apk/release/app-release.apk --clobber
