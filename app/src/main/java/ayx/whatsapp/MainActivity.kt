@@ -1204,7 +1204,7 @@ private fun ChatGlassHeader(
     var menu by remember { mutableStateOf(false) }
 
     // ONE floating frosted card: back + avatar + name/presence + edit + menu (original WhatsApp layout, no separate arrow chip)
-    Box(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 8.dp, top = 8.dp, bottom = 6.dp)) {
+    Box(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 6.dp)) {
         Box(Modifier.fillMaxWidth().clip(pillShape).background(pill).border(1.dp, borderCol, pillShape)) {
             Box(Modifier.matchParentSize().background(sheen))
             Row(Modifier.padding(start = 2.dp, end = 2.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
