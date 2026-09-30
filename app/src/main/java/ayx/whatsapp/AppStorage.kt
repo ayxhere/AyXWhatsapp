@@ -10,7 +10,7 @@ import java.io.File
  *   filesDir/media           -> downloaded/cached media (re-downloadable) — the thing that grows
  *   filesDir/nodejs-project  -> extracted node runtime (re-extracts on update)
  *   noBackupFilesDir/auth    -> Baileys session (ESSENTIAL)
- *   noBackupFilesDir/*.json  -> messages/statuses/settings/names
+ *   noBackupFilesDir json    -> messages, statuses, settings, names
  * App-owned:
  *   filesDir/wallpaper.jpg   -> user wallpaper (keep unless full reset)
  *   cacheDir                 -> node compile cache + temp

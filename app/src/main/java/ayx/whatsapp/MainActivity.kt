@@ -1572,7 +1572,7 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
             modifier = Modifier.widthIn(max = 290.dp).combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {}, onLongClick = { onLongClick(m) })) {
             Column(Modifier.padding(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 if (m.forwarded && !m.deleted && ChatStyle.showForwardTag.value) {
-                    Row(Modifier.padding(horizontal = 8.dp, top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.padding(start = 8.dp, end = 8.dp, top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.AutoMirrored.Filled.ArrowForward, null, modifier = Modifier.size(13.dp),
                             tint = if (m.fromMe) Color.White.copy(alpha = 0.7f) else textColor.copy(alpha = 0.55f))
                         Spacer(Modifier.width(4.dp))
