@@ -162,7 +162,7 @@ fun ReminderScreen(
                     if (number.isNotBlank()) {
                         alts.add(number + "@s.whatsapp.net")
                         val reg = runCatching { GatewayClient.onWhatsApp(listOf(number)) }.getOrDefault(emptyMap())
-                        reg[number]?.let { lid -> if (lid.isNotBlank()) alts.add(if (lid.contains("@")) lid else lid + "@lid") }
+                        reg[number]?.let { lid -> if (lid.isNotBlank() && lid != "null") alts.add(if (lid.contains("@")) lid else lid + "@lid") }
                     }
                     val ok = GatewayClient.reminderAdd(jid, alts)
                     entries = GatewayClient.reminderList()

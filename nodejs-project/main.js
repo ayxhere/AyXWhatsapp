@@ -89,13 +89,29 @@ const presenceLog = new Map()          // watch.id -> [{ p:'online'|'offline', t
 let reminderOnlineQueue = []           // [{ jid, ts }] offline->online transitions, drained by the app for notifications
 try {
   const r = JSON.parse(fs.readFileSync(REMINDER_FILE, 'utf8'))
+  const cleanJids = (w) => { const js = (w.jids || []).filter(j => j && !String(j).includes('null')); return { id: w.id, jids: js.length ? js : [w.id] } }
   if (Array.isArray(r)) watches = r.filter(Boolean).map(j => ({ id: j, jids: [j] }))                 // legacy: bare jid array
-  else if (r && Array.isArray(r.watches)) watches = r.watches.map(w => ({ id: w.id, jids: (w.jids && w.jids.length) ? w.jids : [w.id] }))
+  else if (r && Array.isArray(r.watches)) watches = r.watches.map(cleanJids)
   else if (r && Array.isArray(r.jids)) watches = r.jids.filter(Boolean).map(j => ({ id: j, jids: [j] }))
   if (r && r.log) for (const k of Object.keys(r.log)) if (Array.isArray(r.log[k])) presenceLog.set(k, r.log[k])
 } catch (_) {}
 function allWatchJids() { const s = new Set(); for (const w of watches) for (const j of (w.jids || [])) if (j) s.add(j); return s }
 function watchForJid(id) { return watches.find(w => (w.jids || []).includes(id)) }
+// Modern WhatsApp delivers presence keyed by @lid, but the app usually watches a @s.whatsapp.net number
+// (or vice-versa). Baileys keeps the authoritative bridge in signalRepository.lidMapping — use it so a
+// presence on either form maps to the other. Returns [jid] plus its counterpart when known.
+function relatedJids(jid) {
+  const set = new Set([jid])
+  if (!jid || jid.includes('null')) return [...set]
+  try {
+    const lm = sock && sock.signalRepository && sock.signalRepository.lidMapping
+    if (lm) {
+      if (jid.endsWith('@lid') && lm.getPNForLID) { const pn = lm.getPNForLID(jid); if (pn) set.add(pn) }
+      else if (jid.endsWith('@s.whatsapp.net') && lm.getLIDForPN) { const lid = lm.getLIDForPN(jid); if (lid) set.add(lid) }
+    }
+  } catch (_) {}
+  return [...set]
+}
 let _remTimer = null
 function saveReminders() {
   if (_remTimer) return
@@ -127,7 +143,9 @@ function recordPresence(id, presence, lastSeen) {
 }
 function subscribeTracked() {
   if (!sock) return
-  for (const jid of allWatchJids()) { sock.presenceSubscribe(jid).catch(() => {}) }
+  const subs = new Set()
+  for (const jid of allWatchJids()) for (const rj of relatedJids(jid)) subs.add(rj)   // subscribe to BOTH @lid and @s.whatsapp.net
+  for (const jid of subs) { sock.presenceSubscribe(jid).catch(() => {}) }
 }
 // active loop: keep subscriptions fresh AND sweep the global `presences` map (filled by presence.update
 // for whatever jid WhatsApp actually used) into each watch's timeline. This is robust to @lid vs @s.whatsapp.net.
@@ -146,7 +164,7 @@ function startReminderSweep() {
     subscribeTracked()
     for (const w of watches) {
       let best = null
-      for (const j of (w.jids || [])) { const p = presences.get(j); if (p) best = p }
+      for (const j of (w.jids || [])) for (const rj of relatedJids(j)) { const p = presences.get(rj); if (p) best = p }
       if (best) recordPresence(w.id, best.presence, best.lastSeen)
     }
   }, 5000)
@@ -807,9 +825,10 @@ async function startSocket() {
     const first = Object.values(p)[0]
     if (first) {
       const presence = first.lastKnownPresence || 'unavailable'
-      presences.set(id, { presence, lastSeen: first.lastSeen || null })
-      const w = watchForJid(id)
-      if (w) recordPresence(w.id, presence, first.lastSeen || null)   // instant path (sweep is the backup)
+      const ls = first.lastSeen || null
+      const rel = relatedJids(id)                               // e.g. [<lid>@lid, <number>@s.whatsapp.net]
+      for (const j of rel) presences.set(j, { presence, lastSeen: ls })   // store under BOTH forms so any watch matches
+      for (const j of rel) { const w = watchForJid(j); if (w) { recordPresence(w.id, presence, ls); break } }  // instant path
     }
   })
 }
@@ -879,7 +898,8 @@ app.post('/reminder/add', async (req, res) => {
   // collect every jid form the app knows for this contact (primary + @s.whatsapp.net + @lid)
   let jids = [jid]
   const extra = req.body?.jids
-  if (Array.isArray(extra)) for (const j of extra) if (j && !jids.includes(String(j))) jids.push(String(j))
+  if (Array.isArray(extra)) for (const j of extra) { const s = String(j); if (s && !s.includes('null') && !jids.includes(s)) jids.push(s) }
+  for (const j of [...jids]) for (const rj of relatedJids(j)) if (!jids.includes(rj)) jids.push(rj)   // add Baileys' known lid<->pn counterpart
   const existing = watches.find(w => w.id === jid)
   if (existing) { for (const j of jids) if (!existing.jids.includes(j)) existing.jids.push(j) }
   else watches.push({ id: jid, jids })
