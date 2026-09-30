@@ -147,27 +147,30 @@ function subscribeTracked() {
   for (const jid of allWatchJids()) for (const rj of relatedJids(jid)) subs.add(rj)   // subscribe to BOTH @lid and @s.whatsapp.net
   for (const jid of subs) { sock.presenceSubscribe(jid).catch(() => {}) }
 }
-// active loop: keep subscriptions fresh AND sweep the global `presences` map (filled by presence.update
-// for whatever jid WhatsApp actually used) into each watch's timeline. This is robust to @lid vs @s.whatsapp.net.
-//
-// KEY: WhatsApp only PUSHES contacts' presence to a client it considers ACTIVE. A passive linked session
-// (connected but never sending its own presence) gets nothing in the background — which is why real
-// "last seen tracker" apps keep an active WhatsApp Web client open. So while we have watches we send our
-// own presence as 'available' (unless the user froze last seen), then subscribe, then read what came back.
+// KEY: WhatsApp only PUSHES contacts' presence to a client it considers ACTIVE, so while we have watches we
+// send our own presence 'available' once and keep the subscriptions alive. This MUST be gentle: presence is
+// sticky on the server (send once, not every tick) and blasting available/subscribe every few seconds makes
+// WhatsApp throw a stream/conflict error and drop the socket. So we split it:
+//   - a GENTLE network keepalive (available once + re-subscribe) on a slow timer, and
+//   - a FREQUENT local sweep that only READS the presences map (no network) into each watch's timeline.
+function reminderKeepAlive() {
+  if (!sock || status.connection !== 'open' || watches.length === 0) return
+  if (!settings.stayOffline) { try { sock.sendPresenceUpdate('available') } catch (_) {} }
+  subscribeTracked()
+}
 let reminderSweepTimer = null
+let reminderKeepTimer = null
 function startReminderSweep() {
+  if (!reminderKeepTimer) reminderKeepTimer = setInterval(reminderKeepAlive, 45000)   // gentle: every 45s
   if (reminderSweepTimer) return
   reminderSweepTimer = setInterval(() => {
-    if (!sock || status.connection !== 'open') return
-    if (watches.length === 0) return
-    if (!settings.stayOffline) { try { sock.sendPresenceUpdate('available') } catch (_) {} }  // become an active client so presence is pushed
-    subscribeTracked()
+    if (!sock || status.connection !== 'open' || watches.length === 0) return
     for (const w of watches) {
       let best = null
       for (const j of (w.jids || [])) for (const rj of relatedJids(j)) { const p = presences.get(rj); if (p) best = p }
       if (best) recordPresence(w.id, best.presence, best.lastSeen)
     }
-  }, 5000)
+  }, 8000)   // local only — no network traffic
 }
 
 function pushHistory(jid, role, content) {
@@ -414,8 +417,7 @@ function handleConnUpdate(u) {
     currentQr = null; pairingCode = null; pairingNumber = null
     log('CONNECTED as', status.me)
     applyPresence()
-    if (watches.length && !settings.stayOffline) { try { sock.sendPresenceUpdate('available') } catch (_) {} }
-    subscribeTracked()          // re-arm presence subscriptions for tracked contacts after (re)connect
+    reminderKeepAlive()         // one gentle 'available' + re-subscribe so presence resumes after (re)connect
     startReminderSweep()
   }
 
