@@ -112,6 +112,7 @@ import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.PermMedia
 import androidx.compose.material.icons.filled.RemoveRedEye
 import androidx.compose.material.icons.filled.CloudOff
@@ -132,6 +133,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
@@ -1652,7 +1654,7 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
 // sub-page title shown in the top app bar (single source of the back arrow)
 private fun settingsTitle(page: String): String = when (page) {
     "general" -> "General"; "autoreply" -> "Auto-reply"; "ai" -> "AI Assistant"; "chat" -> "Chat Settings"
-    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "about" -> "About"; else -> "Settings"
+    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "about" -> "About"; "support" -> "Support Development"; else -> "Settings"
 }
 // parent page for nested back (Wallpaper lives under Chat Settings)
 private fun settingsParent(page: String): String = if (page == "wallpaper") "chat" else "home"
@@ -1672,6 +1674,7 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
             "wallpaper" -> SettingsSubPage { WallpaperSettings(ctx, wallpaperVersion, onPickWallpaper, onRemoveWallpaper) }
             "appearance" -> SettingsSubPage { AppearanceSettings() }
             "about" -> SettingsSubPage { AboutSettings(ctx, onLogout) }
+            "support" -> SettingsSubPage { SupportSettings(ctx) }
             else -> SettingsHome(status) { onPage(it) }
         }
     }
@@ -1684,6 +1687,7 @@ private val CAT_AI = Color(0xFF82AAFF)
 private val CAT_WALLPAPER = Color(0xFF4DD0C4)
 private val CAT_APPEARANCE = Color(0xFFFF7EB6)
 private val CAT_ABOUT = Color(0xFF6BA8FF)
+private val CAT_SUPPORT = Color(0xFF4DD07A)
 private val OK_GREEN = Color(0xFF4DD07A)
 private val WARN_AMBER = Color(0xFFFFC24D)
 private val ERR_RED = Color(0xFFFF5A5A)
@@ -1700,6 +1704,7 @@ private fun SettingsHome(status: GatewayClient.Status, onOpen: (String) -> Unit)
         CategoryCard(Icons.Filled.Chat, CAT_WALLPAPER, "Chat", "Wallpaper, bubble style and header") { onOpen("chat") }
         CategoryCard(Icons.Filled.Palette, CAT_APPEARANCE, "Appearance", "Theme and accent color") { onOpen("appearance") }
         CategoryCard(Icons.Filled.Info, CAT_ABOUT, "About", "App information and reset") { onOpen("about") }
+        CategoryCard(Icons.Filled.Favorite, CAT_SUPPORT, "Support Development", "Donate via UPI or crypto to support AyX") { onOpen("support") }
         Spacer(Modifier.height(16.dp))
     }
 }
@@ -2135,6 +2140,79 @@ private object Obf {
     }
 }
 
+// ===== Support Development: UPI (India) + crypto (other countries). All addresses/links are obfuscated
+// and QR codes are generated at runtime, so nothing is plainly visible in a decompile/re-mod. =====
+@Composable
+private fun SupportSettings(ctx: Context) {
+    val clip = LocalClipboardManager.current
+    fun copy(v: String) { clip.setText(AnnotatedString(v)); Toast.makeText(ctx, "Copied", Toast.LENGTH_SHORT).show() }
+
+    val upiUrl = Obf.d("NAheSn4dClgSbTEZChk8UwNBKzsuGhEAPw8oeCEbA10FQBN7KW4qAQ==")
+    val upiId  = Obf.d("KBVWCSlyE1YJ")
+    val bep20  = Obf.d("cQBSQ2MLSQsKZSMaAUZgAh8AWWB2G1FDaAFJWlk3c0sOR2kBHwBeMHlL")
+    val trc20  = Obf.d("FTVQAht2GGBTNA1NVTsnUzdXLj0AIkAJaF8ddywwNC8DBQ==")
+    val erc20  = Obf.d("cQBSQ2MLSQsKZSMaAUZgAh8AWWB2G1FDaAFJWlk3c0sOR2kBHwBeMHlL")
+    val binUrl = Obf.d("KQxDACIIVRYKIjFWVRk/UxRaDnwiF1pfJFwTFBogbjVeFAldTVAl")
+
+    Text("Your support keeps AyX free and updated ❤️", style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp))
+
+    Text("SUPPORT · INDIA (UPI)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
+    PayCard(title = "UPI", subtitle = upiId, qrContent = upiUrl, address = upiId,
+        actionLabel = "Pay via UPI", onAction = { openUrl(ctx, upiUrl) }, onCopy = { copy(upiId) })
+
+    Text("SUPPORT · OTHER COUNTRIES (USDT)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
+    PayCard("USDT · BEP20", "BNB Smart Chain (BSC)", bep20, bep20, onCopy = { copy(bep20) })
+    PayCard("USDT · TRC20", "Tron network", trc20, trc20, onCopy = { copy(trc20) })
+    PayCard("USDT · ERC20", "Ethereum network", erc20, erc20, onCopy = { copy(erc20) })
+
+    Surface(onClick = { openUrl(ctx, binUrl) }, shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(14.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconChip(Icons.Filled.Bolt, WARN_AMBER)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Binance — Pay directly", style = MaterialTheme.typography.bodyLarge)
+                Text("Opens the Binance app to pay instantly", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+
+    Spacer(Modifier.height(8.dp))
+    Text(Obf.d("AAFvUAZaG00YEzEIF7LmEhhMAj41WFUJcVsXWBIqYbqAUJeUtKIBBw=="),
+        style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp))
+}
+
+@Composable
+private fun PayCard(title: String, subtitle: String, qrContent: String, address: String,
+                    actionLabel: String? = null, onAction: (() -> Unit)? = null, onCopy: () -> Unit) {
+    val qr = remember(qrContent) { QrGen.make(qrContent) }
+    Surface(shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(18.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Box(Modifier.clip(RoundedCornerShape(18.dp)).background(Color.White).padding(12.dp)) {
+                if (qr != null) Image(qr, "qr", Modifier.size(200.dp), filterQuality = FilterQuality.None)
+                else Box(Modifier.size(200.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            }
+            Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f), modifier = Modifier.fillMaxWidth()) {
+                Row(Modifier.padding(start = 14.dp, end = 4.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(address, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f), maxLines = 3, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                    IconButton(onClick = onCopy) { Icon(Icons.Filled.ContentCopy, "copy", tint = MaterialTheme.colorScheme.primary) }
+                }
+            }
+            if (actionLabel != null && onAction != null) {
+                Button(onClick = onAction, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = AYX_GREEN)) {
+                    Icon(Icons.AutoMirrored.Filled.Send, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(actionLabel)
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun LinkRow(icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color, title: String, sub: String?, onClick: () -> Unit) {
     Surface(onClick = onClick, shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
@@ -2170,7 +2248,7 @@ private fun AboutSettings(ctx: Context, onLogout: () -> Unit) {
 
     Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(Obf.d("CR1OXHF7XVRLEzggFxIoEryfpckrmabg"), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text(Obf.d("CR1OXHF7XVRLEzggFxIoEryfpckrLQ=="), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Text("If you love my project, please give me a ⭐ on my GitHub project.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Button(onClick = { openUrl(ctx, Obf.d("KQxDACIIVRYMOzUQQhJ/URVURDsnGU8JfnMDYTw6IAxEESFC")) }, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Filled.Star, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Star on GitHub")
