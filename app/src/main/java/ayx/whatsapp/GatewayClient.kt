@@ -181,6 +181,10 @@ object GatewayClient {
         post("/sendreply", JSONObject().put("jid", jid).put("text", text).put("quotedId", quotedId)).optBoolean("ok", false)
     }
 
+    suspend fun editMessage(jid: String, id: String, text: String): JSONObject = withContext(Dispatchers.IO) {
+        post("/editmessage", JSONObject().put("jid", jid).put("id", id).put("text", text))
+    }
+
     suspend fun deleteMessage(jid: String, id: String?, text: String, ts: Long, forEveryone: Boolean, fromMe: Boolean) = withContext(Dispatchers.IO) {
         val o = JSONObject().put("jid", jid).put("forEveryone", forEveryone).put("fromMe", fromMe).put("text", text).put("ts", ts)
         if (id != null) o.put("id", id)

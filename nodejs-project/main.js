@@ -482,6 +482,15 @@ async function handleMessages({ messages, type }) {
         applyEdit(proto.key?.id, proto.editedMessage, eTs)
         continue
       }
+      // some clients deliver an incoming edit wrapped in editedMessage (no top-level protocolMessage)
+      if (!proto && msg.message.editedMessage) {
+        const inner = msg.message.editedMessage.message || msg.message.editedMessage
+        const ep = inner && inner.protocolMessage
+        const eTs = msg.messageTimestamp ? Number(msg.messageTimestamp) * 1000 : Date.now()
+        if (ep && ep.editedMessage) applyEdit(ep.key?.id || id, ep.editedMessage, eTs)
+        else if (inner) applyEdit(id, inner, eTs)
+        continue   // never render the edit wrapper as a new (empty) bubble
+      }
 
       if (!from) continue
       if (from === 'status@broadcast') {
@@ -502,6 +511,9 @@ async function handleMessages({ messages, type }) {
       entry.quoted = quotedOf(msg.message)
       await enrichMedia(msg, entry)
       const text = entry.text
+
+      // safety net: never show blank incoming bubbles (stray edit/protocol/system messages)
+      if (!fromMe && !entry.text && !entry.media) continue
 
       // store EVERY message (both directions) for anti-delete + history
       remember(id, entry)
@@ -1052,6 +1064,23 @@ app.post('/sendreply', async (req, res) => {
     } catch (e) { await sock.sendMessage(jid, { text }) }
     res.json({ ok: true })
   } catch (e) { res.status(500).json({ error: e?.message }) }
+})
+
+app.post('/editmessage', async (req, res) => {
+  try {
+    if (!sock || status.connection !== 'open') return res.json({ ok: false, error: 'not connected' })
+    const jid = String(req.body?.jid || '')
+    const id = String(req.body?.id || '')
+    const text = String(req.body?.text || '')
+    if (!jid || !id || !text) return res.json({ ok: false, error: 'jid,id,text required' })
+    // reuse the original stanza key when we have it, else reconstruct for our own message
+    const raw = rawStore.get(id)
+    const key = (raw && raw.key) ? raw.key : { remoteJid: jid, fromMe: true, id }
+    await sock.sendMessage(jid, { text, edit: key })
+    const e = msgStore.get(id)   // reflect locally right away (also lives in msgLog)
+    if (e) { e.text = text; e.edited = true; e.editedTs = Date.now(); saveMessagesDebounced() }
+    res.json({ ok: true })
+  } catch (e) { res.json({ ok: false, error: e?.message }) }
 })
 
 app.post('/sendraw', async (req, res) => {

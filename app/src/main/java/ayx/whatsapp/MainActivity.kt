@@ -930,6 +930,15 @@ fun GatewayApp() {
                     optimistic.add(OptMsg(ocChat, text, System.currentTimeMillis(), qtext))
                     scope.launch { try { GatewayClient.sendReply(ocChat, text, qid) } catch (e: Exception) { notify("send error: ${e.message}") } }
                 },
+                onEditMsg = { m, txt ->
+                    val mid = m.id
+                    if (mid == null) notify("can't edit this message")
+                    else scope.launch {
+                        runCatching { GatewayClient.editMessage(m.chat, mid, txt) }
+                            .onSuccess { r -> if (r.optBoolean("ok", false)) { notify("edited"); messages = GatewayClient.getMessages() } else notify("edit failed: " + r.optString("error", "too old?")) }
+                            .onFailure { notify("edit error: ${it.message}") }
+                    }
+                },
                 previewCache = previewCache,
                 dpCache = dpCache,
                 wallpaper = chatWp
@@ -1103,6 +1112,7 @@ private fun ChatDetail(
     onAttach: () -> Unit,
     onCamera: () -> Unit,
     onReplySend: (String, String, String) -> Unit,
+    onEditMsg: (GatewayClient.Msg, String) -> Unit,
     previewCache: MutableMap<String, ImageBitmap?>,
     dpCache: MutableMap<String, ImageBitmap?>,
     wallpaper: ImageBitmap?,
@@ -1110,6 +1120,7 @@ private fun ChatDetail(
     var input by remember { mutableStateOf("") }
     var replyTo by remember { mutableStateOf<GatewayClient.Msg?>(null) }
     var reactMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
+    var editMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
     reactMsg?.let { rm ->
         Dialog(onDismissRequest = { reactMsg = null }) {
             Surface(shape = RoundedCornerShape(20.dp), tonalElevation = 4.dp) {
@@ -1121,11 +1132,26 @@ private fun ChatDetail(
                         }
                     }
                     HorizontalDivider()
+                    if (rm.fromMe && rm.text.isNotBlank() && !rm.deleted)
+                        TextButton(onClick = { editMsg = rm; reactMsg = null }) { Text("Edit message") }
                     if (rm.fromMe) TextButton(onClick = { onDeleteMsg(rm, true); reactMsg = null }) { Text("Delete for everyone") }
                     TextButton(onClick = { onDeleteMsg(rm, false); reactMsg = null }) { Text("Delete for me") }
                 }
             }
         }
+    }
+    editMsg?.let { em ->
+        var newText by remember(em.id) { mutableStateOf(em.text) }
+        AlertDialog(
+            onDismissRequest = { editMsg = null },
+            title = { Text("Edit message") },
+            text = {
+                OutlinedTextField(newText, { newText = it }, modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Message") }, shape = RoundedCornerShape(14.dp), maxLines = 5)
+            },
+            confirmButton = { TextButton(onClick = { onEditMsg(em, newText.trim()); editMsg = null }, enabled = newText.isNotBlank() && newText.trim() != em.text) { Text("Save") } },
+            dismissButton = { TextButton(onClick = { editMsg = null }) { Text("Cancel") } }
+        )
     }
     // newest first (reverseLayout shows newest at bottom, opens there, no jump)
     val rows = remember(messages, optimistic) {
