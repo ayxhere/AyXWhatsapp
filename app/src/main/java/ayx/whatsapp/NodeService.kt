@@ -91,5 +91,7 @@ class NodeService : Service() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(i)
             else ctx.startService(i)
         }
+
+        fun stop(ctx: Context) { runCatching { ctx.stopService(Intent(ctx, NodeService::class.java)) } }
     }
 }

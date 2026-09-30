@@ -460,8 +460,10 @@ async function enrichMedia(msg, entry) {
   }
 }
 
-// keep the media cache from growing forever: cap total size, delete oldest first
-const MEDIA_CAP_BYTES = 250 * 1024 * 1024
+// keep the media cache from growing forever: cap total size, delete oldest first,
+// but NEVER touch files newer than 25h so live statuses (24h) and recent chats survive
+const MEDIA_CAP_BYTES = 300 * 1024 * 1024
+const MEDIA_PROTECT_MS = 25 * 3600 * 1000
 function pruneMediaDir() {
   try {
     const files = fs.readdirSync(MEDIA_DIR).map(f => {
@@ -470,9 +472,11 @@ function pruneMediaDir() {
     }).filter(Boolean)
     let total = files.reduce((a, b) => a + b.size, 0)
     if (total <= MEDIA_CAP_BYTES) return
+    const now = Date.now()
     files.sort((a, b) => a.mt - b.mt)
     for (const f of files) {
       if (total <= MEDIA_CAP_BYTES) break
+      if (now - f.mt < MEDIA_PROTECT_MS) continue   // keep recent (live statuses, recent media)
       try { fs.unlinkSync(f.p); total -= f.size } catch (_) {}
     }
     log('media pruned to', Math.round(total / 1048576) + 'MB')
@@ -531,6 +535,8 @@ async function handleMessages({ messages, type }) {
           const sTs = msg.messageTimestamp ? Number(msg.messageTimestamp) * 1000 : Date.now()
           const sEntry = { sender: sndr, name: fromMe ? 'My Status' : (msg.pushName || ''), mine: fromMe, id: msg.key.id, text: extractText(msg.message), ts: sTs }
           try { await enrichMedia(msg, sEntry) } catch (_) {}
+          // keep raw so status media can be re-fetched on demand if the cache file is gone
+          if (msg.key.id) { rawStore.set(msg.key.id, { key: msg.key, message: msg.message }); if (rawStore.size > 500) { const rk = rawStore.keys().next().value; rawStore.delete(rk) } }
           statuses.unshift(sEntry)
           if (statuses.length > 120) statuses.length = 120
           saveStatusesDebounced()
@@ -1127,7 +1133,7 @@ app.post('/forward', async (req, res) => {
     let sent = 0; const errs = []
     for (const jid of jids) {
       try {
-        if (raw && raw.message) await sock.sendMessage(jid, { forward: { key: raw.key, message: raw.message } })
+        if (raw && raw.message) await sock.sendMessage(jid, { forward: { key: raw.key, message: raw.message }, force: true })
         else if (e && e.text) await sock.sendMessage(jid, { text: e.text })
         else throw new Error('no content to forward')
         sent++
@@ -1264,10 +1270,22 @@ app.get('/statuses', (req, res) => {
 app.get('/messages', (req, res) => res.json({ items: msgLog.slice(0, 200) }))
 app.get('/deleted', (req, res) => res.json({ items: deletedList }))
 
-app.get('/media/:name', (req, res) => {
-  const f = path.join(MEDIA_DIR, path.basename(req.params.name))
-  if (!fs.existsSync(f)) return res.status(404).end()
-  res.sendFile(f)
+app.get('/media/:name', async (req, res) => {
+  const name = path.basename(req.params.name)
+  const f = path.join(MEDIA_DIR, name)
+  if (fs.existsSync(f)) return res.sendFile(f)
+  // missing (pruned / cache cleared) -> re-download from the raw message if we still have it
+  const id = name.replace(/\.[^.]+$/, '')
+  const raw = rawStore.get(id)
+  if (raw && raw.message && sock) {
+    try {
+      const buf = await downloadMediaMessage({ key: raw.key, message: raw.message }, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage })
+      fs.mkdirSync(MEDIA_DIR, { recursive: true })
+      fs.writeFileSync(f, buf)
+      return res.sendFile(f)
+    } catch (e) { log('media re-download failed', name, e?.message) }
+  }
+  res.status(404).end()
 })
 
 app.post('/logout', async (req, res) => {

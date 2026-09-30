@@ -18,6 +18,8 @@ object ChatStyle {
     val recvColor = mutableStateOf(0)   // left side (their messages)
     // show the "Forwarded" tag on forwarded messages (UI-only, default on)
     val showForwardTag = mutableStateOf(true)
+    // keep the gateway alive in background via a foreground service (shows a silent notification)
+    val runBackground = mutableStateOf(true)
     private var prefs: android.content.SharedPreferences? = null
 
     val bubbleStyles: List<Pair<String, String>> = listOf(
@@ -56,6 +58,7 @@ object ChatStyle {
         sentColor.value = prefs!!.getInt("sentColor", 0)
         recvColor.value = prefs!!.getInt("recvColor", 0)
         showForwardTag.value = prefs!!.getBoolean("showForwardTag", true)
+        runBackground.value = prefs!!.getBoolean("runBackground", true)
     }
 
     fun setBubble(s: String) { bubbleStyle.value = s; prefs?.edit()?.putString("bubble", s)?.apply() }
@@ -63,6 +66,7 @@ object ChatStyle {
     fun setSentColor(c: Int) { sentColor.value = c; prefs?.edit()?.putInt("sentColor", c)?.apply() }
     fun setRecvColor(c: Int) { recvColor.value = c; prefs?.edit()?.putInt("recvColor", c)?.apply() }
     fun setShowForwardTag(b: Boolean) { showForwardTag.value = b; prefs?.edit()?.putBoolean("showForwardTag", b)?.apply() }
+    fun setRunBackground(b: Boolean) { runBackground.value = b; prefs?.edit()?.putBoolean("runBackground", b)?.apply() }
 
     fun bubbleLabel(key: String): String = bubbleStyles.firstOrNull { it.first == key }?.second ?: "iOS"
 

@@ -599,7 +599,11 @@ fun GatewayApp() {
         }
     }
 
-    LaunchedEffect(Unit) { NodeService.start(ctx) }
+    LaunchedEffect(ChatStyle.runBackground.value) {
+        // node runs in-process regardless; the foreground service (silent notification) is only for background keep-alive
+        withContext(Dispatchers.IO) { NodeRuntime.ensureStarted(ctx.applicationContext) }
+        if (ChatStyle.runBackground.value) NodeService.start(ctx) else NodeService.stop(ctx)
+    }
     LaunchedEffect(Unit) {
         ContactStore.init(ctx)
         if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
@@ -1058,10 +1062,16 @@ fun GatewayApp() {
                     onForward = { targets ->
                         val mid = fm.id
                         forwardMsg = null
-                        if (mid != null && targets.isNotEmpty()) scope.launch {
-                            runCatching { GatewayClient.forward(mid, targets) }
-                                .onSuccess { r -> notify(if (r.optBoolean("ok", false)) "forwarded to ${r.optInt("sent", targets.size)}" else "forward failed: " + r.optString("error", "")) }
-                                .onFailure { notify("forward error: ${it.message}") }
+                        if (mid != null && targets.isNotEmpty()) {
+                            notify("forwarding…")
+                            scope.launch {
+                                runCatching { GatewayClient.forward(mid, targets) }
+                                    .onSuccess { r ->
+                                        notify(if (r.optBoolean("ok", false)) "forwarded to ${r.optInt("sent", targets.size)}" else "forward failed: " + r.optString("error", ""))
+                                        messages = GatewayClient.getMessages()
+                                    }
+                                    .onFailure { notify("forward error: ${it.message}") }
+                            }
                         }
                     }
                 )
@@ -1793,6 +1803,7 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
         SettingRow(Icons.AutoMirrored.Filled.ArrowForward, CAT_AI, "Forwarded tag", "Show the \"Forwarded\" label on forwarded messages", ChatStyle.showForwardTag.value) { ChatStyle.setShowForwardTag(it) }
     }
     SettingsGroup("Background & battery") {
+        SettingRow(Icons.Filled.CloudOff, CAT_AI, "Run in background", "Keeps a silent notification so messages arrive when the app is closed. Turn OFF to remove the notification (messages then arrive only while the app is open).", ChatStyle.runBackground.value) { ChatStyle.setRunBackground(it) }
         ActionRow(Icons.Filled.Bolt, WARN_AMBER, "Allow battery (no optimization)", "Keep the gateway alive in the background") {
             runCatching {
                 val i = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + ctx.packageName)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
