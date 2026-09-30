@@ -27,6 +27,7 @@ const MEDIA_DIR = process.env.WAGW_MEDIA_DIR || path.join(path.dirname(AUTH_DIR)
 const MESSAGES_FILE = path.join(path.dirname(AUTH_DIR), 'messages.json')
 const NAMES_FILE = path.join(path.dirname(AUTH_DIR), 'names.json')
 const STATUS_FILE = path.join(path.dirname(AUTH_DIR), 'statuses.json')
+const REMINDER_FILE = path.join(path.dirname(AUTH_DIR), 'reminders.json')
 
 const logger = pino({ level: 'warn' })
 
@@ -76,6 +77,58 @@ let _statusTimer = null
 function saveStatusesDebounced() {
   if (_statusTimer) return
   _statusTimer = setTimeout(() => { _statusTimer = null; try { fs.writeFileSync(STATUS_FILE, JSON.stringify(statuses.slice(0, 120))) } catch (_) {} }, 1500)
+}
+
+// ===== presence reminder: watch chosen contacts, log online/offline, queue online alerts for the app =====
+const trackedJids = new Set()          // jids we keep a presence subscription on (persisted)
+const presenceState = new Map()        // jid -> { online, since, lastSeen }
+const presenceLog = new Map()          // jid -> [{ p:'online'|'offline', ts }]  (bounded to last 40)
+let reminderOnlineQueue = []           // [{ jid, ts }] offline->online transitions, drained by the app for notifications
+try {
+  const r = JSON.parse(fs.readFileSync(REMINDER_FILE, 'utf8'))
+  if (Array.isArray(r)) r.forEach(j => j && trackedJids.add(j))
+  else if (r && Array.isArray(r.jids)) {
+    r.jids.forEach(j => j && trackedJids.add(j))
+    if (r.log) for (const k of Object.keys(r.log)) if (Array.isArray(r.log[k])) presenceLog.set(k, r.log[k])
+  }
+} catch (_) {}
+let _remTimer = null
+function saveReminders() {
+  if (_remTimer) return
+  _remTimer = setTimeout(() => {
+    _remTimer = null
+    try {
+      const log = {}; for (const [k, v] of presenceLog) log[k] = (v || []).slice(-40)
+      fs.writeFileSync(REMINDER_FILE, JSON.stringify({ jids: [...trackedJids], log }))
+    } catch (_) {}
+  }, 1200)
+}
+function isOnlinePresence(p) { return p === 'available' || p === 'composing' || p === 'recording' }
+function recordPresence(jid, presence, lastSeen) {
+  const online = isOnlinePresence(presence)
+  const prev = presenceState.get(jid)
+  const now = Date.now()
+  if (!prev || prev.online !== online) {
+    const arr = presenceLog.get(jid) || []
+    arr.push({ p: online ? 'online' : 'offline', ts: now })
+    while (arr.length > 40) arr.shift()
+    presenceLog.set(jid, arr)
+    presenceState.set(jid, { online, since: now, lastSeen: lastSeen || (prev ? prev.lastSeen : null) })
+    if (online && prev && !prev.online) reminderOnlineQueue.push({ jid, ts: now })  // came online (skip the very first sighting)
+    saveReminders()
+  } else if (lastSeen && lastSeen !== prev.lastSeen) {
+    presenceState.set(jid, { ...prev, lastSeen })
+  }
+}
+function subscribeTracked() {
+  if (!sock) return
+  for (const jid of trackedJids) { try { sock.presenceSubscribe(jid) } catch (_) {} }
+}
+let reminderResubTimer = null
+function startReminderResub() {
+  if (reminderResubTimer) return
+  // presence subscriptions lapse; renew them so background tracking keeps receiving updates
+  reminderResubTimer = setInterval(() => { subscribeTracked() }, 20000)
 }
 
 function pushHistory(jid, role, content) {
@@ -322,6 +375,8 @@ function handleConnUpdate(u) {
     currentQr = null; pairingCode = null; pairingNumber = null
     log('CONNECTED as', status.me)
     applyPresence()
+    subscribeTracked()          // re-arm presence subscriptions for tracked contacts after (re)connect
+    startReminderResub()
   }
 
   if (connection === 'close') {
@@ -728,7 +783,11 @@ async function startSocket() {
   sock.ev.on('presence.update', ({ id, presences: p }) => {
     if (!id || !p) return
     const first = Object.values(p)[0]
-    if (first) presences.set(id, { presence: first.lastKnownPresence || 'unavailable', lastSeen: first.lastSeen || null })
+    if (first) {
+      const presence = first.lastKnownPresence || 'unavailable'
+      presences.set(id, { presence, lastSeen: first.lastSeen || null })
+      if (trackedJids.has(id)) recordPresence(id, presence, first.lastSeen || null)
+    }
   })
 }
 
@@ -788,6 +847,36 @@ app.get('/presence', async (req, res) => {
   try { await sock.presenceSubscribe(jid) } catch (_) {}
   const p = presences.get(jid) || { presence: 'unavailable', lastSeen: null }
   res.json(p)
+})
+
+// ---- presence reminder endpoints ----
+app.post('/reminder/add', async (req, res) => {
+  const jid = String(req.body?.jid || '')
+  if (!jid) return res.json({ ok: false, error: 'no jid' })
+  trackedJids.add(jid)
+  if (!presenceState.has(jid)) presenceState.set(jid, { online: false, since: Date.now(), lastSeen: null })
+  saveReminders()
+  try { if (sock) await sock.presenceSubscribe(jid) } catch (_) {}
+  res.json({ ok: true })
+})
+app.post('/reminder/remove', (req, res) => {
+  const jid = String(req.body?.jid || '')
+  trackedJids.delete(jid); presenceState.delete(jid); presenceLog.delete(jid)
+  reminderOnlineQueue = reminderOnlineQueue.filter(x => x.jid !== jid)
+  saveReminders()
+  res.json({ ok: true })
+})
+app.get('/reminder/list', (req, res) => {
+  const items = [...trackedJids].map(jid => {
+    const st = presenceState.get(jid) || { online: false, since: 0, lastSeen: null }
+    return { jid, online: !!st.online, since: st.since || 0, lastSeen: st.lastSeen || 0, events: presenceLog.get(jid) || [] }
+  })
+  res.json({ items })
+})
+// drained by the app's background poller to fire "X is online" notifications
+app.get('/reminder/pending', (req, res) => {
+  const items = reminderOnlineQueue; reminderOnlineQueue = []
+  res.json({ items })
 })
 
 app.get('/session/export', (req, res) => {
@@ -1321,7 +1410,9 @@ app.post('/logout', async (req, res) => {
     fs.rmSync(AUTH_DIR, { recursive: true, force: true })
     sock = null; currentQr = null; pairingCode = null; pairingNumber = null
     msgStore.clear(); rawStore.clear(); deletedList = []; msgLog = []; chatHistory.clear(); dpCache.clear(); presences.clear(); statuses = []
+    trackedJids.clear(); presenceState.clear(); presenceLog.clear(); reminderOnlineQueue = []
     try { fs.rmSync(MESSAGES_FILE, { force: true }) } catch (_) {}
+    try { fs.rmSync(REMINDER_FILE, { force: true }) } catch (_) {}
     status = { connection: 'close', registered: false, me: null, lastError: null }
     await loadAuth(); await startSocket()
     res.json({ ok: true })

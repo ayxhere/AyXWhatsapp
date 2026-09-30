@@ -290,6 +290,34 @@ object GatewayClient {
         } catch (e: Exception) { emptyList() }
     }
 
+    // ---- presence reminder (online/offline tracker) ----
+    data class ReminderEvent(val online: Boolean, val ts: Long)
+    data class ReminderEntry(val jid: String, val online: Boolean, val since: Long, val lastSeen: Long, val events: List<ReminderEvent>)
+    suspend fun reminderList(): List<ReminderEntry> = withContext(Dispatchers.IO) {
+        try {
+            val arr = get("/reminder/list").optJSONArray("items") ?: return@withContext emptyList()
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                val ev = o.optJSONArray("events")
+                val events = if (ev == null) emptyList() else (0 until ev.length()).map { k -> val e = ev.getJSONObject(k); ReminderEvent(e.optString("p") == "online", e.optLong("ts", 0L)) }
+                ReminderEntry(o.optString("jid"), o.optBoolean("online", false), o.optLong("since", 0L), o.optLong("lastSeen", 0L), events)
+            }
+        } catch (e: Exception) { emptyList() }
+    }
+    suspend fun reminderAdd(jid: String): Boolean = withContext(Dispatchers.IO) {
+        runCatching { post("/reminder/add", JSONObject().put("jid", jid)).optBoolean("ok", false) }.getOrDefault(false)
+    }
+    suspend fun reminderRemove(jid: String): Boolean = withContext(Dispatchers.IO) {
+        runCatching { post("/reminder/remove", JSONObject().put("jid", jid)).optBoolean("ok", false) }.getOrDefault(false)
+    }
+    // (jid, ts) pairs of contacts that just came online — drained by the background notifier
+    suspend fun reminderPending(): List<Pair<String, Long>> = withContext(Dispatchers.IO) {
+        try {
+            val arr = get("/reminder/pending").optJSONArray("items") ?: return@withContext emptyList()
+            (0 until arr.length()).map { i -> val o = arr.getJSONObject(i); o.optString("jid") to o.optLong("ts", 0L) }
+        } catch (e: Exception) { emptyList() }
+    }
+
     data class Presence(val online: Boolean, val lastSeen: Long)
     suspend fun getPresence(jid: String): Presence = withContext(Dispatchers.IO) {
         try {

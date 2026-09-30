@@ -13,22 +13,22 @@ object MediaSaver {
             val (collection, relPath, mime) = when (type) {
                 "image", "sticker" -> Triple(
                     MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                    Environment.DIRECTORY_PICTURES + "/AyX WhatsApp",
+                    Environment.DIRECTORY_PICTURES + "/AyX",
                     "image/jpeg"
                 )
                 "video" -> Triple(
                     MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                    Environment.DIRECTORY_MOVIES + "/AyX WhatsApp",
+                    Environment.DIRECTORY_MOVIES + "/AyX",
                     "video/mp4"
                 )
                 "audio" -> Triple(
                     MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
-                    Environment.DIRECTORY_MUSIC + "/AyX WhatsApp",
+                    Environment.DIRECTORY_MUSIC + "/AyX",
                     "audio/ogg"
                 )
                 else -> Triple(
                     MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                    Environment.DIRECTORY_DOWNLOADS + "/AyX WhatsApp",
+                    Environment.DIRECTORY_DOWNLOADS + "/AyX",
                     "application/octet-stream"
                 )
             }

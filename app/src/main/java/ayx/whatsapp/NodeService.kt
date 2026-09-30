@@ -31,7 +31,27 @@ class NodeService : Service() {
         startForeground(NOTIF_ID, buildNotification())
         NodeRuntime.ensureStarted(applicationContext)
         startNotifPolling()
+        startReminderPolling()
         return START_STICKY
+    }
+
+    // watch tracked contacts coming online and fire "X is online" notifications, even in the background
+    private fun startReminderPolling() {
+        scope.launch {
+            ContactStore.init(applicationContext); SetName.init(applicationContext)
+            while (isActive) {
+                try {
+                    val pending = GatewayClient.reminderPending()
+                    for ((jid, _) in pending) {
+                        if (jid.isBlank()) continue
+                        val name = ContactStore.nameFor(jid) ?: ("+" + jid.substringBefore("@").filter { it.isDigit() })
+                        val dp = try { GatewayClient.dpBytes(jid)?.let { BitmapFactory.decodeByteArray(it, 0, it.size) } } catch (_: Exception) { null }
+                        NotificationHelper.notifyOnline(applicationContext, jid, name, dp)
+                    }
+                } catch (_: Exception) {}
+                delay(6000)
+            }
+        }
     }
 
     override fun onDestroy() { scope.cancel(); super.onDestroy() }

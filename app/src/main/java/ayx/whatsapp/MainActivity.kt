@@ -101,6 +101,11 @@ import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Done
@@ -176,7 +181,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private const val APP_NAME = "AyX WhatsApp"
+private const val APP_NAME = "AyX"
 private val IOS_BLUE = Color(0xFF0A84FF)
 private val AYX_GREEN = Color(0xFF25D366)
 private val AYX_RED = Color(0xFFFF5A5A)
@@ -227,6 +232,7 @@ class MainActivity : ComponentActivity() {
         handleDeepLink(intent)
 
         StatusData.init(applicationContext)
+        StatusFlags.init(applicationContext)
         SetName.init(applicationContext)
         ThemeStore.init(applicationContext)
         ChatStyle.init(applicationContext)
@@ -277,6 +283,31 @@ object ChatFlags {
     private fun save() { prefs?.edit()?.putStringSet("hidden", hidden.keys.toSet())?.putStringSet("locked", locked.keys.toSet())?.apply() }
     fun toggleHidden(jid: String) { if (hidden[jid] == true) hidden.remove(jid) else hidden[jid] = true; save() }
     fun toggleLocked(jid: String) { if (locked[jid] == true) locked.remove(jid) else locked[jid] = true; save() }
+}
+
+// per-status-sender flags — same idea as ChatFlags but for the Status tab (long-press = mute / hide / lock)
+object StatusFlags {
+    val muted = androidx.compose.runtime.mutableStateMapOf<String, Boolean>()
+    val hidden = androidx.compose.runtime.mutableStateMapOf<String, Boolean>()
+    val locked = androidx.compose.runtime.mutableStateMapOf<String, Boolean>()
+    var reveal by androidx.compose.runtime.mutableStateOf(false)
+    private var prefs: android.content.SharedPreferences? = null
+    // status senders come in several jid shapes (…@s.whatsapp.net, …:12@…, lid) — key by the digits only so a flag sticks
+    fun keyOf(sender: String): String = sender.substringBefore("@").substringBefore(":").filter { it.isDigit() }.ifBlank { sender }
+    fun init(ctx: Context) {
+        if (prefs != null) return
+        prefs = ctx.getSharedPreferences("statusflags", Context.MODE_PRIVATE)
+        prefs?.getStringSet("muted", emptySet())?.forEach { muted[it] = true }
+        prefs?.getStringSet("hidden", emptySet())?.forEach { hidden[it] = true }
+        prefs?.getStringSet("locked", emptySet())?.forEach { locked[it] = true }
+    }
+    private fun save() { prefs?.edit()?.putStringSet("muted", muted.keys.toSet())?.putStringSet("hidden", hidden.keys.toSet())?.putStringSet("locked", locked.keys.toSet())?.apply() }
+    fun isMuted(sender: String) = muted[keyOf(sender)] == true
+    fun isHidden(sender: String) = hidden[keyOf(sender)] == true
+    fun isLocked(sender: String) = locked[keyOf(sender)] == true
+    fun toggleMuted(sender: String) { val k = keyOf(sender); if (muted[k] == true) muted.remove(k) else muted[k] = true; save() }
+    fun toggleHidden(sender: String) { val k = keyOf(sender); if (hidden[k] == true) hidden.remove(k) else hidden[k] = true; save() }
+    fun toggleLocked(sender: String) { val k = keyOf(sender); if (locked[k] == true) locked.remove(k) else locked[k] = true; save() }
 }
 
 
@@ -432,6 +463,7 @@ fun GatewayApp() {
     var forwardMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
     var viewImg by remember { mutableStateOf<ImageBitmap?>(null) }
     var viewVideoUrl by remember { mutableStateOf<String?>(null) }
+    var dpView by remember { mutableStateOf<String?>(null) }   // jid whose profile photo is previewed full-screen
     var toast by remember { mutableStateOf<String?>(null) }
     var statusResult by remember { mutableStateOf<String?>(null) }
     val optimistic = remember { mutableStateListOf<OptMsg>() }
@@ -465,6 +497,16 @@ fun GatewayApp() {
     }
     val revealUnlock = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == android.app.Activity.RESULT_OK) ChatFlags.reveal = true
+    }
+    // reveal hidden statuses (keyguard-gated, like hidden chats)
+    val statusRevealUnlock = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) StatusFlags.reveal = true
+    }
+    // open a locked status only after device unlock
+    var pendingStatusOpen by remember { mutableStateOf<String?>(null) }
+    val statusUnlockLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) pendingStatusOpen?.let { storyView = it }
+        pendingStatusOpen = null
     }
     var pendingStatus by remember { mutableStateOf<Pair<Uri, String>?>(null) }
     val statusPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
@@ -581,6 +623,7 @@ fun GatewayApp() {
     LaunchedEffect(Unit) {
         ChatFlags.prefs = blkPrefs
         ChatFlags.reveal = false
+        StatusFlags.reveal = false
         blkPrefs.getStringSet("hidden", emptySet())!!.forEach { ChatFlags.hidden[it] = true }
         blkPrefs.getStringSet("locked", emptySet())!!.forEach { ChatFlags.locked[it] = true }
     }
@@ -672,7 +715,9 @@ fun GatewayApp() {
                         statuses = statuses.filterNot { it.id == id }
                         notify(res.second)
                     } },
-            onSeen = { st -> val sid = st.id; if (!settings.hideStatusRead && sid != null) scope.launch { GatewayClient.markStatusRead(sid, st.sender) } },
+            onSeen = { st -> val sid = st.id
+                StatusData.markSeen(sid)                                   // local read-ordering: always track, regardless of the receipt setting
+                if (!settings.hideStatusRead && sid != null) scope.launch { GatewayClient.markStatusRead(sid, st.sender) } },
             onClose = { storyView = null })
     }
 
@@ -796,6 +841,22 @@ fun GatewayApp() {
                 }
             }
         }
+    }
+    // profile-photo viewer (tap a contact avatar in a chat) — preview full DP + download
+    dpView?.let { jid ->
+        val nm = chatTitleOf(messages, jid)
+        ProfilePhotoViewer(jid, nm,
+            onDownload = {
+                scope.launch {
+                    val bytes = GatewayClient.dpBytes(jid)
+                    if (bytes == null) notify("no profile photo to download")
+                    else {
+                        val ok = MediaSaver.save(ctx, bytes, "dp_" + jid.substringBefore("@").filter { it.isDigit() } + ".jpg", "image")
+                        notify(if (ok) "photo saved to $APP_NAME folder" else "save failed")
+                    }
+                }
+            },
+            onClose = { dpView = null })
     }
 
     val chatName = openChat?.let { c -> chatTitle(messages.filter { it.chat == c }) }
@@ -963,6 +1024,7 @@ fun GatewayApp() {
                     }
                 },
                 onForward = { m -> if (m.id == null) notify("can't forward this") else forwardMsg = m },
+                onAvatarClick = { jid -> dpView = jid },
                 previewCache = previewCache,
                 dpCache = dpCache,
                 wallpaper = chatWp
@@ -978,7 +1040,8 @@ fun GatewayApp() {
                 onEdit = { showSetName = true },
                 onWallpaper = { chatWallpaperPicker.launch("image/*") },
                 onBlock = { scope.launch { runCatching { GatewayClient.blockChat(ocChat, true) }.onSuccess { notify("blocked"); blockedJids = blockedJids + ocChat; blkPrefs.edit().putStringSet("blocked", blockedJids).apply() }.onFailure { notify("failed: ${it.message}") } } },
-                onUnblock = { scope.launch { runCatching { GatewayClient.blockChat(ocChat, false) }.onSuccess { notify("unblocked"); blockedJids = blockedJids - ocChat; blkPrefs.edit().putStringSet("blocked", blockedJids).apply() }.onFailure { notify("failed: ${it.message}") } } }
+                onUnblock = { scope.launch { runCatching { GatewayClient.blockChat(ocChat, false) }.onSuccess { notify("unblocked"); blockedJids = blockedJids - ocChat; blkPrefs.edit().putStringSet("blocked", blockedJids).apply() }.onFailure { notify("failed: ${it.message}") } } },
+                onAvatarClick = { dpView = ocChat }
             )
         } else {
         Box(Modifier.fillMaxSize().padding(pad).consumeWindowInsets(pad)) {
@@ -993,7 +1056,12 @@ fun GatewayApp() {
                     onPickWallpaper = { wallpaperPicker.launch("image/*") },
                     onRemoveWallpaper = { File(ctx.filesDir, "wallpaper.jpg").delete(); loadWallpaper(); wallpaperVersion++; notify("wallpaper removed") },
                     onPickPhoto = { profilePicPicker.launch("image/*") },
-                    onSaveName = { n -> scope.launch { runCatching { GatewayClient.setProfileName(n) }.onSuccess { notify("name updated") }.onFailure { notify("name: ${it.message}") } } })
+                    onSaveName = { n -> scope.launch { runCatching { GatewayClient.setProfileName(n) }.onSuccess { notify("name updated") }.onFailure { notify("name: ${it.message}") } } },
+                    dpCache = dpCache,
+                    deviceContacts = deviceContacts,
+                    recentChats = messages.filter { it.chat != "status@broadcast" }.groupBy { it.chat }.entries.sortedByDescending { e -> e.value.maxOf { m -> m.ts } }.map { it.key },
+                    onEnsureContacts = { ensureContacts() },
+                    notify = { notify(it) })
                 screen == "newchat" -> NewChatScreen(deviceContacts, contactsLoading, dpCache,
                     onPickNumber = { num -> openChat = num + "@s.whatsapp.net"; screen = "chats" })
                 screen == "profile" -> ProfileScreen(myJid, dpCache,
@@ -1002,7 +1070,21 @@ fun GatewayApp() {
                 else -> ChatsWithStatus(messages, statuses, dpCache, searchQuery,
                     onPageChange = { chatsPage = it },
                     onLoadStatuses = { scope.launch { val fresh = GatewayClient.getStatuses(); statuses = if (fresh.isNotEmpty()) StatusData.merge(fresh) else StatusData.load() } },
-                    onOpenStatus = { st -> storyView = st.sender },
+                    onOpenStatus = { st ->
+                        if (StatusFlags.isLocked(st.sender)) {
+                            val km = ctx.getSystemService(KeyguardManager::class.java)
+                            if (km != null && km.isKeyguardSecure) { pendingStatusOpen = st.sender; statusUnlockLauncher.launch(km.createConfirmDeviceCredentialIntent("Unlock status", "Verify to view this status")) }
+                            else storyView = st.sender
+                        } else storyView = st.sender
+                    },
+                    onToggleStatusReveal = {
+                        if (StatusFlags.reveal) StatusFlags.reveal = false
+                        else {
+                            val km = ctx.getSystemService(KeyguardManager::class.java)
+                            if (km != null && km.isKeyguardSecure) statusRevealUnlock.launch(km.createConfirmDeviceCredentialIntent("Show hidden statuses", "Verify to reveal"))
+                            else StatusFlags.reveal = true
+                        }
+                    },
                     onDelete = { jid -> scope.launch { GatewayClient.deleteChat(jid); messages = GatewayClient.getMessages() } },
                     onOpen = { jid ->
                         if (ChatFlags.locked[jid] == true) {
@@ -1164,6 +1246,44 @@ private fun Avatar(jid: String, name: String, cache: MutableMap<String, ImageBit
     }
 }
 
+// full-screen profile-photo preview with a download button (opened by tapping a chat avatar)
+@Composable
+private fun ProfilePhotoViewer(jid: String, name: String, onDownload: () -> Unit, onClose: () -> Unit) {
+    var full by remember(jid) { mutableStateOf<ImageBitmap?>(null) }
+    var loading by remember(jid) { mutableStateOf(true) }
+    LaunchedEffect(jid) {
+        loading = true
+        val bytes = GatewayClient.dpBytes(jid)
+        full = bytes?.let { runCatching { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }.getOrNull() }
+        loading = false
+    }
+    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.96f))) {
+            Box(Modifier.fillMaxSize().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onClose() }, contentAlignment = Alignment.Center) {
+                when {
+                    full != null -> Image(full!!, "profile photo", Modifier.fillMaxWidth().aspectRatio(1f), contentScale = ContentScale.Fit)
+                    loading -> CircularProgressIndicator(color = Color.White)
+                    else -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Filled.Person, null, tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(72.dp))
+                        Spacer(Modifier.height(10.dp)); Text("No profile photo", color = Color.White.copy(alpha = 0.7f))
+                    }
+                }
+            }
+            // top bar: name + close
+            Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "close", tint = Color.White) }
+                Spacer(Modifier.width(4.dp))
+                Text(name, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            // download FAB
+            if (full != null) FloatingActionButton(onClick = onDownload, containerColor = AYX_GREEN,
+                modifier = Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(20.dp)) {
+                Icon(Icons.Filled.Download, "download", tint = Color.White)
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<String, ImageBitmap?>, query: String, onDelete: (String) -> Unit, onOpen: (String) -> Unit) {
@@ -1227,6 +1347,7 @@ private fun ChatDetail(
     onReplySend: (String, String, String) -> Unit,
     onEditMsg: (GatewayClient.Msg, String) -> Unit,
     onForward: (GatewayClient.Msg) -> Unit,
+    onAvatarClick: (String) -> Unit,
     previewCache: MutableMap<String, ImageBitmap?>,
     dpCache: MutableMap<String, ImageBitmap?>,
     wallpaper: ImageBitmap?,
@@ -1269,7 +1390,7 @@ private fun ChatDetail(
             contentPadding = PaddingValues(top = topClear, bottom = 4.dp),
             verticalArrangement = Arrangement.spacedBy(3.dp)) {
             item { Spacer(Modifier.height(6.dp)) }
-            itemsIndexed(rows, key = { i, m -> "${m.ts}-$i" }) { _, m -> Box(Modifier.fillMaxWidth().animateItem()) { MessageBubble(m, previewCache, dpCache, onMedia, onShare, onDownload, onReply = { replyTo = it }) { reactMsg = it } } }
+            itemsIndexed(rows, key = { i, m -> "${m.ts}-$i" }) { _, m -> Box(Modifier.fillMaxWidth().animateItem()) { MessageBubble(m, previewCache, dpCache, onMedia, onShare, onDownload, onReply = { replyTo = it }, onAvatarClick = onAvatarClick) { reactMsg = it } } }
         }
         replyTo?.let { rt ->
             Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 6.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1434,6 +1555,7 @@ private fun ChatGlassHeader(
     onWallpaper: () -> Unit,
     onBlock: () -> Unit,
     onUnblock: () -> Unit,
+    onAvatarClick: () -> Unit,
 ) {
     val dark = isSystemInDarkTheme()
     val frost = ChatStyle.headerAlpha()                       // 1f = solid, lower = more see-through
@@ -1451,7 +1573,7 @@ private fun ChatGlassHeader(
             Box(Modifier.matchParentSize().background(sheen))
             Row(Modifier.padding(start = 2.dp, end = 2.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "back", tint = onPill) }
-                Avatar(jid, name, dpCache, 38.dp, CircleShape)
+                Box(Modifier.clip(CircleShape).clickable { onAvatarClick() }) { Avatar(jid, name, dpCache, 38.dp, CircleShape) }
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(name, maxLines = 1, fontWeight = FontWeight.Bold, color = onPill,
@@ -1554,7 +1676,7 @@ private fun styleSpec(fromMe: Boolean, dark: Boolean, recvGrey: Color, recvText:
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String, ImageBitmap?>, dpCache: MutableMap<String, ImageBitmap?>, onMedia: (GatewayClient.Msg) -> Unit, onShare: (GatewayClient.Msg) -> Unit, onDownload: (GatewayClient.Msg) -> Unit, onReply: (GatewayClient.Msg) -> Unit, onLongClick: (GatewayClient.Msg) -> Unit) {
+private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String, ImageBitmap?>, dpCache: MutableMap<String, ImageBitmap?>, onMedia: (GatewayClient.Msg) -> Unit, onShare: (GatewayClient.Msg) -> Unit, onDownload: (GatewayClient.Msg) -> Unit, onReply: (GatewayClient.Msg) -> Unit, onAvatarClick: (String) -> Unit, onLongClick: (GatewayClient.Msg) -> Unit) {
     val ctx = LocalContext.current
     val dark = isSystemInDarkTheme()
     val spec = bubbleSpec(m.fromMe, dark)
@@ -1581,7 +1703,7 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
         verticalAlignment = Alignment.Bottom,
         horizontalArrangement = if (m.fromMe) Arrangement.End else Arrangement.Start) {
         if (!m.fromMe && m.chat.endsWith("@g.us") && !m.sender.isNullOrBlank()) {
-            Avatar(m.sender!!, m.name.ifBlank { "?" }, dpCache, 30.dp)
+            Box(Modifier.clip(CircleShape).clickable { onAvatarClick(m.sender!!) }) { Avatar(m.sender!!, m.name.ifBlank { "?" }, dpCache, 30.dp) }
             Spacer(Modifier.width(6.dp))
         }
         Surface(color = bubbleColor, shape = shape,
@@ -1654,7 +1776,7 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
 // sub-page title shown in the top app bar (single source of the back arrow)
 private fun settingsTitle(page: String): String = when (page) {
     "general" -> "General"; "autoreply" -> "Auto-reply"; "ai" -> "AI Assistant"; "chat" -> "Chat Settings"
-    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "about" -> "About"; "support" -> "Support Development"; else -> "Settings"
+    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "about" -> "About"; "support" -> "Support Development"; "reminder" -> "Reminder"; else -> "Settings"
 }
 // parent page for nested back (Wallpaper lives under Chat Settings)
 private fun settingsParent(page: String): String = if (page == "wallpaper") "chat" else "home"
@@ -1663,7 +1785,8 @@ private fun settingsParent(page: String): String = if (page == "wallpaper") "cha
 private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient.Settings, page: String, onPage: (String) -> Unit, wallpaperVersion: Int,
     onToggle: (JSONObject) -> Unit, onRules: (List<GatewayClient.Rule>) -> Unit, onLogout: () -> Unit, ctx: Context,
     onPickWallpaper: () -> Unit, onRemoveWallpaper: () -> Unit, onPickPhoto: () -> Unit,
-    onSaveName: (String) -> Unit) {
+    onSaveName: (String) -> Unit,
+    dpCache: MutableMap<String, ImageBitmap?>, deviceContacts: List<DeviceContact>, recentChats: List<String>, onEnsureContacts: () -> Unit, notify: (String) -> Unit) {
     // back arrow + title live in the top app bar; sub-pages have no second arrow
     AnimatedContent(targetState = page, transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(140)) }, label = "setpage") { p ->
         when (p) {
@@ -1675,6 +1798,7 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
             "appearance" -> SettingsSubPage { AppearanceSettings() }
             "about" -> SettingsSubPage { AboutSettings(ctx, onLogout) }
             "support" -> SettingsSubPage { SupportSettings(ctx) }
+            "reminder" -> ReminderScreen(dpCache, deviceContacts, recentChats, onEnsureContacts, notify)
             else -> SettingsHome(status) { onPage(it) }
         }
     }
@@ -1688,6 +1812,7 @@ private val CAT_WALLPAPER = Color(0xFF4DD0C4)
 private val CAT_APPEARANCE = Color(0xFFFF7EB6)
 private val CAT_ABOUT = Color(0xFF6BA8FF)
 private val CAT_SUPPORT = Color(0xFF4DD07A)
+private val CAT_REMINDER = Color(0xFFFFB26B)
 private val OK_GREEN = Color(0xFF4DD07A)
 private val WARN_AMBER = Color(0xFFFFC24D)
 private val ERR_RED = Color(0xFFFF5A5A)
@@ -1699,6 +1824,7 @@ private fun SettingsHome(status: GatewayClient.Status, onOpen: (String) -> Unit)
         StatusCard(status)
         Spacer(Modifier.height(2.dp))
         CategoryCard(Icons.Filled.Tune, CAT_GENERAL, "General", "Online, privacy and messages") { onOpen("general") }
+        CategoryCard(Icons.Filled.Notifications, CAT_REMINDER, "Reminder", "Get alerted when a contact comes online") { onOpen("reminder") }
         CategoryCard(Icons.Filled.QuestionAnswer, CAT_AUTOREPLY, "Auto-reply", "Keyword rules and automatic replies") { onOpen("autoreply") }
         CategoryCard(Icons.Filled.AutoAwesome, CAT_AI, "AI Assistant", "AI replies, groups and language") { onOpen("ai") }
         CategoryCard(Icons.Filled.Chat, CAT_WALLPAPER, "Chat", "Wallpaper, bubble style and header") { onOpen("chat") }
@@ -1856,7 +1982,7 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
             icon = { Icon(Icons.Filled.Delete, null, tint = ERR_RED) },
             title = { Text("Clear app data?") },
             text = {
-                Text("This removes AyX WhatsApp local data — chats, statuses, cached media, names, wallpaper, settings and the WhatsApp login/session. Your WhatsApp account is not deleted, but you'll need to link this device again with QR or pairing code. The app will restart.",
+                Text("This removes AyX local data — chats, statuses, cached media, names, wallpaper, settings and the login/session. Your account is not deleted, but you'll need to link this device again with QR or pairing code. The app will restart.",
                     style = MaterialTheme.typography.bodyMedium)
             },
             confirmButton = {
@@ -2362,7 +2488,7 @@ private fun NewChatScreen(contacts: List<DeviceContact>, loading: Boolean, dpCac
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, statuses: List<GatewayClient.StatusItem>, dpCache: MutableMap<String, ImageBitmap?>, query: String, onPageChange: (Int) -> Unit, onLoadStatuses: () -> Unit, onOpenStatus: (GatewayClient.StatusItem) -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit) {
+private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, statuses: List<GatewayClient.StatusItem>, dpCache: MutableMap<String, ImageBitmap?>, query: String, onPageChange: (Int) -> Unit, onLoadStatuses: () -> Unit, onOpenStatus: (GatewayClient.StatusItem) -> Unit, onToggleStatusReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit) {
     val pager = rememberPagerState(initialPage = 0) { 2 }
     val cs = rememberCoroutineScope()
     LaunchedEffect(pager.currentPage) {
@@ -2376,18 +2502,30 @@ private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, statuses: List<Ga
         }
         HorizontalPager(state = pager, modifier = Modifier.weight(1f).fillMaxWidth()) { page ->
             if (page == 0) ChatList(messages, dpCache, query, onDelete, onOpen)
-            else StatusScreen(statuses, onOpenStatus, dpCache)
+            else StatusScreen(statuses, onOpenStatus, dpCache, onToggleStatusReveal)
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun StatusScreen(statuses: List<GatewayClient.StatusItem>, onOpen: (GatewayClient.StatusItem) -> Unit, dpCache: MutableMap<String, ImageBitmap?>) {
+private fun StatusScreen(statuses: List<GatewayClient.StatusItem>, onOpen: (GatewayClient.StatusItem) -> Unit, dpCache: MutableMap<String, ImageBitmap?>, onToggleReveal: () -> Unit) {
+    val version = StatusData.seenVersion.value            // recompose + reorder the moment a status is viewed
     val mine = statuses.filter { it.mine }
     val others = statuses.filter { !it.mine }
+    // group by sender, drop hidden (unless revealed), then bucket: unread on top, viewed below, muted at the bottom
+    val groups = others.groupBy { it.sender }.entries.filter { StatusFlags.reveal || !StatusFlags.isHidden(it.key) }
+    val active = groups.filter { !StatusFlags.isMuted(it.key) }
+    val unread = active.filter { !StatusData.groupSeen(it.value) }.sortedByDescending { e -> e.value.maxOf { it.ts } }
+    val read = active.filter { StatusData.groupSeen(it.value) }.sortedByDescending { e -> e.value.maxOf { it.ts } }
+    val muted = groups.filter { StatusFlags.isMuted(it.key) }.sortedByDescending { e -> e.value.maxOf { it.ts } }
+
     LazyColumn(Modifier.fillMaxSize()) {
         item {
-            Text("My Status", style = MaterialTheme.typography.labelMedium, color = IOS_BLUE, modifier = Modifier.padding(start = 14.dp, top = 12.dp, bottom = 2.dp))
+            Text(if (StatusFlags.reveal) "My Status · showing hidden" else "My Status",
+                style = MaterialTheme.typography.labelMedium, color = IOS_BLUE,
+                modifier = Modifier.combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null,
+                    onClick = {}, onLongClick = onToggleReveal).padding(start = 14.dp, top = 12.dp, bottom = 2.dp))
             if (mine.isEmpty()) {
                 Text("Tap the camera button to add a status update", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 14.dp, top = 4.dp, bottom = 10.dp))
             } else {
@@ -2402,24 +2540,50 @@ private fun StatusScreen(statuses: List<GatewayClient.StatusItem>, onOpen: (Gate
                 }
             }
             HorizontalDivider()
-            if (others.isNotEmpty()) Text("Recent updates", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 14.dp, top = 10.dp, bottom = 2.dp))
         }
-        val otherGroups = others.groupBy { it.sender }.entries.sortedByDescending { e -> e.value.maxOf { it.ts } }
-        itemsIndexed(otherGroups.toList()) { _, entry ->
-            val list = entry.value
-            val latest = list.maxByOrNull { it.ts } ?: list.first()
-            Row(Modifier.fillMaxWidth().clickable { onOpen(latest) }.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Avatar(entry.key, latest.name, dpCache, 50.dp)
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(ContactStore.nameFor(entry.key) ?: latest.name.ifBlank { "Status" }, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(list.size.toString() + " update(s) · " + fmt(latest.ts), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
-            HorizontalDivider()
-        }
-        if (otherGroups.isEmpty()) item { Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { Text("No recent updates", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
+        if (unread.isNotEmpty()) item { StatusSectionHeader("Recent updates") }
+        itemsIndexed(unread.toList(), key = { _, e -> "u:" + e.key }) { _, entry -> StatusRow(entry.key, entry.value, seen = false, dpCache = dpCache, onOpen = onOpen) }
+        if (read.isNotEmpty()) item { StatusSectionHeader("Viewed updates") }
+        itemsIndexed(read.toList(), key = { _, e -> "v:" + e.key }) { _, entry -> StatusRow(entry.key, entry.value, seen = true, dpCache = dpCache, onOpen = onOpen) }
+        if (muted.isNotEmpty()) item { StatusSectionHeader("Muted updates") }
+        itemsIndexed(muted.toList(), key = { _, e -> "m:" + e.key }) { _, entry -> StatusRow(entry.key, entry.value, seen = StatusData.groupSeen(entry.value), dpCache = dpCache, onOpen = onOpen) }
+        if (unread.isEmpty() && read.isEmpty() && muted.isEmpty()) item { Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { Text("No recent updates", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
     }
+}
+
+@Composable
+private fun StatusSectionHeader(text: String) {
+    Text(text, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 14.dp, top = 10.dp, bottom = 2.dp))
+}
+
+// status list row with a WhatsApp-style seen/unseen ring + long-press mute/hide/lock (mirrors chat long-press)
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun StatusRow(sender: String, list: List<GatewayClient.StatusItem>, seen: Boolean, dpCache: MutableMap<String, ImageBitmap?>, onOpen: (GatewayClient.StatusItem) -> Unit) {
+    val latest = list.maxByOrNull { it.ts } ?: list.first()
+    var menu by remember { mutableStateOf(false) }
+    Box {
+        Row(Modifier.fillMaxWidth().combinedClickable(onClick = { onOpen(latest) }, onLongClick = { menu = true }).padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            val ring = if (seen) MaterialTheme.colorScheme.outline.copy(alpha = 0.45f) else AYX_GREEN
+            Box(Modifier.size(54.dp).border(2.dp, ring, CircleShape).padding(3.dp), contentAlignment = Alignment.Center) {
+                Avatar(sender, latest.name, dpCache, 46.dp)
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(ContactStore.nameFor(sender) ?: latest.name.ifBlank { "Status" }, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(list.size.toString() + " update(s) · " + fmt(latest.ts), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            if (StatusFlags.isMuted(sender)) Icon(Icons.Filled.VisibilityOff, "muted", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+            if (StatusFlags.isLocked(sender)) { Spacer(Modifier.width(6.dp)); Icon(Icons.Filled.Lock, "locked", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp)) }
+        }
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            DropdownMenuItem(text = { Text(if (StatusFlags.isMuted(sender)) "Unmute status" else "Mute status") }, onClick = { menu = false; StatusFlags.toggleMuted(sender) })
+            DropdownMenuItem(text = { Text(if (StatusFlags.isHidden(sender)) "Unhide status" else "Hide status") }, onClick = { menu = false; StatusFlags.toggleHidden(sender) })
+            DropdownMenuItem(text = { Text(if (StatusFlags.isLocked(sender)) "Unlock status" else "Lock status") }, onClick = { menu = false; StatusFlags.toggleLocked(sender) })
+        }
+    }
+    HorizontalDivider()
 }
 
 

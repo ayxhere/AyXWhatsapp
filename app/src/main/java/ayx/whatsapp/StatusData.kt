@@ -13,9 +13,32 @@ import org.json.JSONObject
 object StatusData {
     private var prefs: android.content.SharedPreferences? = null
 
+    // locally-tracked "seen" status ids -> drives unread-on-top / viewed-at-bottom ordering.
+    // Independent of the server read-receipt setting (Hide status view): this is only about OUR ordering.
+    private val seen = HashSet<String>()
+    val seenVersion = androidx.compose.runtime.mutableStateOf(0)
+
     fun init(ctx: Context) {
-        if (prefs == null) prefs = ctx.getSharedPreferences("statusdata", Context.MODE_PRIVATE)
+        if (prefs == null) {
+            prefs = ctx.getSharedPreferences("statusdata", Context.MODE_PRIVATE)
+            prefs?.getStringSet("seen_ids", null)?.let { seen.clear(); seen.addAll(it) }
+        }
     }
+
+    fun isSeen(id: String?): Boolean = id != null && seen.contains(id)
+
+    /** Mark one status id as viewed (persist + bump the observable version so lists reorder live). */
+    fun markSeen(id: String?) {
+        if (id.isNullOrBlank()) return
+        if (seen.add(id)) {
+            prefs?.edit()?.putStringSet("seen_ids", HashSet(seen))?.apply()
+            seenVersion.value++
+        }
+    }
+
+    /** A sender's whole group is "read" only when every status of theirs has been seen. */
+    fun groupSeen(list: List<GatewayClient.StatusItem>): Boolean =
+        list.isNotEmpty() && list.all { it.id == null || seen.contains(it.id) }
 
     fun load(): List<GatewayClient.StatusItem> {
         val json = prefs?.getString("items", null) ?: return emptyList()
@@ -49,6 +72,9 @@ object StatusData {
         for (s in fresh) if (s.ts >= cutoff) map[keyOf(s)] = s
         val merged = map.values.sortedByDescending { it.ts }.take(150)
         save(merged)
+        // keep the seen-set bounded: drop ids that are no longer present (expired statuses)
+        val live = merged.mapNotNull { it.id }.toHashSet()
+        if (seen.retainAll(live)) prefs?.edit()?.putStringSet("seen_ids", HashSet(seen))?.apply()
         return merged
     }
 
