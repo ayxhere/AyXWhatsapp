@@ -454,9 +454,41 @@ async function enrichMedia(msg, entry) {
       fs.mkdirSync(MEDIA_DIR, { recursive: true })
       fs.writeFileSync(path.join(MEDIA_DIR, name), buf)
       entry.media.saved = true
+      pruneMediaDir()
       log('media saved', name, type)
     } catch (e) { log('media dl err', e?.message) }
   }
+}
+
+// keep the media cache from growing forever: cap total size, delete oldest first
+const MEDIA_CAP_BYTES = 250 * 1024 * 1024
+function pruneMediaDir() {
+  try {
+    const files = fs.readdirSync(MEDIA_DIR).map(f => {
+      const p = path.join(MEDIA_DIR, f)
+      try { const st = fs.statSync(p); return { p, size: st.size, mt: st.mtimeMs } } catch (_) { return null }
+    }).filter(Boolean)
+    let total = files.reduce((a, b) => a + b.size, 0)
+    if (total <= MEDIA_CAP_BYTES) return
+    files.sort((a, b) => a.mt - b.mt)
+    for (const f of files) {
+      if (total <= MEDIA_CAP_BYTES) break
+      try { fs.unlinkSync(f.p); total -= f.size } catch (_) {}
+    }
+    log('media pruned to', Math.round(total / 1048576) + 'MB')
+  } catch (_) {}
+}
+
+// a message is "forwarded" if any node carries a forwarding score / isForwarded flag
+function isForwarded(message) {
+  try {
+    const m = message || {}
+    for (const k of Object.keys(m)) {
+      const ci = m[k] && m[k].contextInfo
+      if (ci && (ci.isForwarded === true || (typeof ci.forwardingScore === 'number' && ci.forwardingScore > 0))) return true
+    }
+  } catch (_) {}
+  return false
 }
 
 async function handleMessages({ messages, type }) {
@@ -508,6 +540,7 @@ async function handleMessages({ messages, type }) {
       const ts = msg.messageTimestamp ? Number(msg.messageTimestamp) * 1000 : Date.now()
       const entry = { chat: from, name: resolveName(msg, from), sender, fromMe, text: extractText(msg.message), ts, id }
       if (fromMe) entry.status = (typeof msg.status === 'number' ? msg.status : 1)  // 1 pending,2 sent,3 delivered,4 read
+      if (isForwarded(msg.message)) entry.forwarded = true
       entry.quoted = quotedOf(msg.message)
       await enrichMedia(msg, entry)
       const text = entry.text
@@ -1079,6 +1112,55 @@ app.post('/editmessage', async (req, res) => {
     await sock.sendMessage(jid, { text, edit: key })
     const e = msgStore.get(id)   // reflect locally right away (also lives in msgLog)
     if (e) { e.text = text; e.edited = true; e.editedTs = Date.now(); saveMessagesDebounced() }
+    res.json({ ok: true })
+  } catch (e) { res.json({ ok: false, error: e?.message }) }
+})
+
+app.post('/forward', async (req, res) => {
+  try {
+    if (!sock || status.connection !== 'open') return res.json({ ok: false, error: 'not connected' })
+    const id = String(req.body?.id || '')
+    const jids = Array.isArray(req.body?.jids) ? req.body.jids.map(String).filter(Boolean) : []
+    if (!id || jids.length === 0) return res.json({ ok: false, error: 'id,jids required' })
+    const raw = rawStore.get(id)          // full { key, message } preserves media/type
+    const e = msgStore.get(id)
+    let sent = 0; const errs = []
+    for (const jid of jids) {
+      try {
+        if (raw && raw.message) await sock.sendMessage(jid, { forward: { key: raw.key, message: raw.message } })
+        else if (e && e.text) await sock.sendMessage(jid, { text: e.text })
+        else throw new Error('no content to forward')
+        sent++
+      } catch (err) { errs.push((jid.split('@')[0]) + ': ' + (err?.message || 'err')) }
+    }
+    res.json({ ok: sent > 0, sent, total: jids.length, error: errs.join(' | ') })
+  } catch (e) { res.json({ ok: false, error: e?.message }) }
+})
+
+function wipeDirContents(dir) {
+  let n = 0
+  try { for (const f of fs.readdirSync(dir)) { try { fs.rmSync(path.join(dir, f), { recursive: true, force: true }); n++ } catch (_) {} } } catch (_) {}
+  return n
+}
+
+// Clear Cache: only re-downloadable media. No logout, no settings/chat loss.
+app.post('/clearcache', (req, res) => {
+  try {
+    const removed = wipeDirContents(MEDIA_DIR)
+    res.json({ ok: true, removed })
+  } catch (e) { res.json({ ok: false, error: e?.message }) }
+})
+
+// Clear Data: destructive — logs out and wipes local node state (auth, chats, statuses, media, settings).
+app.post('/cleardata', async (req, res) => {
+  try {
+    try { if (sock) await sock.logout() } catch (_) {}
+    msgLog = []; msgStore.clear(); rawStore.clear(); statuses = []; deletedList = []
+    for (const k of Object.keys(statusViewers)) delete statusViewers[k]
+    wipeDirContents(MEDIA_DIR)
+    for (const F of [MESSAGES_FILE, STATUS_FILE, NAMES_FILE, SETTINGS_FILE]) { try { fs.rmSync(F, { force: true }) } catch (_) {} }
+    wipeDirContents(AUTH_DIR)
+    status.registered = false
     res.json({ ok: true })
   } catch (e) { res.json({ ok: false, error: e?.message }) }
 })

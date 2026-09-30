@@ -39,7 +39,7 @@ object GatewayClient {
     )
     data class Contact(val jid: String, val name: String, val number: String)
     data class Msg(val chat: String, val name: String, val fromMe: Boolean, val text: String, val ts: Long,
-                   val mediaName: String? = null, val mediaType: String? = null, val thumb: String? = null, val deleted: Boolean = false, val id: String? = null, val reaction: String? = null, val sender: String? = null, val quotedText: String? = null, val edited: Boolean = false, val status: Int = 0)
+                   val mediaName: String? = null, val mediaType: String? = null, val thumb: String? = null, val deleted: Boolean = false, val id: String? = null, val reaction: String? = null, val sender: String? = null, val quotedText: String? = null, val edited: Boolean = false, val status: Int = 0, val forwarded: Boolean = false)
 
     suspend fun status(): Status = withContext(Dispatchers.IO) {
         try {
@@ -184,6 +184,14 @@ object GatewayClient {
     suspend fun editMessage(jid: String, id: String, text: String): JSONObject = withContext(Dispatchers.IO) {
         post("/editmessage", JSONObject().put("jid", jid).put("id", id).put("text", text))
     }
+
+    suspend fun forward(id: String, jids: List<String>): JSONObject = withContext(Dispatchers.IO) {
+        val arr = org.json.JSONArray(); jids.forEach { arr.put(it) }
+        post("/forward", JSONObject().put("id", id).put("jids", arr))
+    }
+
+    suspend fun clearCache(): JSONObject = withContext(Dispatchers.IO) { post("/clearcache", JSONObject()) }
+    suspend fun clearData(): JSONObject = withContext(Dispatchers.IO) { post("/cleardata", JSONObject()) }
 
     suspend fun deleteMessage(jid: String, id: String?, text: String, ts: Long, forEveryone: Boolean, fromMe: Boolean) = withContext(Dispatchers.IO) {
         val o = JSONObject().put("jid", jid).put("forEveryone", forEveryone).put("fromMe", fromMe).put("text", text).put("ts", ts)
@@ -349,6 +357,7 @@ object GatewayClient {
                     quotedText = m.optJSONObject("quoted")?.optString("text")?.ifEmpty { null },
                     edited = m.optBoolean("edited", false),
                     status = m.optInt("status", 0),
+                    forwarded = m.optBoolean("forwarded", false),
                 ))
             }
         }

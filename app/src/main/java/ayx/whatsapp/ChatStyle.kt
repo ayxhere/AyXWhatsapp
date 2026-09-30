@@ -16,6 +16,8 @@ object ChatStyle {
     // custom bubble colors as ARGB Int; 0 = use the style's default color
     val sentColor = mutableStateOf(0)   // right side (my messages)
     val recvColor = mutableStateOf(0)   // left side (their messages)
+    // show the "Forwarded" tag on forwarded messages (UI-only, default on)
+    val showForwardTag = mutableStateOf(true)
     private var prefs: android.content.SharedPreferences? = null
 
     val bubbleStyles: List<Pair<String, String>> = listOf(
@@ -53,12 +55,14 @@ object ChatStyle {
         headerBlurDp.value = prefs!!.getInt("headerBlur", 10)
         sentColor.value = prefs!!.getInt("sentColor", 0)
         recvColor.value = prefs!!.getInt("recvColor", 0)
+        showForwardTag.value = prefs!!.getBoolean("showForwardTag", true)
     }
 
     fun setBubble(s: String) { bubbleStyle.value = s; prefs?.edit()?.putString("bubble", s)?.apply() }
     fun setHeaderBlur(dp: Int) { headerBlurDp.value = dp; prefs?.edit()?.putInt("headerBlur", dp)?.apply() }
     fun setSentColor(c: Int) { sentColor.value = c; prefs?.edit()?.putInt("sentColor", c)?.apply() }
     fun setRecvColor(c: Int) { recvColor.value = c; prefs?.edit()?.putInt("recvColor", c)?.apply() }
+    fun setShowForwardTag(b: Boolean) { showForwardTag.value = b; prefs?.edit()?.putBoolean("showForwardTag", b)?.apply() }
 
     fun bubbleLabel(key: String): String = bubbleStyles.firstOrNull { it.first == key }?.second ?: "iOS"
 

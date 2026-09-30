@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.provider.Settings
+import android.widget.Toast
 import android.util.Base64
 import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
@@ -104,6 +105,14 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.automirrored.filled.Reply
+import androidx.compose.material.icons.filled.Forward
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.CleaningServices
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.PermMedia
 import androidx.compose.material.icons.filled.RemoveRedEye
 import androidx.compose.material.icons.filled.CloudOff
@@ -128,6 +137,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -166,6 +177,8 @@ import java.util.Locale
 
 private const val APP_NAME = "AyX WhatsApp"
 private val IOS_BLUE = Color(0xFF0A84FF)
+private val AYX_GREEN = Color(0xFF25D366)
+private val AYX_RED = Color(0xFFFF5A5A)
 
 private const val PRIVACY_TEXT = """WA Gateway runs entirely on your device. It does not collect, sell, or send your chats, contacts, or personal data to us or any third party.
 
@@ -415,6 +428,7 @@ fun GatewayApp() {
     var settingsPage by remember { mutableStateOf("home") }
     var wallpaperVersion by remember { mutableStateOf(0) }
     var showSetName by remember { mutableStateOf(false) }
+    var forwardMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
     var viewImg by remember { mutableStateOf<ImageBitmap?>(null) }
     var viewVideoUrl by remember { mutableStateOf<String?>(null) }
     var toast by remember { mutableStateOf<String?>(null) }
@@ -939,6 +953,7 @@ fun GatewayApp() {
                             .onFailure { notify("edit error: ${it.message}") }
                     }
                 },
+                onForward = { m -> if (m.id == null) notify("can't forward this") else forwardMsg = m },
                 previewCache = previewCache,
                 dpCache = dpCache,
                 wallpaper = chatWp
@@ -1009,9 +1024,12 @@ fun GatewayApp() {
             }
             if (showSetName && openChat != null) {
                 val jidForName = openChat!!
-                var nameInput by remember(jidForName) { mutableStateOf(SetName.get(jidForName) ?: "") }
+                val saved = SetName.get(jidForName) ?: ""
+                var nameInput by remember(jidForName) { mutableStateOf(saved) }
                 AlertDialog(
                     onDismissRequest = { showSetName = false },
+                    shape = RoundedCornerShape(24.dp),
+                    icon = { Icon(Icons.Filled.Edit, null, tint = AYX_GREEN) },
                     title = { Text("Set name") },
                     text = {
                         Column {
@@ -1020,20 +1038,100 @@ fun GatewayApp() {
                             Spacer(Modifier.height(12.dp))
                             OutlinedTextField(nameInput, { nameInput = it }, singleLine = true,
                                 placeholder = { Text("Custom name") }, shape = RoundedCornerShape(14.dp),
+                                trailingIcon = { if (nameInput.isNotEmpty()) IconButton(onClick = { nameInput = "" }) { Icon(Icons.Filled.Clear, "clear") } },
                                 modifier = Modifier.fillMaxWidth())
                         }
                     },
-                    confirmButton = { TextButton(onClick = { SetName.set(jidForName, nameInput); showSetName = false; notify("name saved") }, enabled = nameInput.isNotBlank()) { Text("Save") } },
+                    confirmButton = { TextButton(onClick = { SetName.set(jidForName, nameInput); showSetName = false; notify("name saved") }, enabled = nameInput.isNotBlank() && nameInput != saved) { Text("Save", color = AYX_GREEN) } },
                     dismissButton = {
                         Row {
-                            if (SetName.get(jidForName) != null) TextButton(onClick = { SetName.clear(jidForName); showSetName = false; notify("name removed") }) { Text("Remove", color = Color(0xFFFF3B30)) }
+                            if (saved.isNotEmpty()) TextButton(onClick = { SetName.clear(jidForName); showSetName = false; notify("name removed") }) { Text("Remove", color = AYX_RED) }
                             TextButton(onClick = { showSetName = false }) { Text("Cancel") }
+                        }
+                    }
+                )
+            }
+            forwardMsg?.let { fm ->
+                ForwardPicker(
+                    messages = messages,
+                    dpCache = dpCache,
+                    onDismiss = { forwardMsg = null },
+                    onForward = { targets ->
+                        val mid = fm.id
+                        forwardMsg = null
+                        if (mid != null && targets.isNotEmpty()) scope.launch {
+                            runCatching { GatewayClient.forward(mid, targets) }
+                                .onSuccess { r -> notify(if (r.optBoolean("ok", false)) "forwarded to ${r.optInt("sent", targets.size)}" else "forward failed: " + r.optString("error", "")) }
+                                .onFailure { notify("forward error: ${it.message}") }
                         }
                     }
                 )
             }
         }
     }
+}
+
+// ===== In-app forward picker: search + multi-select recent chats, then Forward =====
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ForwardPicker(messages: List<GatewayClient.Msg>, dpCache: MutableMap<String, ImageBitmap?>, onDismiss: () -> Unit, onForward: (List<String>) -> Unit) {
+    var query by remember { mutableStateOf("") }
+    val selected = remember { mutableStateListOf<String>() }
+    // recent chats derived from message log (exclude status broadcast)
+    val chats = remember(messages) {
+        messages.filter { it.chat != "status@broadcast" }
+            .groupBy { it.chat }.entries
+            .map { it.key to it.value.maxOf { m -> m.ts } }
+            .sortedByDescending { it.second }
+            .map { it.first }
+    }
+    val filtered = chats.filter { query.isBlank() || chatTitleOf(messages, it).contains(query, true) || it.contains(query) }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.fillMaxWidth(0.94f).fillMaxHeight(0.8f)) {
+            Column(Modifier.fillMaxSize().padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Forward, null, tint = AYX_GREEN)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Forward to", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.weight(1f))
+                    IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, "close") }
+                }
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(query, { query = it }, placeholder = { Text("Search chats") }, singleLine = true,
+                    leadingIcon = { Icon(Icons.Filled.Search, null) }, shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(8.dp))
+                LazyColumn(Modifier.weight(1f)) {
+                    itemsIndexed(filtered, key = { _, jid -> jid }) { _, jid ->
+                        val name = chatTitleOf(messages, jid)
+                        val isSel = jid in selected
+                        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                            .clickable { if (isSel) selected.remove(jid) else selected.add(jid) }
+                            .padding(horizontal = 6.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Avatar(jid, name, dpCache, 44.dp)
+                            Spacer(Modifier.width(12.dp))
+                            Text(name, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (isSel) Box(Modifier.size(24.dp).clip(CircleShape).background(AYX_GREEN), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Filled.Done, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                            } else Box(Modifier.size(24.dp).clip(CircleShape).border(2.dp, MaterialTheme.colorScheme.outline, CircleShape))
+                        }
+                    }
+                }
+                Button(onClick = { onForward(selected.toList()) }, enabled = selected.isNotEmpty(),
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = AYX_GREEN)) {
+                    Icon(Icons.Filled.Forward, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
+                    Text(if (selected.isEmpty()) "Select chats" else "Forward to ${selected.size}")
+                }
+            }
+        }
+    }
+}
+
+// resolve a chat's display title from its message log
+private fun chatTitleOf(messages: List<GatewayClient.Msg>, jid: String): String {
+    val msgs = messages.filter { it.chat == jid }
+    return if (msgs.isNotEmpty()) chatTitle(msgs) else (ContactStore.nameFor(jid) ?: jid.substringBefore("@"))
 }
 
 @Composable
@@ -1113,46 +1211,33 @@ private fun ChatDetail(
     onCamera: () -> Unit,
     onReplySend: (String, String, String) -> Unit,
     onEditMsg: (GatewayClient.Msg, String) -> Unit,
+    onForward: (GatewayClient.Msg) -> Unit,
     previewCache: MutableMap<String, ImageBitmap?>,
     dpCache: MutableMap<String, ImageBitmap?>,
     wallpaper: ImageBitmap?,
 ) {
+    val clipboard = LocalClipboardManager.current
     var input by remember { mutableStateOf("") }
     var replyTo by remember { mutableStateOf<GatewayClient.Msg?>(null) }
     var reactMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
     var editMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
+    var infoMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
     reactMsg?.let { rm ->
-        Dialog(onDismissRequest = { reactMsg = null }) {
-            Surface(shape = RoundedCornerShape(20.dp), tonalElevation = 4.dp) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf("👍", "❤️", "😂", "😮", "😢", "🙏").forEach { e ->
-                            Text(e, style = MaterialTheme.typography.headlineMedium,
-                                modifier = Modifier.clickable { onReact(rm, e); reactMsg = null }.padding(6.dp))
-                        }
-                    }
-                    HorizontalDivider()
-                    if (rm.fromMe && rm.text.isNotBlank() && !rm.deleted)
-                        TextButton(onClick = { editMsg = rm; reactMsg = null }) { Text("Edit message") }
-                    if (rm.fromMe) TextButton(onClick = { onDeleteMsg(rm, true); reactMsg = null }) { Text("Delete for everyone") }
-                    TextButton(onClick = { onDeleteMsg(rm, false); reactMsg = null }) { Text("Delete for me") }
-                }
-            }
-        }
-    }
-    editMsg?.let { em ->
-        var newText by remember(em.id) { mutableStateOf(em.text) }
-        AlertDialog(
-            onDismissRequest = { editMsg = null },
-            title = { Text("Edit message") },
-            text = {
-                OutlinedTextField(newText, { newText = it }, modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("Message") }, shape = RoundedCornerShape(14.dp), maxLines = 5)
-            },
-            confirmButton = { TextButton(onClick = { onEditMsg(em, newText.trim()); editMsg = null }, enabled = newText.isNotBlank() && newText.trim() != em.text) { Text("Save") } },
-            dismissButton = { TextButton(onClick = { editMsg = null }) { Text("Cancel") } }
+        MessageActionSheet(
+            m = rm,
+            onDismiss = { reactMsg = null },
+            onReact = { e -> onReact(rm, e); reactMsg = null },
+            onEdit = { editMsg = rm; reactMsg = null },
+            onInfo = { infoMsg = rm; reactMsg = null },
+            onReply = { replyTo = rm; reactMsg = null },
+            onForward = { onForward(rm); reactMsg = null },
+            onCopy = { clipboard.setText(AnnotatedString(rm.text)); reactMsg = null },
+            onDeleteEveryone = { onDeleteMsg(rm, true); reactMsg = null },
+            onDeleteMe = { onDeleteMsg(rm, false); reactMsg = null },
         )
     }
+    editMsg?.let { em -> EditMessageDialog(em, onDismiss = { editMsg = null }, onSave = { txt -> onEditMsg(em, txt); editMsg = null }) }
+    infoMsg?.let { im -> MessageInfoDialog(im) { infoMsg = null } }
     // newest first (reverseLayout shows newest at bottom, opens there, no jump)
     val rows = remember(messages, optimistic) {
         (messages + optimistic.map { GatewayClient.Msg(chat, "", true, it.text, it.ts, quotedText = it.quotedText) }).sortedByDescending { it.ts }
@@ -1197,6 +1282,122 @@ private fun ChatDetail(
             }, enabled = input.isNotBlank() && canSend) { Icon(Icons.AutoMirrored.Filled.Send, "send") }
         }
         }
+    }
+}
+
+// ===== Message long-press action sheet: dark glass, reactions + actions with icons =====
+@Composable
+private fun MessageActionSheet(
+    m: GatewayClient.Msg,
+    onDismiss: () -> Unit,
+    onReact: (String) -> Unit,
+    onEdit: () -> Unit,
+    onInfo: () -> Unit,
+    onReply: () -> Unit,
+    onForward: () -> Unit,
+    onCopy: () -> Unit,
+    onDeleteEveryone: () -> Unit,
+    onDeleteMe: () -> Unit,
+) {
+    val onSurf = MaterialTheme.colorScheme.onSurface
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
+            tonalElevation = 6.dp, shadowElevation = 12.dp,
+            modifier = Modifier.fillMaxWidth().border(1.dp, onSurf.copy(alpha = 0.10f), RoundedCornerShape(24.dp))) {
+            Column(Modifier.padding(vertical = 8.dp)) {
+                // reaction row
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    listOf("👍", "❤️", "😂", "😮", "😢", "🙏").forEach { e ->
+                        Box(Modifier.size(42.dp).clip(CircleShape).clickable { onReact(e) }, contentAlignment = Alignment.Center) {
+                            Text(e, style = MaterialTheme.typography.headlineSmall)
+                        }
+                    }
+                }
+                HorizontalDivider(color = onSurf.copy(alpha = 0.08f))
+                val canEdit = m.fromMe && m.text.isNotBlank() && !m.deleted
+                val canCopy = m.text.isNotBlank() && !m.deleted
+                if (canEdit) ActionSheetItem(Icons.Filled.Edit, "Edit message", AYX_GREEN, onEdit)
+                ActionSheetItem(Icons.Filled.Info, "Message info", AYX_GREEN, onInfo)
+                if (!m.deleted) ActionSheetItem(Icons.AutoMirrored.Filled.Reply, "Reply", AYX_GREEN, onReply)
+                if (!m.deleted) ActionSheetItem(Icons.Filled.Forward, "Forward", AYX_GREEN, onForward)
+                if (canCopy) ActionSheetItem(Icons.Filled.ContentCopy, "Copy", AYX_GREEN, onCopy)
+                HorizontalDivider(color = onSurf.copy(alpha = 0.08f))
+                if (m.fromMe && !m.deleted) ActionSheetItem(Icons.Filled.Delete, "Delete for everyone", AYX_RED, onDeleteEveryone, destructive = true)
+                ActionSheetItem(Icons.Filled.DeleteOutline, "Delete for me", AYX_RED, onDeleteMe, destructive = true)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActionSheetItem(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, tint: Color, onClick: () -> Unit, destructive: Boolean = false) {
+    Row(Modifier.fillMaxWidth().clickable { onClick() }.padding(horizontal = 18.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, null, tint = tint, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(18.dp))
+        Text(label, style = MaterialTheme.typography.bodyLarge, color = if (destructive) tint else MaterialTheme.colorScheme.onSurface)
+    }
+}
+
+// ===== Polished edit dialog: icon, prefilled, char counter, clear, disabled-when-unchanged =====
+@Composable
+private fun EditMessageDialog(m: GatewayClient.Msg, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var newText by remember(m.id) { mutableStateOf(m.text) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(24.dp),
+        icon = { Icon(Icons.Filled.Edit, null, tint = AYX_GREEN) },
+        title = { Text("Edit message") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    newText, { newText = it }, modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Message") }, shape = RoundedCornerShape(14.dp), maxLines = 6,
+                    trailingIcon = { if (newText.isNotEmpty()) IconButton(onClick = { newText = "" }) { Icon(Icons.Filled.Clear, "clear") } }
+                )
+                Text("${newText.length} chars", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.align(Alignment.End).padding(top = 4.dp, end = 4.dp))
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSave(newText.trim()) }, enabled = newText.isNotBlank() && newText.trim() != m.text) { Text("Save changes", color = AYX_GREEN) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+// ===== Message info: timestamp + delivery/read state =====
+@Composable
+private fun MessageInfoDialog(m: GatewayClient.Msg, onDismiss: () -> Unit) {
+    val statusText = when {
+        !m.fromMe -> "Received"
+        m.status >= 4 -> "Read"
+        m.status == 3 -> "Delivered"
+        m.status == 2 -> "Sent"
+        else -> "Pending"
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(24.dp),
+        icon = { Icon(Icons.Filled.Info, null, tint = AYX_GREEN) },
+        title = { Text("Message info") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                InfoRow("Direction", if (m.fromMe) "Sent by you" else "Received")
+                InfoRow("Status", statusText)
+                InfoRow("Time", fmt(m.ts))
+                if (m.edited) InfoRow("Edited", "Yes")
+                if (m.forwarded) InfoRow("Forwarded", "Yes")
+                if (m.mediaType != null) InfoRow("Type", m.mediaType)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+    )
+}
+
+@Composable
+private fun InfoRow(k: String, v: String) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(k, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(v, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
     }
 }
 
@@ -1371,6 +1572,15 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
         Surface(color = bubbleColor, shape = shape,
             modifier = Modifier.widthIn(max = 290.dp).combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {}, onLongClick = { onLongClick(m) })) {
             Column(Modifier.padding(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                if (m.forwarded && !m.deleted && ChatStyle.showForwardTag.value) {
+                    Row(Modifier.padding(horizontal = 8.dp, top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Forward, null, modifier = Modifier.size(13.dp),
+                            tint = if (m.fromMe) Color.White.copy(alpha = 0.7f) else textColor.copy(alpha = 0.55f))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Forwarded", style = MaterialTheme.typography.labelSmall, fontStyle = FontStyle.Italic,
+                            color = if (m.fromMe) Color.White.copy(alpha = 0.7f) else textColor.copy(alpha = 0.55f))
+                    }
+                }
                 if (!m.quotedText.isNullOrBlank()) {
                     Row(Modifier.padding(horizontal = 6.dp, vertical = 2.dp)) {
                         Box(Modifier.width(3.dp).height(30.dp).background(if (m.fromMe) Color.White.copy(alpha = 0.7f) else IOS_BLUE, RoundedCornerShape(2.dp)))
@@ -1565,6 +1775,14 @@ private fun SettingRow(icon: androidx.compose.ui.graphics.vector.ImageVector, ti
 
 @Composable
 private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var refreshTick by remember { mutableStateOf(0) }
+    var confirmClearData by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    val mediaSize = remember(refreshTick) { AppStorage.mediaSize(ctx) }
+    val cacheSize = remember(refreshTick) { AppStorage.cacheSize(ctx) }
+
     SettingsGroup("Online & Privacy") {
         SettingRow(Icons.Filled.Bolt, CAT_GENERAL, "Always online", "Keep showing online", settings.alwaysOnline) { onToggle(JSONObject().put("alwaysOnline", it)) }
         SettingRow(Icons.Filled.CloudOff, Color(0xFFFF7EB6), "Freeze last seen", "Never broadcast online (overrides Always online)", settings.stayOffline) { onToggle(JSONObject().put("stayOffline", it)) }
@@ -1573,8 +1791,8 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
     SettingsGroup("Messages & Media") {
         SettingRow(Icons.Filled.DoneAll, CAT_WALLPAPER, "Auto-read messages", "Mark incoming chats as read", settings.autoRead) { onToggle(JSONObject().put("autoRead", it)) }
         SettingRow(Icons.Filled.PermMedia, CAT_AUTOREPLY, "Save media", "Download incoming photos/videos (needed for view, deleted media)", settings.saveMedia) { onToggle(JSONObject().put("saveMedia", it)) }
+        SettingRow(Icons.Filled.Forward, CAT_AI, "Forwarded tag", "Show the \"Forwarded\" label on forwarded messages", ChatStyle.showForwardTag.value) { ChatStyle.setShowForwardTag(it) }
     }
-    val ctx = LocalContext.current
     SettingsGroup("Background & battery") {
         ActionRow(Icons.Filled.Bolt, WARN_AMBER, "Allow battery (no optimization)", "Keep the gateway alive in the background") {
             runCatching {
@@ -1587,6 +1805,70 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
                 ctx.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + ctx.packageName)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             }
         }
+    }
+    SettingsGroup("Storage & data") {
+        StorageRow(Icons.Filled.PermMedia, CAT_AUTOREPLY, "Downloaded media", AppStorage.fmtSize(mediaSize), enabled = !busy) {
+            busy = true
+            scope.launch {
+                runCatching { GatewayClient.clearCache() }
+                AppStorage.clearCacheLocal(ctx); refreshTick++; busy = false
+                Toast.makeText(ctx, "Media cache cleared", Toast.LENGTH_SHORT).show()
+            }
+        }
+        StorageRow(Icons.Filled.CleaningServices, CAT_AI, "Cache", AppStorage.fmtSize(cacheSize), enabled = !busy) {
+            AppStorage.clearCacheLocal(ctx); refreshTick++
+            Toast.makeText(ctx, "Cache cleared", Toast.LENGTH_SHORT).show()
+        }
+        ActionRow(Icons.Filled.DeleteSweep, OK_GREEN, "Clear cache", "Free space — keeps chats, settings and your login") {
+            busy = true
+            scope.launch {
+                runCatching { GatewayClient.clearCache() }
+                AppStorage.clearCacheLocal(ctx); refreshTick++; busy = false
+                Toast.makeText(ctx, "Cache cleared", Toast.LENGTH_SHORT).show()
+            }
+        }
+        ActionRow(Icons.Filled.Delete, ERR_RED, "Clear app data", "Removes everything local — you'll need to link again") { confirmClearData = true }
+    }
+
+    if (confirmClearData) {
+        AlertDialog(
+            onDismissRequest = { confirmClearData = false },
+            shape = RoundedCornerShape(24.dp),
+            icon = { Icon(Icons.Filled.Delete, null, tint = ERR_RED) },
+            title = { Text("Clear app data?") },
+            text = {
+                Text("This removes AyX WhatsApp local data — chats, statuses, cached media, names, wallpaper, settings and the WhatsApp login/session. Your WhatsApp account is not deleted, but you'll need to link this device again with QR or pairing code. The app will restart.",
+                    style = MaterialTheme.typography.bodyMedium)
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmClearData = false
+                    scope.launch {
+                        runCatching { GatewayClient.clearData() }
+                        AppStorage.clearDataLocal(ctx)
+                        Toast.makeText(ctx, "Data cleared — restarting", Toast.LENGTH_SHORT).show()
+                        delay(700)
+                        val i = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)
+                        i?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                        if (i != null) ctx.startActivity(i)
+                        Runtime.getRuntime().exit(0)
+                    }
+                }) { Text("Clear Data", color = ERR_RED) }
+            },
+            dismissButton = { TextButton(onClick = { confirmClearData = false }) { Text("Cancel") } }
+        )
+    }
+}
+
+// storage category row: icon, title, size on the right + a trash button
+@Composable
+private fun StorageRow(icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color, title: String, size: String, enabled: Boolean, onClean: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconChip(icon, tint)
+        Spacer(Modifier.width(14.dp))
+        Text(title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+        Text(size, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        IconButton(onClick = onClean, enabled = enabled) { Icon(Icons.Filled.DeleteOutline, "clean", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
 }
 
