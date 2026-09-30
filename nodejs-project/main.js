@@ -153,15 +153,17 @@ function subscribeTracked() {
 // WhatsApp throw a stream/conflict error and drop the socket. So we split it:
 //   - a GENTLE network keepalive (available once + re-subscribe) on a slow timer, and
 //   - a FREQUENT local sweep that only READS the presences map (no network) into each watch's timeline.
-function reminderKeepAlive() {
+// sendAvailable=true only on (re)connect — 'available' is sticky on the server, so we don't re-blast it;
+// the periodic call just re-arms the presence subscriptions (which do lapse). Minimal stanza traffic = stable socket.
+function reminderKeepAlive(sendAvailable) {
   if (!sock || status.connection !== 'open' || watches.length === 0) return
-  if (!settings.stayOffline) { try { sock.sendPresenceUpdate('available') } catch (_) {} }
+  if (sendAvailable && !settings.stayOffline) { try { sock.sendPresenceUpdate('available') } catch (_) {} }
   subscribeTracked()
 }
 let reminderSweepTimer = null
 let reminderKeepTimer = null
 function startReminderSweep() {
-  if (!reminderKeepTimer) reminderKeepTimer = setInterval(reminderKeepAlive, 45000)   // gentle: every 45s
+  if (!reminderKeepTimer) reminderKeepTimer = setInterval(() => reminderKeepAlive(false), 45000)   // gentle: re-subscribe only, every 45s
   if (reminderSweepTimer) return
   reminderSweepTimer = setInterval(() => {
     if (!sock || status.connection !== 'open' || watches.length === 0) return
@@ -417,7 +419,7 @@ function handleConnUpdate(u) {
     currentQr = null; pairingCode = null; pairingNumber = null
     log('CONNECTED as', status.me)
     applyPresence()
-    reminderKeepAlive()         // one gentle 'available' + re-subscribe so presence resumes after (re)connect
+    reminderKeepAlive(true)     // one 'available' + re-subscribe so presence resumes after (re)connect
     startReminderSweep()
   }
 
@@ -782,6 +784,9 @@ async function startSocket() {
     browser: Browsers.ubuntu('imayx.in'),
     markOnlineOnConnect: settings.alwaysOnline && !settings.stayOffline,
     syncFullHistory: false,
+    keepAliveIntervalMs: 25000,   // proper websocket keepalive so the socket doesn't idle-drop (stops reconnect flapping)
+    connectTimeoutMs: 60000,
+    retryRequestDelayMs: 500,
   })
   sock.ev.on('creds.update', saveCreds)
   sock.ev.on('connection.update', handleConnUpdate)
