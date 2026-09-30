@@ -677,11 +677,14 @@ fun GatewayApp() {
         StatusEditor(ps.first, ps.second, deviceContacts, onUpload = { caption, audience, jids, song, tStart, tEnd, lyrics, lyricY, lyricScale ->
             val u = ps.first; val t = ps.second
             pendingStatus = null
+            // 'all' audience: send to every WhatsApp contact on the device so distribution never depends on
+            // the gateway's accumulated contact list (which can be empty after a fresh link / clear data).
+            val recipients = if (audience == "all") deviceContacts.map { it.number + "@s.whatsapp.net" } else jids
             scope.launch {
                 try {
                     if (song == null) {
                         val bytes = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(u)?.use { it.readBytes() } }
-                        if (bytes != null) { notify("uploading status…"); val res = GatewayClient.postStatus(t, Base64.encodeToString(bytes, Base64.NO_WRAP), caption, audience, jids); statusResult = (if (res.first) "✅ " else "❌ ") + res.second; if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) } }
+                        if (bytes != null) { notify("uploading status…"); val res = GatewayClient.postStatus(t, Base64.encodeToString(bytes, Base64.NO_WRAP), caption, audience, recipients); statusResult = (if (res.first) "✅ " else "❌ ") + res.second; if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) } }
                     } else {
                         processing = "Creating video…"
                         val finalMp4 = withContext(Dispatchers.IO) {
@@ -712,7 +715,7 @@ fun GatewayApp() {
                         if (finalMp4 != null && finalMp4.exists()) {
                             processing = "Uploading…"
                             val bytes = withContext(Dispatchers.IO) { finalMp4.readBytes() }
-                            val res = GatewayClient.postStatus("video", Base64.encodeToString(bytes, Base64.NO_WRAP), caption, audience, jids)
+                            val res = GatewayClient.postStatus("video", Base64.encodeToString(bytes, Base64.NO_WRAP), caption, audience, recipients)
                             statusResult = (if (res.first) "✅ " else "❌ ") + res.second
                             runCatching { finalMp4.delete() }
                             if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) }

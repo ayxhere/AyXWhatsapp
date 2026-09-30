@@ -1064,7 +1064,7 @@ app.post('/status/post', async (req, res) => {
     let jids
     if (audience === 'only') jids = selJids
     else if (audience === 'except') jids = all.filter(j => !selJids.includes(j))
-    else jids = all
+    else jids = Array.from(new Set([...all, ...selJids]))   // 'all': union gateway-known + client-supplied contacts
     try { const meJid = sock?.user?.id?.split(':')[0] + '@s.whatsapp.net'; if (meJid && !jids.includes(meJid)) jids.push(meJid) } catch (_) {}
     diag.push('recipients=' + jids.length)
     if (jids.length === 0) { diag.push('WARN:no-recipients'); }
