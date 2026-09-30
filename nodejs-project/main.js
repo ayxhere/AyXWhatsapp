@@ -1042,10 +1042,23 @@ app.get('/music/lyrics', async (req, res) => {
   } catch (e) { res.json({ synced: '', plain: '' }) }
 })
 
+// wait for the socket to actually be open (mobile networks drop/reconnect; sending on a closed
+// socket throws Baileys' "reading 'attrs'" crash). Reconnect fires automatically on close.
+async function waitForOpen(ms = 15000) {
+  const start = Date.now()
+  while (status.connection !== 'open' && Date.now() - start < ms) await new Promise(r => setTimeout(r, 400))
+  return status.connection === 'open'
+}
+
 app.post('/status/post', async (req, res) => {
   const diag = []
   try {
     if (!sock) return res.status(409).json({ ok: false, error: 'not connected' })
+    if (status.connection !== 'open') {
+      const ok = await waitForOpen()
+      diag.push('reconnedwait=' + ok)
+      if (!ok) return res.status(409).json({ ok: false, error: 'connection reconnecting — try again in a moment', diag: diag.join(' ') })
+    }
     diag.push('conn=' + status.connection)
     const type = String(req.body?.type || 'image')
     const b64 = String(req.body?.data || '')
@@ -1222,6 +1235,19 @@ app.post('/onwhatsapp', async (req, res) => {
     }
     res.json({ items: out })
   } catch (e) { res.json({ items: [] }) }
+})
+
+// mark someone's status as seen so they get the "viewed" receipt (only called when Hide-status-view is OFF)
+app.post('/status/read', async (req, res) => {
+  try {
+    if (!sock || status.connection !== 'open') return res.json({ ok: false, error: 'not connected' })
+    const id = String(req.body?.id || '')
+    const sender = String(req.body?.sender || '')
+    if (!id || !sender) return res.json({ ok: false, error: 'id,sender required' })
+    const key = { remoteJid: 'status@broadcast', id, participant: sender }
+    await sock.readMessages([key])
+    res.json({ ok: true })
+  } catch (e) { res.json({ ok: false, error: e?.message }) }
 })
 
 app.post('/status/delete', async (req, res) => {

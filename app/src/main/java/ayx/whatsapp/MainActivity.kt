@@ -670,6 +670,7 @@ fun GatewayApp() {
                         statuses = statuses.filterNot { it.id == id }
                         notify(res.second)
                     } },
+            onSeen = { st -> if (!settings.hideStatusRead) scope.launch { GatewayClient.markStatusRead(st.id, st.sender) } },
             onClose = { storyView = null })
     }
 
@@ -2506,7 +2507,7 @@ private fun AudRadio(label: String, selected: Boolean, onClick: () -> Unit) {
 
 
 @Composable
-private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: String, dpCache: MutableMap<String, ImageBitmap?>, onDownload: (GatewayClient.StatusItem) -> Unit, onDeleteStatus: (String) -> Unit, onReply: (String, String) -> Unit, onClose: () -> Unit) {
+private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: String, dpCache: MutableMap<String, ImageBitmap?>, onDownload: (GatewayClient.StatusItem) -> Unit, onDeleteStatus: (String) -> Unit, onReply: (String, String) -> Unit, onSeen: (GatewayClient.StatusItem) -> Unit, onClose: () -> Unit) {
     val groups = remember(statuses) {
         statuses.groupBy { it.sender }.entries
             .sortedWith(compareByDescending<Map.Entry<String, List<GatewayClient.StatusItem>>> { e -> e.value.any { it.mine } }.thenByDescending { e -> e.value.maxOf { it.ts } })
@@ -2521,6 +2522,8 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
     val st = items.getOrNull(ii) ?: run { LaunchedEffect(Unit) { onClose() }; return }
     fun goNext() { if (ii < items.size - 1) ii++ else if (si < groups.size - 1) { si++; ii = 0 } else onClose() }
     fun goPrev() { if (ii > 0) ii-- else if (si > 0) { si--; ii = 0 } }
+    // send a "seen" receipt for each status actually viewed (gated by the Hide-status-view setting upstream)
+    LaunchedEffect(st.id, si, ii) { if (!st.mine && st.id.isNotBlank()) onSeen(st) }
     var replyText by remember { mutableStateOf("") }
     var progress by remember(si, ii) { mutableStateOf(0f) }
     var confirmDelete by remember { mutableStateOf<String?>(null) }

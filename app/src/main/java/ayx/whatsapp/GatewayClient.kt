@@ -190,6 +190,10 @@ object GatewayClient {
         post("/forward", JSONObject().put("id", id).put("jids", arr))
     }
 
+    suspend fun markStatusRead(id: String, sender: String) = withContext(Dispatchers.IO) {
+        runCatching { post("/status/read", JSONObject().put("id", id).put("sender", sender)) }
+    }
+
     suspend fun clearCache(): JSONObject = withContext(Dispatchers.IO) { post("/clearcache", JSONObject()) }
     suspend fun clearData(): JSONObject = withContext(Dispatchers.IO) { post("/cleardata", JSONObject()) }
 
