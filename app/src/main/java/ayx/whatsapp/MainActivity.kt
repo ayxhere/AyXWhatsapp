@@ -1827,6 +1827,18 @@ private fun openUrl(ctx: Context, url: String) {
     runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
 }
 
+// Light string hiding for developer identity + links: decoded at runtime, so a decompile/`strings`
+// pass on the APK does not reveal them in plaintext. Not encryption — just keeps casual re-mods away.
+private object Obf {
+    private val KEY = "Ax7pQ2z9kR".toByteArray(Charsets.UTF_8)
+    fun d(s: String): String {
+        val b = android.util.Base64.decode(s, android.util.Base64.NO_WRAP)
+        val out = ByteArray(b.size)
+        for (i in b.indices) out[i] = (b[i].toInt() xor KEY[i % KEY.size].toInt()).toByte()
+        return String(out, Charsets.UTF_8)
+    }
+}
+
 @Composable
 private fun LinkRow(icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color, title: String, sub: String?, onClick: () -> Unit) {
     Surface(onClick = onClick, shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
@@ -1862,20 +1874,20 @@ private fun AboutSettings(ctx: Context, onLogout: () -> Unit) {
 
     Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Hey, I'm AyX by ƦΛjᑌ", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text(Obf.d("CR1OXHF7XVRLEzggFxIoEryfpckrmabg"), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Text("If you love my project, please give me a ⭐ on my GitHub project.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Button(onClick = { openUrl(ctx, "https://github.com/ifaxy/AyXWhatsapp") }, modifier = Modifier.fillMaxWidth()) {
+            Button(onClick = { openUrl(ctx, Obf.d("KQxDACIIVRYMOzUQQhJ/URVURDsnGU8JfnMDYTw6IAxEESFC")) }, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Filled.Star, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Star on GitHub")
             }
         }
     }
 
     Text("CONNECT", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
-    LinkRow(Icons.Filled.PhotoCamera, Color(0xFFFF7EB6), "imayx1", "Instagram") { openUrl(ctx, "https://www.instagram.com/imayx1?stkn=MXg4ZWYwbml5eGdxYg==") }
-    LinkRow(Icons.AutoMirrored.Filled.Send, CAT_AI, "AyX here", "Telegram") { openUrl(ctx, "https://t.me/ayxhere") }
+    LinkRow(Icons.Filled.PhotoCamera, Color(0xFFFF7EB6), Obf.d("KBVWCSkD"), "Instagram") { openUrl(ctx, Obf.d("KQxDACIIVRYcJTZWXh4iRhteGTMsVlQfPB0TVAorOUkIAyVZFAQmCiZMbScIRRhUB2ckP1MICFVHBA==")) }
+    LinkRow(Icons.AutoMirrored.Filled.Send, CAT_AI, Obf.d("AAFvUDlXCFw="), "Telegram") { openUrl(ctx, Obf.d("KQxDACIIVRYffCwdGBEoShJcGTc=")) }
 
     Text("If I'm available everywhere, kindly contact me here.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp, top = 2.dp))
-    LinkRow(Icons.Filled.Language, CAT_WALLPAPER, "Website", "Personal site") { openUrl(ctx, "https://imayx.in/") }
+    LinkRow(Icons.Filled.Language, CAT_WALLPAPER, "Website", "Personal site") { openUrl(ctx, Obf.d("KQxDACIIVRYCPyABT144XFU=")) }
 
     Text("ACCOUNT", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
     OutlinedButton(onClick = { confirm = true }, modifier = Modifier.fillMaxWidth(),
