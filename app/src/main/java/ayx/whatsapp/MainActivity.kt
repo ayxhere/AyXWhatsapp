@@ -670,7 +670,7 @@ fun GatewayApp() {
                         statuses = statuses.filterNot { it.id == id }
                         notify(res.second)
                     } },
-            onSeen = { st -> if (!settings.hideStatusRead) scope.launch { GatewayClient.markStatusRead(st.id, st.sender) } },
+            onSeen = { st -> val sid = st.id; if (!settings.hideStatusRead && sid != null) scope.launch { GatewayClient.markStatusRead(sid, st.sender) } },
             onClose = { storyView = null })
     }
 
@@ -680,7 +680,7 @@ fun GatewayApp() {
             pendingStatus = null
             // 'all' audience: send to every WhatsApp contact on the device so distribution never depends on
             // the gateway's accumulated contact list (which can be empty after a fresh link / clear data).
-            val recipients = if (audience == "all") deviceContacts.map { it.number + "@s.whatsapp.net" } else jids
+            val recipients: List<String> = if (audience == "all") deviceContacts.map { c -> c.number + "@s.whatsapp.net" } else jids
             scope.launch {
                 try {
                     if (song == null) {
@@ -2523,7 +2523,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
     fun goNext() { if (ii < items.size - 1) ii++ else if (si < groups.size - 1) { si++; ii = 0 } else onClose() }
     fun goPrev() { if (ii > 0) ii-- else if (si > 0) { si--; ii = 0 } }
     // send a "seen" receipt for each status actually viewed (gated by the Hide-status-view setting upstream)
-    LaunchedEffect(st.id, si, ii) { if (!st.mine && st.id.isNotBlank()) onSeen(st) }
+    LaunchedEffect(st.id, si, ii) { if (!st.mine && !st.id.isNullOrBlank()) onSeen(st) }
     var replyText by remember { mutableStateOf("") }
     var progress by remember(si, ii) { mutableStateOf(0f) }
     var confirmDelete by remember { mutableStateOf<String?>(null) }
