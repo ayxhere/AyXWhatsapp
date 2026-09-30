@@ -181,7 +181,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private const val APP_NAME = "AyX"
+private const val APP_NAME = "WhatsAyX"
 private val IOS_BLUE = Color(0xFF0A84FF)
 private val AYX_GREEN = Color(0xFF25D366)
 private val AYX_RED = Color(0xFFFF5A5A)
@@ -1982,7 +1982,7 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
             icon = { Icon(Icons.Filled.Delete, null, tint = ERR_RED) },
             title = { Text("Clear app data?") },
             text = {
-                Text("This removes AyX local data — chats, statuses, cached media, names, wallpaper, settings and the login/session. Your account is not deleted, but you'll need to link this device again with QR or pairing code. The app will restart.",
+                Text("This removes WhatsAyX local data — chats, statuses, cached media, names, wallpaper, settings and the login/session. Your account is not deleted, but you'll need to link this device again with QR or pairing code. The app will restart.",
                     style = MaterialTheme.typography.bodyMedium)
             },
             confirmButton = {

@@ -147,10 +147,17 @@ fun ReminderScreen(
     if (showAdd) {
         ReminderAddDialog(deviceContacts, recentChats, dpCache,
             onDismiss = { showAdd = false },
-            onPick = { jid ->
+            onPick = { jid, number ->
                 showAdd = false
                 scope.launch {
-                    val ok = GatewayClient.reminderAdd(jid)
+                    // pass every jid form of this person so presence matches whichever WhatsApp delivers (@s.whatsapp.net or @lid)
+                    val alts = mutableListOf<String>()
+                    if (number.isNotBlank()) {
+                        alts.add(number + "@s.whatsapp.net")
+                        val reg = runCatching { GatewayClient.onWhatsApp(listOf(number)) }.getOrDefault(emptyMap())
+                        reg[number]?.let { lid -> if (lid.isNotBlank()) alts.add(if (lid.contains("@")) lid else lid + "@lid") }
+                    }
+                    val ok = GatewayClient.reminderAdd(jid, alts)
                     entries = GatewayClient.reminderList()
                     notify(if (ok) "watching " + remName(jid) else "couldn't add")
                 }
@@ -226,19 +233,22 @@ private fun ReminderCard(entry: GatewayClient.ReminderEntry, dpCache: MutableMap
 }
 
 @Composable
-private fun ReminderAddDialog(deviceContacts: List<DeviceContact>, recentChats: List<String>, dpCache: MutableMap<String, ImageBitmap?>, onDismiss: () -> Unit, onPick: (String) -> Unit) {
-    data class Cand(val jid: String, val name: String, val sub: String)
+private fun ReminderAddDialog(deviceContacts: List<DeviceContact>, recentChats: List<String>, dpCache: MutableMap<String, ImageBitmap?>, onDismiss: () -> Unit, onPick: (String, String) -> Unit) {
+    data class Cand(val jid: String, val name: String, val sub: String, val number: String)
     var query by remember { mutableStateOf("") }
     val candidates = remember(deviceContacts, recentChats) {
         val out = LinkedHashMap<String, Cand>()
-        // recent chats first (individual only)
-        recentChats.filter { it.endsWith("@s.whatsapp.net") }.forEach { jid ->
-            val d = jid.substringBefore("@").filter { it.isDigit() }
-            if (d.isNotBlank()) out.getOrPut(d) { Cand(jid, remName(jid), "+$d") }
+        // recent individual chats first — these jids are exactly what WhatsApp delivers presence on (incl @lid)
+        recentChats.filter { it != "status@broadcast" && !it.endsWith("@g.us") }.forEach { jid ->
+            val d = jid.substringBefore("@").substringBefore(":").filter { it.isDigit() }
+            val key = if (jid.endsWith("@s.whatsapp.net") && d.isNotBlank()) "num:$d" else "jid:$jid"
+            val num = if (jid.endsWith("@s.whatsapp.net")) d else ""
+            out.getOrPut(key) { Cand(jid, remName(jid), if (num.isNotBlank()) "+$num" else "chat", num) }
         }
+        // then device contacts that don't already have a chat above
         deviceContacts.forEach { c ->
             val d = c.number.filter { it.isDigit() }
-            if (d.isNotBlank() && !out.containsKey(d)) out[d] = Cand(d + "@s.whatsapp.net", c.name.ifBlank { "+$d" }, "+$d")
+            if (d.isNotBlank() && !out.containsKey("num:$d")) out["num:$d"] = Cand(d + "@s.whatsapp.net", c.name.ifBlank { "+$d" }, "+$d", d)
         }
         out.values.toList()
     }
@@ -265,7 +275,7 @@ private fun ReminderAddDialog(deviceContacts: List<DeviceContact>, recentChats: 
                 }
                 LazyColumn(Modifier.weight(1f)) {
                     itemsIndexed(filtered, key = { _, c -> c.jid }) { _, c ->
-                        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { onPick(c.jid) }.padding(horizontal = 6.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { onPick(c.jid, c.number) }.padding(horizontal = 6.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                             RemAvatar(c.jid, c.name, dpCache, 44.dp)
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {

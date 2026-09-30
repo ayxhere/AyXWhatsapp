@@ -304,8 +304,12 @@ object GatewayClient {
             }
         } catch (e: Exception) { emptyList() }
     }
-    suspend fun reminderAdd(jid: String): Boolean = withContext(Dispatchers.IO) {
-        runCatching { post("/reminder/add", JSONObject().put("jid", jid)).optBoolean("ok", false) }.getOrDefault(false)
+    // jid = primary; alts = other jid forms of the same person (@s.whatsapp.net and @lid) so presence matches whichever WhatsApp uses
+    suspend fun reminderAdd(jid: String, alts: List<String> = emptyList()): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            val arr = org.json.JSONArray(); (listOf(jid) + alts).distinct().filter { it.isNotBlank() }.forEach { arr.put(it) }
+            post("/reminder/add", JSONObject().put("jid", jid).put("jids", arr)).optBoolean("ok", false)
+        }.getOrDefault(false)
     }
     suspend fun reminderRemove(jid: String): Boolean = withContext(Dispatchers.IO) {
         runCatching { post("/reminder/remove", JSONObject().put("jid", jid)).optBoolean("ok", false) }.getOrDefault(false)
