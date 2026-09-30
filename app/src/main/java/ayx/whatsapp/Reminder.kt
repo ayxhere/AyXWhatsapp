@@ -1,9 +1,12 @@
 package ayx.whatsapp
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -63,6 +66,7 @@ private fun remName(jid: String): String =
  * and see a live came-online / went-offline timeline per contact. Updates in real time
  * (the list re-polls the gateway every few seconds; no manual refresh).
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ReminderScreen(
     dpCache: MutableMap<String, ImageBitmap?>,
@@ -75,6 +79,7 @@ fun ReminderScreen(
     var entries by remember { mutableStateOf<List<GatewayClient.ReminderEntry>>(emptyList()) }
     var tick by remember { mutableStateOf(0) }            // 1s tick keeps "online for Xm" counting up live
     var showAdd by remember { mutableStateOf(false) }
+    var debug by remember { mutableStateOf<String?>(null) }
 
     // real-time: re-poll the tracker every 3s while this screen is open
     LaunchedEffect(Unit) {
@@ -87,8 +92,10 @@ fun ReminderScreen(
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Spacer(Modifier.height(6.dp))
-        // intro / how it works
-        Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.40f), modifier = Modifier.fillMaxWidth()) {
+        // intro / how it works  (long-press → presence diagnostics, for troubleshooting)
+        Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.40f),
+            modifier = Modifier.fillMaxWidth().combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null,
+                onClick = {}, onLongClick = { scope.launch { debug = GatewayClient.reminderDebug() } })) {
             Row(Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(42.dp).clip(RoundedCornerShape(13.dp)).background(REM_ACCENT.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
                     Icon(Icons.Filled.Notifications, null, tint = REM_ACCENT, modifier = Modifier.size(22.dp))
@@ -162,6 +169,16 @@ fun ReminderScreen(
                     notify(if (ok) "watching " + remName(jid) else "couldn't add")
                 }
             })
+    }
+
+    debug?.let { d ->
+        AlertDialog(
+            onDismissRequest = { debug = null },
+            shape = RoundedCornerShape(20.dp),
+            confirmButton = { TextButton(onClick = { debug = null }) { Text("Close") } },
+            title = { Text("Presence diagnostics") },
+            text = { Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) { Text(d, style = MaterialTheme.typography.bodySmall) } }
+        )
     }
 }
 

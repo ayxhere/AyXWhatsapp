@@ -314,6 +314,10 @@ object GatewayClient {
     suspend fun reminderRemove(jid: String): Boolean = withContext(Dispatchers.IO) {
         runCatching { post("/reminder/remove", JSONObject().put("jid", jid)).optBoolean("ok", false) }.getOrDefault(false)
     }
+    // raw diagnostics json (which jids we watch vs which jids WhatsApp actually pushed presence for)
+    suspend fun reminderDebug(): String = withContext(Dispatchers.IO) {
+        runCatching { get("/reminder/debug").toString(2) }.getOrDefault("(unreachable)")
+    }
     // (jid, ts) pairs of contacts that just came online — drained by the background notifier
     suspend fun reminderPending(): List<Pair<String, Long>> = withContext(Dispatchers.IO) {
         try {

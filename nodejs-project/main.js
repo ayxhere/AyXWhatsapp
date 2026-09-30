@@ -131,18 +131,25 @@ function subscribeTracked() {
 }
 // active loop: keep subscriptions fresh AND sweep the global `presences` map (filled by presence.update
 // for whatever jid WhatsApp actually used) into each watch's timeline. This is robust to @lid vs @s.whatsapp.net.
+//
+// KEY: WhatsApp only PUSHES contacts' presence to a client it considers ACTIVE. A passive linked session
+// (connected but never sending its own presence) gets nothing in the background — which is why real
+// "last seen tracker" apps keep an active WhatsApp Web client open. So while we have watches we send our
+// own presence as 'available' (unless the user froze last seen), then subscribe, then read what came back.
 let reminderSweepTimer = null
 function startReminderSweep() {
   if (reminderSweepTimer) return
   reminderSweepTimer = setInterval(() => {
     if (!sock || status.connection !== 'open') return
+    if (watches.length === 0) return
+    if (!settings.stayOffline) { try { sock.sendPresenceUpdate('available') } catch (_) {} }  // become an active client so presence is pushed
     subscribeTracked()
     for (const w of watches) {
       let best = null
       for (const j of (w.jids || [])) { const p = presences.get(j); if (p) best = p }
       if (best) recordPresence(w.id, best.presence, best.lastSeen)
     }
-  }, 6000)
+  }, 5000)
 }
 
 function pushHistory(jid, role, content) {
@@ -389,6 +396,7 @@ function handleConnUpdate(u) {
     currentQr = null; pairingCode = null; pairingNumber = null
     log('CONNECTED as', status.me)
     applyPresence()
+    if (watches.length && !settings.stayOffline) { try { sock.sendPresenceUpdate('available') } catch (_) {} }
     subscribeTracked()          // re-arm presence subscriptions for tracked contacts after (re)connect
     startReminderSweep()
   }
@@ -877,7 +885,13 @@ app.post('/reminder/add', async (req, res) => {
   else watches.push({ id: jid, jids })
   if (!presenceState.has(jid)) presenceState.set(jid, { online: false, since: Date.now(), lastSeen: null })
   saveReminders()
-  try { if (sock) for (const j of jids) await sock.presenceSubscribe(j).catch(() => {}) } catch (_) {}
+  try {
+    if (sock) {
+      if (!settings.stayOffline) { try { await sock.sendPresenceUpdate('available') } catch (_) {} }  // go active so presence starts flowing
+      for (const j of jids) await sock.presenceSubscribe(j).catch(() => {})
+    }
+  } catch (_) {}
+  startReminderSweep()
   res.json({ ok: true })
 })
 app.post('/reminder/remove', (req, res) => {
@@ -899,6 +913,18 @@ app.get('/reminder/list', (req, res) => {
 app.get('/reminder/pending', (req, res) => {
   const items = reminderOnlineQueue; reminderOnlineQueue = []
   res.json({ items })
+})
+// diagnostics: which jids we watch vs which jids WhatsApp has actually pushed presence for
+app.get('/reminder/debug', (req, res) => {
+  const seen = {}; for (const [k, v] of presences) seen[k] = v
+  res.json({
+    connection: status.connection,
+    stayOffline: !!settings.stayOffline,
+    watches: watches.map(w => ({ id: w.id, jids: w.jids })),
+    presenceSeenJids: Object.keys(seen),
+    presenceSeen: seen,
+    state: [...presenceState.entries()].map(([k, v]) => ({ id: k, ...v })),
+  })
 })
 
 app.get('/session/export', (req, res) => {
