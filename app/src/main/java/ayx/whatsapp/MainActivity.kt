@@ -106,12 +106,11 @@ import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.automirrored.filled.Reply
-import androidx.compose.material.icons.filled.Forward
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.DeleteSweep
-import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.PermMedia
 import androidx.compose.material.icons.filled.RemoveRedEye
@@ -1091,7 +1090,7 @@ private fun ForwardPicker(messages: List<GatewayClient.Msg>, dpCache: MutableMap
             modifier = Modifier.fillMaxWidth(0.94f).fillMaxHeight(0.8f)) {
             Column(Modifier.fillMaxSize().padding(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Forward, null, tint = AYX_GREEN)
+                    Icon(Icons.AutoMirrored.Filled.ArrowForward, null, tint = AYX_GREEN)
                     Spacer(Modifier.width(10.dp))
                     Text("Forward to", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.weight(1f))
@@ -1120,7 +1119,7 @@ private fun ForwardPicker(messages: List<GatewayClient.Msg>, dpCache: MutableMap
                 Button(onClick = { onForward(selected.toList()) }, enabled = selected.isNotEmpty(),
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = AYX_GREEN)) {
-                    Icon(Icons.Filled.Forward, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
+                    Icon(Icons.AutoMirrored.Filled.ArrowForward, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
                     Text(if (selected.isEmpty()) "Select chats" else "Forward to ${selected.size}")
                 }
             }
@@ -1320,7 +1319,7 @@ private fun MessageActionSheet(
                 if (canEdit) ActionSheetItem(Icons.Filled.Edit, "Edit message", AYX_GREEN, onEdit)
                 ActionSheetItem(Icons.Filled.Info, "Message info", AYX_GREEN, onInfo)
                 if (!m.deleted) ActionSheetItem(Icons.AutoMirrored.Filled.Reply, "Reply", AYX_GREEN, onReply)
-                if (!m.deleted) ActionSheetItem(Icons.Filled.Forward, "Forward", AYX_GREEN, onForward)
+                if (!m.deleted) ActionSheetItem(Icons.AutoMirrored.Filled.ArrowForward, "Forward", AYX_GREEN, onForward)
                 if (canCopy) ActionSheetItem(Icons.Filled.ContentCopy, "Copy", AYX_GREEN, onCopy)
                 HorizontalDivider(color = onSurf.copy(alpha = 0.08f))
                 if (m.fromMe && !m.deleted) ActionSheetItem(Icons.Filled.Delete, "Delete for everyone", AYX_RED, onDeleteEveryone, destructive = true)
@@ -1386,7 +1385,7 @@ private fun MessageInfoDialog(m: GatewayClient.Msg, onDismiss: () -> Unit) {
                 InfoRow("Time", fmt(m.ts))
                 if (m.edited) InfoRow("Edited", "Yes")
                 if (m.forwarded) InfoRow("Forwarded", "Yes")
-                if (m.mediaType != null) InfoRow("Type", m.mediaType)
+                m.mediaType?.let { InfoRow("Type", it) }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
@@ -1574,7 +1573,7 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
             Column(Modifier.padding(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 if (m.forwarded && !m.deleted && ChatStyle.showForwardTag.value) {
                     Row(Modifier.padding(horizontal = 8.dp, top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Forward, null, modifier = Modifier.size(13.dp),
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward, null, modifier = Modifier.size(13.dp),
                             tint = if (m.fromMe) Color.White.copy(alpha = 0.7f) else textColor.copy(alpha = 0.55f))
                         Spacer(Modifier.width(4.dp))
                         Text("Forwarded", style = MaterialTheme.typography.labelSmall, fontStyle = FontStyle.Italic,
@@ -1791,7 +1790,7 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
     SettingsGroup("Messages & Media") {
         SettingRow(Icons.Filled.DoneAll, CAT_WALLPAPER, "Auto-read messages", "Mark incoming chats as read", settings.autoRead) { onToggle(JSONObject().put("autoRead", it)) }
         SettingRow(Icons.Filled.PermMedia, CAT_AUTOREPLY, "Save media", "Download incoming photos/videos (needed for view, deleted media)", settings.saveMedia) { onToggle(JSONObject().put("saveMedia", it)) }
-        SettingRow(Icons.Filled.Forward, CAT_AI, "Forwarded tag", "Show the \"Forwarded\" label on forwarded messages", ChatStyle.showForwardTag.value) { ChatStyle.setShowForwardTag(it) }
+        SettingRow(Icons.AutoMirrored.Filled.ArrowForward, CAT_AI, "Forwarded tag", "Show the \"Forwarded\" label on forwarded messages", ChatStyle.showForwardTag.value) { ChatStyle.setShowForwardTag(it) }
     }
     SettingsGroup("Background & battery") {
         ActionRow(Icons.Filled.Bolt, WARN_AMBER, "Allow battery (no optimization)", "Keep the gateway alive in the background") {
@@ -1815,7 +1814,7 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
                 Toast.makeText(ctx, "Media cache cleared", Toast.LENGTH_SHORT).show()
             }
         }
-        StorageRow(Icons.Filled.CleaningServices, CAT_AI, "Cache", AppStorage.fmtSize(cacheSize), enabled = !busy) {
+        StorageRow(Icons.Filled.Storage, CAT_AI, "Cache", AppStorage.fmtSize(cacheSize), enabled = !busy) {
             AppStorage.clearCacheLocal(ctx); refreshTick++
             Toast.makeText(ctx, "Cache cleared", Toast.LENGTH_SHORT).show()
         }
