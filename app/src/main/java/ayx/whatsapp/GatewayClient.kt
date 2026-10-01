@@ -46,6 +46,9 @@ object GatewayClient {
         val aiVisionApiUrl2: String = "",
         val aiVisionApiKey2: String = "",
         val aiImageOcr: Boolean = false,
+        val aiCommandsEnabled: Boolean = true,
+        val aiVoiceNoteReply: Boolean = false,
+        val aiTtsVoice: String = "hi-IN-SwaraNeural",
         val aiReplyLang: String = "",
     )
     data class Contact(val jid: String, val name: String, val number: String)
@@ -249,6 +252,18 @@ object GatewayClient {
         parseSettings(post("/settings", patch))
     }
 
+    /** Run the Image-AI self-test against a built-in test image (may take a while — tries each provider). */
+    suspend fun visionTest(): JSONObject = withContext(Dispatchers.IO) {
+        try {
+            val c = (URL("$base/visiontest").openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"; connectTimeout = 4000; readTimeout = 90000
+            }
+            readJson(c)
+        } catch (e: Exception) {
+            JSONObject().put("ok", false).put("error", e.message ?: "test failed")
+        }
+    }
+
     suspend fun setRules(rules: List<Rule>): Settings = withContext(Dispatchers.IO) {
         val arr = JSONArray()
         rules.forEach { arr.put(JSONObject().put("match", it.match).put("reply", it.reply).put("mode", it.mode)) }
@@ -361,6 +376,9 @@ object GatewayClient {
             aiVisionApiUrl2 = o.optString("aiVisionApiUrl2", ""),
             aiVisionApiKey2 = o.optString("aiVisionApiKey2", ""),
             aiImageOcr = o.optBoolean("aiImageOcr", false),
+            aiCommandsEnabled = o.optBoolean("aiCommandsEnabled", true),
+            aiVoiceNoteReply = o.optBoolean("aiVoiceNoteReply", false),
+            aiTtsVoice = o.optString("aiTtsVoice", "hi-IN-SwaraNeural"),
             aiReplyLang = o.optString("aiReplyLang", ""),
         )
     }

@@ -64,6 +64,9 @@ let settings = {
   aiVisionApiKey2: '',
   aiVisionModel2: '',
   aiImageOcr: false, // read text IN the image on-device (offline, unlimited) and feed it to the AI
+  aiCommandsEnabled: true, // /create (make image) and /prompt (describe image as a prompt)
+  aiVoiceNoteReply: false, // reply to incoming voice notes WITH a voice note (TTS)
+  aiTtsVoice: 'hi-IN-SwaraNeural', // Edge neural voice used for voice-note replies
   aiReplyLang: 'Reply in Roman Hindi (Hinglish). If they write Bangla, reply in Roman Bangla. ALWAYS use Latin/English letters — never Devanagari or Bangla script. Mirror the sender language.',
 }
 
@@ -389,7 +392,18 @@ function visionProviders() {
   return list
 }
 
-// one vision call with a hard timeout (so a hung/overloaded provider fails fast -> next provider)
+// detect the real image type from the file's magic bytes so the data URL mime is correct.
+// (sending a PNG/WebP labelled as image/jpeg makes some providers ignore the image → "what message?" replies)
+function detectImageMime(buf) {
+  if (!buf || buf.length < 12) return 'image/jpeg'
+  if (buf[0] === 0xFF && buf[1] === 0xD8) return 'image/jpeg'
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return 'image/png'
+  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return 'image/gif'
+  if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return 'image/webp'
+  return 'image/jpeg'
+}
+
+// one vision call. Returns { ok, text, status, err } so callers (and the self-test) can see WHY it failed.
 async function visionCall(url, key, model, sys, userText, dataUrl) {
   const ctrl = new AbortController()
   const to = setTimeout(() => ctrl.abort(), 25000)
@@ -408,12 +422,55 @@ async function visionCall(url, key, model, sys, userText, dataUrl) {
         ],
       }),
     })
-    if (!res.ok) { log('vision http', model, res.status, (await res.text()).slice(0, 140)); return null }
+    if (!res.ok) {
+      const body = (await res.text()).slice(0, 200)
+      log('vision http', model, res.status, body)
+      return { ok: false, text: null, status: res.status, err: body }
+    }
     const data = await res.json()
     const out = data?.choices?.[0]?.message?.content
-    return out ? String(out).trim() : null
-  } catch (e) { log('vision call err', model, e?.message); return null }
+    const text = out ? String(out).trim() : null
+    return { ok: !!text, text, status: 200, err: text ? null : 'empty response' }
+  } catch (e) { log('vision call err', model, e?.message); return { ok: false, text: null, status: 0, err: e?.message || 'network error' } }
   finally { clearTimeout(to) }
+}
+
+// shared provider loop over a ready data URL (used by both real replies and the self-test)
+async function visionAskDataUrl(dataUrl, sys, userText) {
+  for (const prov of visionProviders()) {
+    const tried = new Set()
+    for (const model of prov.models) {
+      if (!model || tried.has(model)) continue
+      tried.add(model)
+      const r = await visionCall(prov.url, prov.key, model, sys, userText, dataUrl)
+      if (r.ok && r.text && !looksRefusal(r.text)) { log('vision ok via', model); return r.text }
+    }
+  }
+  return null
+}
+
+// a tiny built-in image (red circle + blue square + the text "AYX TEST") used by the "Test Image AI" button
+const VISION_TEST_B64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCADwAWgDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD6pooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAopk80dvBJNPIkUMal3d2CqqgZJJPQAV5z4l+MGg6XJLBpqTapcJwGiISEndgjeeTwM5VSDxz6ROpGCvJ2OnDYOvipctGDl/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'
+
+// run the current Image-AI setup against the built-in test image and report EXACTLY what each provider said
+async function visionSelfTest() {
+  const provs = visionProviders()
+  if (!provs.length) return { ok: false, error: 'No image provider set. Image AI me Gemini/OpenRouter ka URL + key daal ke Save kar.', report: [] }
+  const dataUrl = 'data:image/jpeg;base64,' + VISION_TEST_B64
+  const sys = 'You are a vision check. Describe what is in this image in one short line, naming any shapes, colours or text you can see.'
+  const report = []
+  for (const prov of provs) {
+    const host = (String(prov.url).match(/https?:\/\/([^/]+)/) || ['', prov.url])[1]
+    const tried = new Set()
+    for (const model of prov.models) {
+      if (!model || tried.has(model)) continue
+      tried.add(model)
+      const r = await visionCall(prov.url, prov.key, model, sys, 'What is in this image?', dataUrl)
+      report.push({ host, model, status: r.status, ok: r.ok, err: r.err ? String(r.err).slice(0, 180) : null, text: r.text ? r.text.slice(0, 180) : null })
+      if (r.ok && r.text) return { ok: true, via: host + ' · ' + model, text: r.text, report }
+    }
+  }
+  return { ok: false, error: 'Koi provider image nahi dekh paaya — neeche details dekh.', report }
 }
 
 // ---- on-device OCR (optional) ----
@@ -442,43 +499,90 @@ async function ocrImage(name) {
 // Vision: send a saved image (+ caption + any OCR'd text) to a multimodal model and get a natural reply.
 // Tries every configured provider/model in order; if ALL vision providers fail but OCR found text,
 // falls back to a plain TEXT reply built from that text (works even when every vision API is down).
-async function visionReply(jid, name, caption) {
+// Core: read a saved image and ask every configured vision provider/model until one answers.
+// Returns text or null. (No OCR here — OCR is only used as a last-resort fallback so it never
+// slows down the normal, fast image reply.)
+async function visionAsk(name, sys, userText) {
   const p = path.join(MEDIA_DIR, name)
   if (!fs.existsSync(p)) return null
-  let b64
-  try { b64 = fs.readFileSync(p).toString('base64') } catch (_) { return null }
-  const dataUrl = 'data:image/jpeg;base64,' + b64
+  let buf
+  try { buf = fs.readFileSync(p) } catch (_) { return null }
+  const dataUrl = 'data:' + detectImageMime(buf) + ';base64,' + buf.toString('base64')
+  return await visionAskDataUrl(dataUrl, sys, userText)
+}
 
-  // optional on-device read of any text inside the image
-  const ocrText = await ocrImage(name)
-
+async function visionReply(jid, name, caption) {
   // LEAN system for vision: the full persona prompt overflows vision models and kills the reply.
   const sys = 'You are Raju, a real person chatting on WhatsApp (never an AI/bot, never say you are one). Look at the image and reply in ONE short, casual, natural line. Never refuse or apologize. LANGUAGE (must follow): ' + langRule()
-  const cap = (caption && caption.trim()) ? caption.trim() : 'reply to this image'
-  let userText = cap
-  if (ocrText && ocrText.length >= 3) userText += '\n\n(Text visible in the image: "' + ocrText.slice(0, 500) + '")'
+  const userText = (caption && caption.trim()) ? caption.trim() : 'reply to this image'
 
-  const providers = visionProviders()
-  for (const prov of providers) {
-    const tried = new Set()
-    for (const model of prov.models) {
-      if (!model || tried.has(model)) continue
-      tried.add(model)
-      const out = await visionCall(prov.url, prov.key, model, sys, userText, dataUrl)
-      if (out && !looksRefusal(out)) { log('vision ok via', model); return out }
-    }
-  }
+  // FAST PATH: vision first (no OCR wait) — this is what fixes the reply delay.
+  const out = await visionAsk(name, sys, userText)
+  if (out) return out
 
-  // every vision provider failed — if we read text off the image, answer from that via the main text API
-  if (ocrText && ocrText.length >= 3 && settings.aiApiUrl && settings.aiApiKey) {
-    const out = await chatComplete(settings.aiModel || 'openai/gpt-oss-20b', [
+  // SLOW FALLBACK only when every vision provider failed: read text on-device, answer from that.
+  // Quality-gate the OCR: only use it if it found several real words. Garbled game/UI text made the
+  // model reply "ye kya garbled message hai" — so if OCR is junk, send nothing instead of nonsense.
+  const ocrText = await ocrImage(name)
+  const words = (ocrText.match(/[A-Za-z]{3,}/g) || [])
+  if (words.length >= 3 && settings.aiApiUrl && settings.aiApiKey) {
+    const r = await chatComplete(settings.aiModel || 'openai/gpt-oss-20b', [
       { role: 'system', content: sysWith() },
-      { role: 'user', content: 'Image aaya jisme ye likha hai: "' + ocrText.slice(0, 600) + '". Iska ek short casual reply de.' },
+      { role: 'user', content: 'Someone sent you an image. The text detected inside it is: "' + ocrText.slice(0, 600) + '". Reply in ONE short casual line as if you just glanced at their picture. Do NOT say it is garbled, confusing, or that you cannot understand it.' },
     ])
-    if (out && !looksRefusal(out)) { log('vision fallback via OCR+text'); return out }
+    if (r && !looksRefusal(r)) { log('vision fallback via OCR+text'); return r }
   }
-  log('vision: all providers failed')
+  log('vision: all providers failed (no reply sent)')
   return null
+}
+
+// /prompt command: describe the image as a detailed image-generation prompt.
+async function describeAsPrompt(name) {
+  const sys = 'You are an expert image-prompt engineer. Look at the image and output ONE detailed, vivid text-to-image generation prompt in English: subject, style, colours, lighting, composition, mood, camera/lens. Output ONLY the prompt text, no preamble, no quotes.'
+  return await visionAsk(name, sys, 'Describe this image as a generation prompt.')
+}
+
+// /create command: free, unlimited text-to-image via Pollinations (no API key needed). Returns a JPEG buffer.
+async function generateImage(prompt) {
+  try {
+    const seed = Math.floor(Math.random() * 1e6)
+    const url = 'https://image.pollinations.ai/prompt/' + encodeURIComponent(prompt) +
+      '?width=1024&height=1024&nologo=true&model=flux&seed=' + seed
+    const ctrl = new AbortController()
+    const to = setTimeout(() => ctrl.abort(), 70000)
+    const res = await fetch(url, { signal: ctrl.signal })
+    clearTimeout(to)
+    if (!res.ok) { log('imggen http', res.status); return null }
+    const ab = await res.arrayBuffer()
+    const buf = Buffer.from(ab)
+    return buf.length > 1000 ? buf : null
+  } catch (e) { log('imggen err', e?.message); return null }
+}
+
+// Voice-note reply: turn text into a natural OGG/Opus voice note (so WhatsApp plays it as a real PTT).
+// Uses Microsoft Edge neural voices (free). Fully isolated/optional: if it can't run, caller sends text.
+let _ttsBroken = false
+async function ttsToOgg(text, voice) {
+  if (_ttsBroken || !text) return null
+  let mod
+  try { mod = require('msedge-tts') }
+  catch (e) { _ttsBroken = true; log('tts: msedge-tts unavailable —', e?.message); return null }
+  try {
+    const { MsEdgeTTS, OUTPUT_FORMAT } = mod
+    const tts = new MsEdgeTTS()
+    await tts.setMetadata(voice || 'hi-IN-SwaraNeural', OUTPUT_FORMAT.OGG_24KHZ_16BIT_MONO_OPUS)
+    const res = await tts.toStream(text)
+    const stream = (res && res.audioStream) ? res.audioStream : res
+    const chunks = []
+    await new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('tts timeout')), 20000)
+      stream.on('data', c => chunks.push(c))
+      stream.on('end', () => { clearTimeout(t); resolve() })
+      stream.on('error', e => { clearTimeout(t); reject(e) })
+    })
+    const buf = Buffer.concat(chunks)
+    return buf.length > 500 ? buf : null
+  } catch (e) { log('tts err', e?.message); return null }
 }
 
 function remember(id, entry) {
@@ -764,12 +868,37 @@ async function handleMessages({ messages, type }) {
         }
         if (!aiExcluded(from)) {   // excluded chats: reply nothing (no keyword, no AI, no voice/image)
           const mtype = entry.media && entry.media.type
-          if (mtype === 'image' && settings.aiReplyImage) {
+          const cmd = (text || '').trim()
+          const lc = cmd.toLowerCase()
+          // all auto-replies are sent as a swipe-left QUOTED reply to the exact message
+          const q = { quoted: msg }
+
+          if (settings.aiCommandsEnabled && lc.startsWith('/create')) {
+            // /create <prompt> → free unlimited text-to-image, sent back as an image
+            const prompt = cmd.slice(7).trim() || 'a beautiful creative artwork, highly detailed'
+            log('cmd /create:', prompt.slice(0, 60))
+            const img = await generateImage(prompt)
+            try {
+              if (img) await sock.sendMessage(from, { image: img, caption: prompt.slice(0, 200) }, q)
+              else await sock.sendMessage(from, { text: 'Image nahi ban paayi abhi, thodi der baad try kar 🙏' }, q)
+            } catch (e) { log('create send err', e?.message) }
+
+          } else if (settings.aiCommandsEnabled && lc.startsWith('/prompt')) {
+            // /prompt (with an image) → detailed image-generation prompt of that image
+            if (mtype === 'image') {
+              log('cmd /prompt')
+              const pr = await describeAsPrompt(entry.media.name)
+              try { await sock.sendMessage(from, { text: pr || 'Image samajh nahi aayi, dobara bhej.' }, q) } catch (e) { log('prompt send err', e?.message) }
+            } else {
+              try { await sock.sendMessage(from, { text: 'Kisi image ke saath caption me /prompt likh ke bhej — main uska detailed prompt bana dunga.' }, q) } catch (e) {}
+            }
+
+          } else if (mtype === 'image' && settings.aiReplyImage) {
             // IMAGE → vision reply (own toggle, independent of the master text toggle)
             pushHistory(from, 'user', text ? text : '[image]')
             const vr = await visionReply(from, entry.media.name, text)
             if (vr) {
-              try { await sock.sendMessage(from, { text: vr }); pushHistory(from, 'assistant', vr); log('ai image reply sent') }
+              try { await sock.sendMessage(from, { text: vr }, q); pushHistory(from, 'assistant', vr); log('ai image reply sent') }
               catch (e) { log('ai image reply err', e?.message) }
             }
           } else if (mtype === 'audio' && settings.aiReplyVoice) {
@@ -781,8 +910,20 @@ async function handleMessages({ messages, type }) {
               let reply = settings.autoReplyEnabled ? matchReply(tr) : null
               if (!reply) reply = await aiReply(from, true)
               if (reply) {
-                try { await sock.sendMessage(from, { text: reply }); pushHistory(from, 'assistant', reply); log('ai voice reply sent') }
-                catch (e) { log('ai voice reply err', e?.message) }
+                pushHistory(from, 'assistant', reply)
+                let sent = false
+                // reply WITH a voice note (soft human TTS) when enabled; otherwise text
+                if (settings.aiVoiceNoteReply) {
+                  const ogg = await ttsToOgg(reply, settings.aiTtsVoice)
+                  if (ogg) {
+                    try { await sock.sendMessage(from, { audio: ogg, ptt: true, mimetype: 'audio/ogg; codecs=opus' }, q); sent = true; log('ai voice-note reply sent') }
+                    catch (e) { log('voicenote send err', e?.message) }
+                  }
+                }
+                if (!sent) {
+                  try { await sock.sendMessage(from, { text: reply }, q); log('ai voice reply sent (text)') }
+                  catch (e) { log('ai voice reply err', e?.message) }
+                }
               }
             }
           } else if (text) {
@@ -792,7 +933,7 @@ async function handleMessages({ messages, type }) {
             if (settings.autoReplyEnabled) reply = matchReply(text)
             if (!reply && settings.aiReplyEnabled) reply = await aiReply(from)
             if (reply) {
-              try { await sock.sendMessage(from, { text: reply }); pushHistory(from, 'assistant', reply); log('auto-reply sent:', reply) }
+              try { await sock.sendMessage(from, { text: reply }, q); pushHistory(from, 'assistant', reply); log('auto-reply sent:', reply) }
               catch (e) { log('auto-reply err', e?.message) }
             }
           }
@@ -1418,6 +1559,10 @@ app.post('/sendraw', async (req, res) => {
 })
 
 app.get('/settings', (req, res) => res.json(settings))
+app.get('/visiontest', async (req, res) => {
+  try { res.json(await visionSelfTest()) }
+  catch (e) { res.json({ ok: false, error: e?.message || 'test failed', report: [] }) }
+})
 app.post('/settings', (req, res) => {
   const b = req.body || {}
   if (typeof b.alwaysOnline === 'boolean') settings.alwaysOnline = b.alwaysOnline
@@ -1443,6 +1588,9 @@ app.post('/settings', (req, res) => {
   if (typeof b.aiVisionApiKey2 === 'string') settings.aiVisionApiKey2 = b.aiVisionApiKey2
   if (typeof b.aiVisionModel2 === 'string') settings.aiVisionModel2 = b.aiVisionModel2
   if (typeof b.aiImageOcr === 'boolean') settings.aiImageOcr = b.aiImageOcr
+  if (typeof b.aiCommandsEnabled === 'boolean') settings.aiCommandsEnabled = b.aiCommandsEnabled
+  if (typeof b.aiVoiceNoteReply === 'boolean') settings.aiVoiceNoteReply = b.aiVoiceNoteReply
+  if (typeof b.aiTtsVoice === 'string') settings.aiTtsVoice = b.aiTtsVoice
   if (typeof b.aiReplyLang === 'string') settings.aiReplyLang = b.aiReplyLang
   saveSettings(); applyPresence()
   res.json(settings)

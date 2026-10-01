@@ -119,6 +119,8 @@ import androidx.compose.material.icons.filled.PermMedia
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.RemoveRedEye
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Star
@@ -1773,10 +1775,11 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
 // sub-page title shown in the top app bar (single source of the back arrow)
 private fun settingsTitle(page: String): String = when (page) {
     "general" -> "General"; "autoreply" -> "Auto-reply"; "ai" -> "AI Assistant"; "chat" -> "Chat Settings"
+    "imageai" -> "Image AI"
     "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "about" -> "About"; "support" -> "Support Development"; else -> "Settings"
 }
-// parent page for nested back (Wallpaper lives under Chat Settings)
-private fun settingsParent(page: String): String = if (page == "wallpaper") "chat" else "home"
+// parent page for nested back (Wallpaper lives under Chat Settings, Image AI under AI Assistant)
+private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; else -> "home" }
 
 @Composable
 private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient.Settings, page: String, onPage: (String) -> Unit, wallpaperVersion: Int,
@@ -1789,7 +1792,8 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
         when (p) {
             "general" -> SettingsSubPage { GeneralSettings(settings, onToggle) }
             "autoreply" -> SettingsSubPage { AutoReplySection(settings, onToggle, onRules) }
-            "ai" -> SettingsSubPage { AiSettings(settings, onToggle, messages, dpCache) }
+            "ai" -> SettingsSubPage { AiSettings(settings, onToggle, messages, dpCache, onOpenImageAi = { onPage("imageai") }) }
+            "imageai" -> SettingsSubPage { ImageAiSettings(settings, onToggle, ctx) }
             "chat" -> SettingsSubPage { ChatSettings(onOpenWallpaper = { onPage("wallpaper") }) }
             "wallpaper" -> SettingsSubPage { WallpaperSettings(ctx, wallpaperVersion, onPickWallpaper, onRemoveWallpaper) }
             "appearance" -> SettingsSubPage { AppearanceSettings() }
@@ -2083,7 +2087,7 @@ private fun AutoReplySection(settings: GatewayClient.Settings, onToggle: (JSONOb
 }
 
 @Composable
-private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit, messages: List<GatewayClient.Msg>, dpCache: MutableMap<String, ImageBitmap?>) {
+private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit, messages: List<GatewayClient.Msg>, dpCache: MutableMap<String, ImageBitmap?>, onOpenImageAi: () -> Unit) {
     val ctx = LocalContext.current
     var showExcludePicker by remember { mutableStateOf(false) }
     fun setExcludes(list: List<String>) { onToggle(JSONObject().put("aiExcludeJids", org.json.JSONArray(list.distinct()))) }
@@ -2093,11 +2097,33 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
     // MAIN box — the three reply types + group
     SettingsGroup("Replies") {
         SettingRow(Icons.Filled.AutoAwesome, CAT_AI, "AI reply (text)", "AI replies to every personal text chat (when no keyword rule matches)", settings.aiReplyEnabled) { onToggle(JSONObject().put("aiReplyEnabled", it)) }
-        SettingRow(Icons.Filled.Image, Color(0xFFFFB26B), "Image reply", "AI looks at incoming images (vision) then replies", settings.aiReplyImage) { onToggle(JSONObject().put("aiReplyImage", it)) }
+        SettingRow(Icons.Filled.Image, Color(0xFFFFB26B), "Image reply", "AI looks at incoming images (vision) then swipe-replies", settings.aiReplyImage) { onToggle(JSONObject().put("aiReplyImage", it)) }
         SettingRow(Icons.Filled.Mic, Color(0xFF4DD0C4), "Voice reply", "Transcribe incoming voice (Whisper) then AI-reply", settings.aiReplyVoice) { onToggle(JSONObject().put("aiReplyVoice", it)) }
         SettingRow(Icons.Filled.QuestionAnswer, Color(0xFFB69DF8), "Group AI reply", "Answer greetings/questions in groups (max 10/day); /ai works anytime", settings.groupAiEnabled) { onToggle(JSONObject().put("groupAiEnabled", it)) }
-        Text("Image & voice work on their own (no need for \"AI reply (text)\"). Image uses the \"Image AI\" box below; text/voice use Groq.",
+        Text("Image & voice work on their own (no need for \"AI reply (text)\"). Replies come as a swipe-left quote on the exact message.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 2.dp, top = 2.dp, bottom = 6.dp))
+    }
+
+    // Image AI — opens its own page (provider, fallback & keys live there)
+    SettingsGroup("Image") {
+        ActionRow(Icons.Filled.Image, Color(0xFFFFB26B), "Image AI", "Vision provider, auto-fallback, OCR & API keys") { onOpenImageAi() }
+    }
+
+    // Voice-note reply — reply to incoming voice notes WITH a soft human voice note
+    var ttsVoice by remember { mutableStateOf(settings.aiTtsVoice) }
+    SettingsGroup("Voice note reply") {
+        SettingRow(Icons.Filled.GraphicEq, Color(0xFF4DD0C4), "Reply with a voice note", "When someone sends a voice note, reply back in a real voice note (needs \"Voice reply\" on)", settings.aiVoiceNoteReply) { onToggle(JSONObject().put("aiVoiceNoteReply", it)) }
+        OutlinedTextField(ttsVoice, { ttsVoice = it }, label = { Text("Voice") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+        Text("Soft/cute voices: hi-IN-SwaraNeural (Hindi), bn-IN-TanishaaNeural (Bangla), en-US-AnaNeural (cute), en-US-AriaNeural (soft).",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            FilledTonalButton(onClick = { onToggle(JSONObject().put("aiTtsVoice", ttsVoice.trim())); Toast.makeText(ctx, "Voice saved", Toast.LENGTH_SHORT).show() }) { Text("Save voice") }
+        }
+    }
+
+    // Custom commands
+    SettingsGroup("Commands") {
+        SettingRow(Icons.Filled.Terminal, Color(0xFFB69DF8), "Enable /create & /prompt", "/create <text> makes an image (free) · /prompt on an image gives its prompt", settings.aiCommandsEnabled) { onToggle(JSONObject().put("aiCommandsEnabled", it)) }
     }
 
     // Reply language — its own box; AI replies ONLY in this language/style (text, voice & image)
@@ -2138,12 +2164,6 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
     var url by remember { mutableStateOf(settings.aiApiUrl) }
     var key by remember { mutableStateOf(settings.aiApiKey) }
     var model by remember { mutableStateOf(settings.aiModel) }
-    var vision by remember { mutableStateOf(settings.aiVisionModel) }
-    var visionUrl by remember { mutableStateOf(settings.aiVisionApiUrl) }
-    var visionKey by remember { mutableStateOf(settings.aiVisionApiKey) }
-    var vision2 by remember { mutableStateOf(settings.aiVisionModel2) }
-    var vision2Url by remember { mutableStateOf(settings.aiVisionApiUrl2) }
-    var vision2Key by remember { mutableStateOf(settings.aiVisionApiKey2) }
     var sys by remember { mutableStateOf(settings.aiSystemPrompt) }
     var showKey by remember { mutableStateOf(false) }
     fun saveApi() {
@@ -2151,20 +2171,14 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
             .put("aiSystemPrompt", sys))
         Toast.makeText(ctx, "AI settings saved", Toast.LENGTH_SHORT).show()
     }
-    fun saveVision() {
-        onToggle(JSONObject()
-            .put("aiVisionModel", vision.trim()).put("aiVisionApiUrl", visionUrl.trim()).put("aiVisionApiKey", visionKey.trim())
-            .put("aiVisionModel2", vision2.trim()).put("aiVisionApiUrl2", vision2Url.trim()).put("aiVisionApiKey2", vision2Key.trim()))
-        Toast.makeText(ctx, "Image AI saved", Toast.LENGTH_SHORT).show()
-    }
     Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             // header row: title left, Save button on the right
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("API configuration", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                Text("API configuration (text/voice)", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                 FilledTonalButton(onClick = { saveApi() }) { Text("Save") }
             }
-            Text("Free key: console.groq.com", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            LinkRow(Icons.Filled.Language, Color(0xFF4DD07A), "Get Groq key", "console.groq.com → tap to create key") { openUrl(ctx, "https://console.groq.com/keys") }
             OutlinedTextField(url, { url = it }, label = { Text("API URL (text/voice)") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
             OutlinedTextField(key, { key = it }, label = { Text("API key") }, singleLine = true, shape = RoundedCornerShape(14.dp),
                 visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
@@ -2174,8 +2188,48 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
             OutlinedTextField(sys, { sys = it }, label = { Text("System prompt (optional)") }, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
         }
     }
+}
 
-    // IMAGE AI — its own box: dedicated vision provider + automatic fallback + optional on-device OCR
+// format the /visiontest result into a readable message for the dialog
+private fun fmtVisionTest(r: JSONObject): String {
+    val sb = StringBuilder()
+    if (r.optBoolean("ok", false)) {
+        sb.append("✅ Working!\nVia: ").append(r.optString("via")).append("\n\nAI ne image me dekha:\n\"").append(r.optString("text")).append("\"")
+    } else {
+        sb.append("❌ ").append(r.optString("error", "Image AI test failed"))
+    }
+    val rep = r.optJSONArray("report")
+    if (rep != null && rep.length() > 0) {
+        sb.append("\n\nDetails:")
+        for (i in 0 until rep.length()) {
+            val o = rep.optJSONObject(i) ?: continue
+            sb.append("\n• ").append(o.optString("host")).append(" · ").append(o.optString("model")).append(" → ")
+            if (o.optBoolean("ok")) sb.append("OK")
+            else sb.append("HTTP ").append(o.optInt("status")).append(" ").append(o.optString("err", "").take(90))
+        }
+    }
+    return sb.toString()
+}
+
+// IMAGE AI — its own page: dedicated vision provider + automatic fallback + on-device OCR + key links
+@Composable
+private fun ImageAiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit, ctx: Context) {
+    val scope = rememberCoroutineScope()
+    var vision by remember { mutableStateOf(settings.aiVisionModel) }
+    var visionUrl by remember { mutableStateOf(settings.aiVisionApiUrl) }
+    var visionKey by remember { mutableStateOf(settings.aiVisionApiKey) }
+    var vision2 by remember { mutableStateOf(settings.aiVisionModel2) }
+    var vision2Url by remember { mutableStateOf(settings.aiVisionApiUrl2) }
+    var vision2Key by remember { mutableStateOf(settings.aiVisionApiKey2) }
+    var showKey by remember { mutableStateOf(false) }
+    var testing by remember { mutableStateOf(false) }
+    var testResult by remember { mutableStateOf<String?>(null) }
+    fun saveVision() {
+        onToggle(JSONObject()
+            .put("aiVisionModel", vision.trim()).put("aiVisionApiUrl", visionUrl.trim()).put("aiVisionApiKey", visionKey.trim())
+            .put("aiVisionModel2", vision2.trim()).put("aiVisionApiUrl2", vision2Url.trim()).put("aiVisionApiKey2", vision2Key.trim()))
+        Toast.makeText(ctx, "Image AI saved", Toast.LENGTH_SHORT).show()
+    }
     Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -2185,7 +2239,18 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
             Text("Images ke liye alag AI. Pehla provider down/overload ho to app apne aap fallback provider pe switch kar leta hai.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
+            // Self-test: Save first, then tap to see if the AI can actually SEE an image (and the exact error if not)
+            Button(onClick = {
+                testing = true
+                scope.launch { val r = GatewayClient.visionTest(); testResult = fmtVisionTest(r); testing = false }
+            }, enabled = !testing, modifier = Modifier.fillMaxWidth()) {
+                Text(if (testing) "Testing… (thoda ruk)" else "Test Image AI")
+            }
+            Text("Pehle Save dabao, phir Test. Isse pata chalega AI image dekh pa raha ya nahi (aur error kya hai).",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
             Text("PROVIDER 1", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            LinkRow(Icons.Filled.Language, Color(0xFF4DD07A), "Get Gemini key", "aistudio.google.com → tap to create key") { openUrl(ctx, "https://aistudio.google.com/apikey") }
             FilledTonalButton(onClick = {
                 visionUrl = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
                 vision = "gemini-2.5-flash, gemini-2.0-flash"
@@ -2200,6 +2265,7 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
 
             HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
             Text("PROVIDER 2 — fallback (jab pehla down ho)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            LinkRow(Icons.Filled.Language, Color(0xFFFFB26B), "Get OpenRouter key", "openrouter.ai → tap to create key") { openUrl(ctx, "https://openrouter.ai/keys") }
             FilledTonalButton(onClick = {
                 vision2Url = "https://openrouter.ai/api/v1/chat/completions"
                 vision2 = "google/gemini-2.0-flash-exp:free, qwen/qwen2.5-vl-72b-instruct:free, meta-llama/llama-3.2-11b-vision-instruct:free"
@@ -2209,14 +2275,21 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
             OutlinedTextField(vision2Url, { vision2Url = it }, label = { Text("Fallback API URL") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
             OutlinedTextField(vision2Key, { vision2Key = it }, label = { Text("Fallback API key") }, singleLine = true, shape = RoundedCornerShape(14.dp),
                 visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-            Text("Free keys: aistudio.google.com · openrouter.ai. Model purana pad jaye to naya free vision model paste kar dena.",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
             HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
             SettingRow(Icons.Filled.TextFields, Color(0xFF80DEEA), "Read image text on phone", "Offline & unlimited. Screenshot/text image ka reply tab bhi jab vision API down ho.", settings.aiImageOcr) { onToggle(JSONObject().put("aiImageOcr", it)) }
 
             FilledTonalButton(onClick = { saveVision() }, modifier = Modifier.align(Alignment.End)) { Text("Save") }
         }
+    }
+
+    if (testResult != null) {
+        AlertDialog(
+            onDismissRequest = { testResult = null },
+            title = { Text("Image AI test") },
+            text = { Text(testResult ?: "", style = MaterialTheme.typography.bodySmall) },
+            confirmButton = { TextButton(onClick = { testResult = null }) { Text("OK") } }
+        )
     }
 }
 
