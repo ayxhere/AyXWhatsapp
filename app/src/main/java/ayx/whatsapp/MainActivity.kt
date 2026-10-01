@@ -2095,7 +2095,7 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
     SettingsGroup("Voice & image (free, via Groq)") {
         SettingRow(Icons.Filled.Mic, Color(0xFF4DD0C4), "Reply to voice notes", "Transcribe incoming voice (Whisper) then AI-reply", settings.aiReplyVoice) { onToggle(JSONObject().put("aiReplyVoice", it)) }
         SettingRow(Icons.Filled.Image, Color(0xFFFFB26B), "Reply to images", "AI looks at incoming images (vision) then replies", settings.aiReplyImage) { onToggle(JSONObject().put("aiReplyImage", it)) }
-        Text("Needs AI reply ON. Uses Groq's free Whisper + vision models (rate-limited). Images download automatically; for voice, this turns on saving voice notes.",
+        Text("Works on their own — no need to turn on \"AI reply to all chats\". Uses your Groq key (free Whisper + vision, rate-limited). Images download automatically; voice notes are saved so they can be transcribed.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 2.dp, top = 2.dp, bottom = 8.dp))
     }
 

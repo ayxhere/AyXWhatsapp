@@ -255,8 +255,9 @@ function aiExcluded(jid) {
   return list.some(x => String(x).split('@')[0].split(':')[0].replace(/\D/g, '') === d)
 }
 
-async function aiReply(jid) {
-  if (!settings.aiReplyEnabled || !settings.aiApiUrl || !settings.aiApiKey) return null
+async function aiReply(jid, force) {
+  // force = called from voice/image path, which has its own enable toggle (don't require the master text toggle)
+  if ((!force && !settings.aiReplyEnabled) || !settings.aiApiUrl || !settings.aiApiKey) return null
   const history = chatHistory.get(jid) || []
   try {
     const res = await fetch(settings.aiApiUrl, {
@@ -635,30 +636,36 @@ async function handleMessages({ messages, type }) {
         }
         if (!aiExcluded(from)) {   // excluded chats: reply nothing (no keyword, no AI, no voice/image)
           const mtype = entry.media && entry.media.type
-          // IMAGE → reply using a vision model (sees the picture + caption)
-          if (mtype === 'image' && settings.aiReplyEnabled && settings.aiReplyImage) {
+          if (mtype === 'image' && settings.aiReplyImage) {
+            // IMAGE → vision reply (own toggle, independent of the master text toggle)
             pushHistory(from, 'user', text ? text : '[image]')
             const vr = await visionReply(from, entry.media.name, text)
             if (vr) {
               try { await sock.sendMessage(from, { text: vr }); pushHistory(from, 'assistant', vr); log('ai image reply sent') }
               catch (e) { log('ai image reply err', e?.message) }
             }
-          } else {
-            // VOICE → transcribe to text first, then the normal text reply path
-            let effText = text
-            if (!effText && mtype === 'audio' && settings.aiReplyEnabled && settings.aiReplyVoice) {
-              effText = await transcribeMedia(entry.media.name)
-              if (effText) log('voice transcribed:', effText.slice(0, 60))
-            }
-            if (effText) {
-              pushHistory(from, 'user', effText)
-              let reply = null
-              if (settings.autoReplyEnabled) reply = matchReply(effText)
-              if (!reply && settings.aiReplyEnabled) reply = await aiReply(from)
+          } else if (mtype === 'audio' && settings.aiReplyVoice) {
+            // VOICE → transcribe then reply (own toggle; AI forced so master text toggle isn't required)
+            const tr = await transcribeMedia(entry.media.name)
+            if (tr) {
+              log('voice transcribed:', tr.slice(0, 60))
+              pushHistory(from, 'user', tr)
+              let reply = settings.autoReplyEnabled ? matchReply(tr) : null
+              if (!reply) reply = await aiReply(from, true)
               if (reply) {
-                try { await sock.sendMessage(from, { text: reply }); pushHistory(from, 'assistant', reply); log('auto-reply sent:', reply) }
-                catch (e) { log('auto-reply err', e?.message) }
+                try { await sock.sendMessage(from, { text: reply }); pushHistory(from, 'assistant', reply); log('ai voice reply sent') }
+                catch (e) { log('ai voice reply err', e?.message) }
               }
+            }
+          } else if (text) {
+            // TEXT → keyword rule, then AI (master toggle)
+            pushHistory(from, 'user', text)
+            let reply = null
+            if (settings.autoReplyEnabled) reply = matchReply(text)
+            if (!reply && settings.aiReplyEnabled) reply = await aiReply(from)
+            if (reply) {
+              try { await sock.sendMessage(from, { text: reply }); pushHistory(from, 'assistant', reply); log('auto-reply sent:', reply) }
+              catch (e) { log('auto-reply err', e?.message) }
             }
           }
         }
