@@ -2083,20 +2083,32 @@ private fun AutoReplySection(settings: GatewayClient.Settings, onToggle: (JSONOb
 
 @Composable
 private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit, messages: List<GatewayClient.Msg>, dpCache: MutableMap<String, ImageBitmap?>) {
+    val ctx = LocalContext.current
     var showExcludePicker by remember { mutableStateOf(false) }
     fun setExcludes(list: List<String>) { onToggle(JSONObject().put("aiExcludeJids", org.json.JSONArray(list.distinct()))) }
 
     Text("Powered by Groq AI", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
+
+    // MAIN box — the three reply types + group
     SettingsGroup("Replies") {
-        SettingRow(Icons.Filled.AutoAwesome, CAT_AI, "AI reply to all chats", "AI replies to every personal chat (when no keyword rule matches)", settings.aiReplyEnabled) { onToggle(JSONObject().put("aiReplyEnabled", it)) }
+        SettingRow(Icons.Filled.AutoAwesome, CAT_AI, "AI reply (text)", "AI replies to every personal text chat (when no keyword rule matches)", settings.aiReplyEnabled) { onToggle(JSONObject().put("aiReplyEnabled", it)) }
+        SettingRow(Icons.Filled.Image, Color(0xFFFFB26B), "Image reply", "AI looks at incoming images (vision) then replies", settings.aiReplyImage) { onToggle(JSONObject().put("aiReplyImage", it)) }
+        SettingRow(Icons.Filled.Mic, Color(0xFF4DD0C4), "Voice reply", "Transcribe incoming voice (Whisper) then AI-reply", settings.aiReplyVoice) { onToggle(JSONObject().put("aiReplyVoice", it)) }
         SettingRow(Icons.Filled.QuestionAnswer, Color(0xFFB69DF8), "Group AI reply", "Answer greetings/questions in groups (max 10/day); /ai works anytime", settings.groupAiEnabled) { onToggle(JSONObject().put("groupAiEnabled", it)) }
+        Text("Image & voice work on their own (no need for \"AI reply (text)\"). Free via Groq (rate-limited).",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 2.dp, top = 2.dp, bottom = 6.dp))
     }
 
-    SettingsGroup("Voice & image (free, via Groq)") {
-        SettingRow(Icons.Filled.Mic, Color(0xFF4DD0C4), "Reply to voice notes", "Transcribe incoming voice (Whisper) then AI-reply", settings.aiReplyVoice) { onToggle(JSONObject().put("aiReplyVoice", it)) }
-        SettingRow(Icons.Filled.Image, Color(0xFFFFB26B), "Reply to images", "AI looks at incoming images (vision) then replies", settings.aiReplyImage) { onToggle(JSONObject().put("aiReplyImage", it)) }
-        Text("Works on their own — no need to turn on \"AI reply to all chats\". Uses your Groq key (free Whisper + vision, rate-limited). Images download automatically; voice notes are saved so they can be transcribed.",
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 2.dp, top = 2.dp, bottom = 8.dp))
+    // Reply language — its own box; AI replies ONLY in this language/style (text, voice & image)
+    var lang by remember { mutableStateOf(settings.aiReplyLang) }
+    SettingsGroup("Reply language") {
+        Text("What language should the AI reply in? Applies to text, voice and image replies.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 4.dp))
+        OutlinedTextField(lang, { lang = it }, placeholder = { Text("e.g. Roman Hindi + Roman Bangla, English letters only") },
+            shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            FilledTonalButton(onClick = { onToggle(JSONObject().put("aiReplyLang", lang.trim())); Toast.makeText(ctx, "Language saved", Toast.LENGTH_SHORT).show() }) { Text("Save language") }
+        }
     }
 
     // Exclude list — chats where NO auto-reply / AI reply is sent ("reply nothing to this person")
@@ -2130,7 +2142,14 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
     var showKey by remember { mutableStateOf(false) }
     Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("API configuration", style = MaterialTheme.typography.titleSmall)
+            // header row: title left, Save button on the right
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("API configuration", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                FilledTonalButton(onClick = {
+                    onToggle(JSONObject().put("aiApiUrl", url.trim()).put("aiApiKey", key.trim()).put("aiModel", model.trim()).put("aiVisionModel", vision.trim()).put("aiSystemPrompt", sys))
+                    Toast.makeText(ctx, "AI settings saved", Toast.LENGTH_SHORT).show()
+                }) { Text("Save") }
+            }
             Text("Free key: console.groq.com", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             OutlinedTextField(url, { url = it }, label = { Text("API URL") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
             OutlinedTextField(key, { key = it }, label = { Text("API key") }, singleLine = true, shape = RoundedCornerShape(14.dp),
@@ -2140,8 +2159,6 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
             OutlinedTextField(model, { model = it }, label = { Text("Model (text)") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
             OutlinedTextField(vision, { vision = it }, label = { Text("Vision model (for images)") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
             OutlinedTextField(sys, { sys = it }, label = { Text("System prompt (optional)") }, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
-            Button(onClick = { onToggle(JSONObject().put("aiApiUrl", url.trim()).put("aiApiKey", key.trim()).put("aiModel", model.trim()).put("aiVisionModel", vision.trim()).put("aiSystemPrompt", sys)) },
-                modifier = Modifier.fillMaxWidth()) { Text("Save AI settings") }
         }
     }
 }
