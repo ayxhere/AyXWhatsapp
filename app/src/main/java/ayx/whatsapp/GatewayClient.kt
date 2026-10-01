@@ -36,6 +36,7 @@ object GatewayClient {
         val aiSystemPrompt: String = "",
         val saveMedia: Boolean = false,
         val stayOffline: Boolean = false,
+        val aiExcludeJids: List<String> = emptyList(),
     )
     data class Contact(val jid: String, val name: String, val number: String)
     data class Msg(val chat: String, val name: String, val fromMe: Boolean, val text: String, val ts: Long,
@@ -290,42 +291,6 @@ object GatewayClient {
         } catch (e: Exception) { emptyList() }
     }
 
-    // ---- presence reminder (online/offline tracker) ----
-    data class ReminderEvent(val online: Boolean, val ts: Long)
-    data class ReminderEntry(val jid: String, val online: Boolean, val since: Long, val lastSeen: Long, val events: List<ReminderEvent>)
-    suspend fun reminderList(): List<ReminderEntry> = withContext(Dispatchers.IO) {
-        try {
-            val arr = get("/reminder/list").optJSONArray("items") ?: return@withContext emptyList()
-            (0 until arr.length()).map { i ->
-                val o = arr.getJSONObject(i)
-                val ev = o.optJSONArray("events")
-                val events = if (ev == null) emptyList() else (0 until ev.length()).map { k -> val e = ev.getJSONObject(k); ReminderEvent(e.optString("p") == "online", e.optLong("ts", 0L)) }
-                ReminderEntry(o.optString("jid"), o.optBoolean("online", false), o.optLong("since", 0L), o.optLong("lastSeen", 0L), events)
-            }
-        } catch (e: Exception) { emptyList() }
-    }
-    // jid = primary; alts = other jid forms of the same person (@s.whatsapp.net and @lid) so presence matches whichever WhatsApp uses
-    suspend fun reminderAdd(jid: String, alts: List<String> = emptyList()): Boolean = withContext(Dispatchers.IO) {
-        runCatching {
-            val arr = org.json.JSONArray(); (listOf(jid) + alts).distinct().filter { it.isNotBlank() }.forEach { arr.put(it) }
-            post("/reminder/add", JSONObject().put("jid", jid).put("jids", arr)).optBoolean("ok", false)
-        }.getOrDefault(false)
-    }
-    suspend fun reminderRemove(jid: String): Boolean = withContext(Dispatchers.IO) {
-        runCatching { post("/reminder/remove", JSONObject().put("jid", jid)).optBoolean("ok", false) }.getOrDefault(false)
-    }
-    // raw diagnostics json (which jids we watch vs which jids WhatsApp actually pushed presence for)
-    suspend fun reminderDebug(): String = withContext(Dispatchers.IO) {
-        runCatching { get("/reminder/debug").toString(2) }.getOrDefault("(unreachable)")
-    }
-    // (jid, ts) pairs of contacts that just came online — drained by the background notifier
-    suspend fun reminderPending(): List<Pair<String, Long>> = withContext(Dispatchers.IO) {
-        try {
-            val arr = get("/reminder/pending").optJSONArray("items") ?: return@withContext emptyList()
-            (0 until arr.length()).map { i -> val o = arr.getJSONObject(i); o.optString("jid") to o.optLong("ts", 0L) }
-        } catch (e: Exception) { emptyList() }
-    }
-
     data class Presence(val online: Boolean, val lastSeen: Long)
     suspend fun getPresence(jid: String): Presence = withContext(Dispatchers.IO) {
         try {
@@ -376,6 +341,7 @@ object GatewayClient {
             aiSystemPrompt = o.optString("aiSystemPrompt", ""),
             saveMedia = o.optBoolean("saveMedia", false),
             stayOffline = o.optBoolean("stayOffline", false),
+            aiExcludeJids = o.optJSONArray("aiExcludeJids")?.let { a -> (0 until a.length()).map { a.optString(it) }.filter { it.isNotBlank() } } ?: emptyList(),
         )
     }
 

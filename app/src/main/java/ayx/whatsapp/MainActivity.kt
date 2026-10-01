@@ -102,10 +102,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Done
@@ -1058,10 +1055,7 @@ fun GatewayApp() {
                     onPickPhoto = { profilePicPicker.launch("image/*") },
                     onSaveName = { n -> scope.launch { runCatching { GatewayClient.setProfileName(n) }.onSuccess { notify("name updated") }.onFailure { notify("name: ${it.message}") } } },
                     dpCache = dpCache,
-                    deviceContacts = deviceContacts,
-                    recentChats = messages.filter { it.chat != "status@broadcast" }.groupBy { it.chat }.entries.sortedByDescending { e -> e.value.maxOf { m -> m.ts } }.map { it.key },
-                    onEnsureContacts = { ensureContacts() },
-                    notify = { notify(it) })
+                    messages = messages)
                 screen == "newchat" -> NewChatScreen(deviceContacts, contactsLoading, dpCache,
                     onPickNumber = { num -> openChat = num + "@s.whatsapp.net"; screen = "chats" })
                 screen == "profile" -> ProfileScreen(myJid, dpCache,
@@ -1171,7 +1165,7 @@ fun GatewayApp() {
 // ===== In-app forward picker: search + multi-select recent chats, then Forward =====
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ForwardPicker(messages: List<GatewayClient.Msg>, dpCache: MutableMap<String, ImageBitmap?>, onDismiss: () -> Unit, onForward: (List<String>) -> Unit) {
+private fun ForwardPicker(messages: List<GatewayClient.Msg>, dpCache: MutableMap<String, ImageBitmap?>, onDismiss: () -> Unit, onForward: (List<String>) -> Unit, title: String = "Forward to", action: String = "Forward to") {
     var query by remember { mutableStateOf("") }
     val selected = remember { mutableStateListOf<String>() }
     // recent chats derived from message log (exclude status broadcast)
@@ -1190,7 +1184,7 @@ private fun ForwardPicker(messages: List<GatewayClient.Msg>, dpCache: MutableMap
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.AutoMirrored.Filled.ArrowForward, null, tint = AYX_GREEN)
                     Spacer(Modifier.width(10.dp))
-                    Text("Forward to", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.weight(1f))
                     IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, "close") }
                 }
@@ -1218,7 +1212,7 @@ private fun ForwardPicker(messages: List<GatewayClient.Msg>, dpCache: MutableMap
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = AYX_GREEN)) {
                     Icon(Icons.AutoMirrored.Filled.ArrowForward, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
-                    Text(if (selected.isEmpty()) "Select chats" else "Forward to ${selected.size}")
+                    Text(if (selected.isEmpty()) "Select chats" else "$action ${selected.size}")
                 }
             }
         }
@@ -1776,7 +1770,7 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
 // sub-page title shown in the top app bar (single source of the back arrow)
 private fun settingsTitle(page: String): String = when (page) {
     "general" -> "General"; "autoreply" -> "Auto-reply"; "ai" -> "AI Assistant"; "chat" -> "Chat Settings"
-    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "about" -> "About"; "support" -> "Support Development"; "reminder" -> "Reminder"; else -> "Settings"
+    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "about" -> "About"; "support" -> "Support Development"; else -> "Settings"
 }
 // parent page for nested back (Wallpaper lives under Chat Settings)
 private fun settingsParent(page: String): String = if (page == "wallpaper") "chat" else "home"
@@ -1786,19 +1780,18 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
     onToggle: (JSONObject) -> Unit, onRules: (List<GatewayClient.Rule>) -> Unit, onLogout: () -> Unit, ctx: Context,
     onPickWallpaper: () -> Unit, onRemoveWallpaper: () -> Unit, onPickPhoto: () -> Unit,
     onSaveName: (String) -> Unit,
-    dpCache: MutableMap<String, ImageBitmap?>, deviceContacts: List<DeviceContact>, recentChats: List<String>, onEnsureContacts: () -> Unit, notify: (String) -> Unit) {
+    dpCache: MutableMap<String, ImageBitmap?>, messages: List<GatewayClient.Msg>) {
     // back arrow + title live in the top app bar; sub-pages have no second arrow
     AnimatedContent(targetState = page, transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(140)) }, label = "setpage") { p ->
         when (p) {
             "general" -> SettingsSubPage { GeneralSettings(settings, onToggle) }
             "autoreply" -> SettingsSubPage { AutoReplySection(settings, onToggle, onRules) }
-            "ai" -> SettingsSubPage { AiSettings(settings, onToggle) }
+            "ai" -> SettingsSubPage { AiSettings(settings, onToggle, messages, dpCache) }
             "chat" -> SettingsSubPage { ChatSettings(onOpenWallpaper = { onPage("wallpaper") }) }
             "wallpaper" -> SettingsSubPage { WallpaperSettings(ctx, wallpaperVersion, onPickWallpaper, onRemoveWallpaper) }
             "appearance" -> SettingsSubPage { AppearanceSettings() }
             "about" -> SettingsSubPage { AboutSettings(ctx, onLogout) }
             "support" -> SettingsSubPage { SupportSettings(ctx) }
-            "reminder" -> ReminderScreen(dpCache, deviceContacts, recentChats, onEnsureContacts, notify)
             else -> SettingsHome(status) { onPage(it) }
         }
     }
@@ -1812,7 +1805,6 @@ private val CAT_WALLPAPER = Color(0xFF4DD0C4)
 private val CAT_APPEARANCE = Color(0xFFFF7EB6)
 private val CAT_ABOUT = Color(0xFF6BA8FF)
 private val CAT_SUPPORT = Color(0xFF4DD07A)
-private val CAT_REMINDER = Color(0xFFFFB26B)
 private val OK_GREEN = Color(0xFF4DD07A)
 private val WARN_AMBER = Color(0xFFFFC24D)
 private val ERR_RED = Color(0xFFFF5A5A)
@@ -1824,7 +1816,6 @@ private fun SettingsHome(status: GatewayClient.Status, onOpen: (String) -> Unit)
         StatusCard(status)
         Spacer(Modifier.height(2.dp))
         CategoryCard(Icons.Filled.Tune, CAT_GENERAL, "General", "Online, privacy and messages") { onOpen("general") }
-        CategoryCard(Icons.Filled.Notifications, CAT_REMINDER, "Reminder", "Get alerted when a contact comes online") { onOpen("reminder") }
         CategoryCard(Icons.Filled.QuestionAnswer, CAT_AUTOREPLY, "Auto-reply", "Keyword rules and automatic replies") { onOpen("autoreply") }
         CategoryCard(Icons.Filled.AutoAwesome, CAT_AI, "AI Assistant", "AI replies, groups and language") { onOpen("ai") }
         CategoryCard(Icons.Filled.Chat, CAT_WALLPAPER, "Chat", "Wallpaper, bubble style and header") { onOpen("chat") }
@@ -2089,12 +2080,39 @@ private fun AutoReplySection(settings: GatewayClient.Settings, onToggle: (JSONOb
 }
 
 @Composable
-private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit) {
+private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit, messages: List<GatewayClient.Msg>, dpCache: MutableMap<String, ImageBitmap?>) {
+    var showExcludePicker by remember { mutableStateOf(false) }
+    fun setExcludes(list: List<String>) { onToggle(JSONObject().put("aiExcludeJids", org.json.JSONArray(list.distinct()))) }
+
     Text("Powered by Groq AI", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
     SettingsGroup("Replies") {
-        SettingRow(Icons.Filled.AutoAwesome, CAT_AI, "AI reply enabled", "Reply with AI when no keyword rule matches", settings.aiReplyEnabled) { onToggle(JSONObject().put("aiReplyEnabled", it)) }
+        SettingRow(Icons.Filled.AutoAwesome, CAT_AI, "AI reply to all chats", "AI replies to every personal chat (when no keyword rule matches)", settings.aiReplyEnabled) { onToggle(JSONObject().put("aiReplyEnabled", it)) }
         SettingRow(Icons.Filled.QuestionAnswer, Color(0xFFB69DF8), "Group AI reply", "Answer greetings/questions in groups (max 10/day); /ai works anytime", settings.groupAiEnabled) { onToggle(JSONObject().put("groupAiEnabled", it)) }
     }
+
+    // Exclude list — chats where NO auto-reply / AI reply is sent ("reply nothing to this person")
+    SettingsGroup("Don't reply to these chats") {
+        if (settings.aiExcludeJids.isEmpty()) {
+            Text("Add chats here to stop AI (and keyword auto-reply) from replying to them.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 8.dp))
+        } else {
+            settings.aiExcludeJids.forEach { jid ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Avatar(jid, chatTitleOf(messages, jid), dpCache, 38.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Text(chatTitleOf(messages, jid), Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    IconButton(onClick = { setExcludes(settings.aiExcludeJids - jid) }) { Icon(Icons.Filled.Close, "remove", tint = AYX_RED) }
+                }
+            }
+        }
+        ActionRow(Icons.Filled.Add, CAT_AI, "Add chat to exclude", "Pick chats AI must not reply to") { showExcludePicker = true }
+    }
+
+    if (showExcludePicker) {
+        ForwardPicker(messages, dpCache, onDismiss = { showExcludePicker = false },
+            onForward = { sel -> setExcludes(settings.aiExcludeJids + sel); showExcludePicker = false },
+            title = "Exclude chats", action = "Exclude")
+    }
+
     var url by remember { mutableStateOf(settings.aiApiUrl) }
     var key by remember { mutableStateOf(settings.aiApiKey) }
     var model by remember { mutableStateOf(settings.aiModel) }

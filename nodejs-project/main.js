@@ -27,7 +27,6 @@ const MEDIA_DIR = process.env.WAGW_MEDIA_DIR || path.join(path.dirname(AUTH_DIR)
 const MESSAGES_FILE = path.join(path.dirname(AUTH_DIR), 'messages.json')
 const NAMES_FILE = path.join(path.dirname(AUTH_DIR), 'names.json')
 const STATUS_FILE = path.join(path.dirname(AUTH_DIR), 'statuses.json')
-const REMINDER_FILE = path.join(path.dirname(AUTH_DIR), 'reminders.json')
 
 const logger = pino({ level: 'warn' })
 
@@ -55,6 +54,7 @@ let settings = {
   saveMedia: false,
   hideStatusRead: true,
   stayOffline: false,
+  aiExcludeJids: [],   // chats where NO auto-reply / AI reply is sent ("reply nothing to this person")
 }
 
 // stores for anti-delete + history (in-memory; reset on app restart)
@@ -79,101 +79,6 @@ function saveStatusesDebounced() {
   _statusTimer = setTimeout(() => { _statusTimer = null; try { fs.writeFileSync(STATUS_FILE, JSON.stringify(statuses.slice(0, 120))) } catch (_) {} }, 1500)
 }
 
-// ===== presence reminder: watch chosen contacts, log online/offline, queue online alerts for the app =====
-// A "watch" tracks ONE contact but may listen on several jid forms (the same person shows up as
-// <number>@s.whatsapp.net AND <lid>@lid in modern WhatsApp, and presence.update can arrive on either).
-// We subscribe to every jid of every watch, and match an incoming presence to a watch if ANY of its jids hit.
-let watches = []                       // [{ id, jids:[] }]  id = the primary/display jid the app added
-const presenceState = new Map()        // watch.id -> { online, since, lastSeen }
-const presenceLog = new Map()          // watch.id -> [{ p:'online'|'offline', ts }]  (bounded to last 40)
-let reminderOnlineQueue = []           // [{ jid, ts }] offline->online transitions, drained by the app for notifications
-try {
-  const r = JSON.parse(fs.readFileSync(REMINDER_FILE, 'utf8'))
-  const cleanJids = (w) => { const js = (w.jids || []).filter(j => j && !String(j).includes('null')); return { id: w.id, jids: js.length ? js : [w.id] } }
-  if (Array.isArray(r)) watches = r.filter(Boolean).map(j => ({ id: j, jids: [j] }))                 // legacy: bare jid array
-  else if (r && Array.isArray(r.watches)) watches = r.watches.map(cleanJids)
-  else if (r && Array.isArray(r.jids)) watches = r.jids.filter(Boolean).map(j => ({ id: j, jids: [j] }))
-  if (r && r.log) for (const k of Object.keys(r.log)) if (Array.isArray(r.log[k])) presenceLog.set(k, r.log[k])
-} catch (_) {}
-function allWatchJids() { const s = new Set(); for (const w of watches) for (const j of (w.jids || [])) if (j) s.add(j); return s }
-function watchForJid(id) { return watches.find(w => (w.jids || []).includes(id)) }
-// Modern WhatsApp delivers presence keyed by @lid, but the app usually watches a @s.whatsapp.net number
-// (or vice-versa). Baileys keeps the authoritative bridge in signalRepository.lidMapping — use it so a
-// presence on either form maps to the other. Returns [jid] plus its counterpart when known.
-function relatedJids(jid) {
-  const set = new Set([jid])
-  if (!jid || jid.includes('null')) return [...set]
-  try {
-    const lm = sock && sock.signalRepository && sock.signalRepository.lidMapping
-    if (lm) {
-      if (jid.endsWith('@lid') && lm.getPNForLID) { const pn = lm.getPNForLID(jid); if (pn) set.add(pn) }
-      else if (jid.endsWith('@s.whatsapp.net') && lm.getLIDForPN) { const lid = lm.getLIDForPN(jid); if (lid) set.add(lid) }
-    }
-  } catch (_) {}
-  return [...set]
-}
-let _remTimer = null
-function saveReminders() {
-  if (_remTimer) return
-  _remTimer = setTimeout(() => {
-    _remTimer = null
-    try {
-      const log = {}; for (const [k, v] of presenceLog) log[k] = (v || []).slice(-40)
-      fs.writeFileSync(REMINDER_FILE, JSON.stringify({ watches, log }))
-    } catch (_) {}
-  }, 1200)
-}
-function isOnlinePresence(p) { return p === 'available' || p === 'composing' || p === 'recording' }
-// record presence against a watch id (the primary jid), collapsing all its jid forms into one timeline
-function recordPresence(id, presence, lastSeen) {
-  const online = isOnlinePresence(presence)
-  const prev = presenceState.get(id)
-  const now = Date.now()
-  if (!prev || prev.online !== online) {
-    const arr = presenceLog.get(id) || []
-    arr.push({ p: online ? 'online' : 'offline', ts: now })
-    while (arr.length > 40) arr.shift()
-    presenceLog.set(id, arr)
-    presenceState.set(id, { online, since: now, lastSeen: lastSeen || (prev ? prev.lastSeen : null) })
-    if (online && prev && !prev.online) reminderOnlineQueue.push({ jid: id, ts: now })  // came online (skip very first sighting)
-    saveReminders()
-  } else if (lastSeen && lastSeen !== prev.lastSeen) {
-    presenceState.set(id, { ...prev, lastSeen })
-  }
-}
-function subscribeTracked() {
-  if (!sock) return
-  const subs = new Set()
-  for (const jid of allWatchJids()) for (const rj of relatedJids(jid)) subs.add(rj)   // subscribe to BOTH @lid and @s.whatsapp.net
-  for (const jid of subs) { sock.presenceSubscribe(jid).catch(() => {}) }
-}
-// KEY: WhatsApp only PUSHES contacts' presence to a client it considers ACTIVE, so while we have watches we
-// send our own presence 'available' once and keep the subscriptions alive. This MUST be gentle: presence is
-// sticky on the server (send once, not every tick) and blasting available/subscribe every few seconds makes
-// WhatsApp throw a stream/conflict error and drop the socket. So we split it:
-//   - a GENTLE network keepalive (available once + re-subscribe) on a slow timer, and
-//   - a FREQUENT local sweep that only READS the presences map (no network) into each watch's timeline.
-// sendAvailable=true only on (re)connect — 'available' is sticky on the server, so we don't re-blast it;
-// the periodic call just re-arms the presence subscriptions (which do lapse). Minimal stanza traffic = stable socket.
-function reminderKeepAlive(sendAvailable) {
-  if (!sock || status.connection !== 'open' || watches.length === 0) return
-  if (sendAvailable && !settings.stayOffline) { try { sock.sendPresenceUpdate('available') } catch (_) {} }
-  subscribeTracked()
-}
-let reminderSweepTimer = null
-let reminderKeepTimer = null
-function startReminderSweep() {
-  if (!reminderKeepTimer) reminderKeepTimer = setInterval(() => reminderKeepAlive(false), 45000)   // gentle: re-subscribe only, every 45s
-  if (reminderSweepTimer) return
-  reminderSweepTimer = setInterval(() => {
-    if (!sock || status.connection !== 'open' || watches.length === 0) return
-    for (const w of watches) {
-      let best = null
-      for (const j of (w.jids || [])) for (const rj of relatedJids(j)) { const p = presences.get(rj); if (p) best = p }
-      if (best) recordPresence(w.id, best.presence, best.lastSeen)
-    }
-  }, 8000)   // local only — no network traffic
-}
 
 function pushHistory(jid, role, content) {
   if (!jid || !content) return
@@ -337,6 +242,16 @@ function matchReply(text) {
 }
 
 // OpenAI-compatible chat completion (Groq / OpenRouter / etc.)
+// true if this chat is on the "don't reply" list (matched by digits so @lid and @s.whatsapp.net both hit)
+function aiExcluded(jid) {
+  const list = settings.aiExcludeJids || []
+  if (!list.length) return false
+  if (list.includes(jid)) return true
+  const d = String(jid).split('@')[0].split(':')[0].replace(/\D/g, '')
+  if (!d) return false
+  return list.some(x => String(x).split('@')[0].split(':')[0].replace(/\D/g, '') === d)
+}
+
 async function aiReply(jid) {
   if (!settings.aiReplyEnabled || !settings.aiApiUrl || !settings.aiApiKey) return null
   const history = chatHistory.get(jid) || []
@@ -419,8 +334,6 @@ function handleConnUpdate(u) {
     currentQr = null; pairingCode = null; pairingNumber = null
     log('CONNECTED as', status.me)
     applyPresence()
-    reminderKeepAlive(true)     // one 'available' + re-subscribe so presence resumes after (re)connect
-    startReminderSweep()
   }
 
   if (connection === 'close') {
@@ -664,7 +577,7 @@ async function handleMessages({ messages, type }) {
           try { await sock.readMessages([msg.key]); log('auto-read ok') }
           catch (e) { log('auto-read err', e?.message) }
         }
-        if (text) {
+        if (text && !aiExcluded(from)) {   // excluded chats: reply nothing (no keyword, no AI)
           pushHistory(from, 'user', text)
           let reply = null
           if (settings.autoReplyEnabled) reply = matchReply(text)
@@ -681,7 +594,7 @@ async function handleMessages({ messages, type }) {
 
       // group AI: /ai command (always) or auto-reply on greeting/question (max 10/day/group)
       const isGroup = from.endsWith('@g.us')
-      if (!fromMe && isGroup && text) {
+      if (!fromMe && isGroup && text && !aiExcluded(from)) {
         const t = text.trim()
         const lower = t.toLowerCase()
         let explicit = false, auto = false
@@ -830,13 +743,7 @@ async function startSocket() {
   sock.ev.on('presence.update', ({ id, presences: p }) => {
     if (!id || !p) return
     const first = Object.values(p)[0]
-    if (first) {
-      const presence = first.lastKnownPresence || 'unavailable'
-      const ls = first.lastSeen || null
-      const rel = relatedJids(id)                               // e.g. [<lid>@lid, <number>@s.whatsapp.net]
-      for (const j of rel) presences.set(j, { presence, lastSeen: ls })   // store under BOTH forms so any watch matches
-      for (const j of rel) { const w = watchForJid(j); if (w) { recordPresence(w.id, presence, ls); break } }  // instant path
-    }
+    if (first) presences.set(id, { presence: first.lastKnownPresence || 'unavailable', lastSeen: first.lastSeen || null })
   })
 }
 
@@ -896,62 +803,6 @@ app.get('/presence', async (req, res) => {
   try { await sock.presenceSubscribe(jid) } catch (_) {}
   const p = presences.get(jid) || { presence: 'unavailable', lastSeen: null }
   res.json(p)
-})
-
-// ---- presence reminder endpoints ----
-app.post('/reminder/add', async (req, res) => {
-  const jid = String(req.body?.jid || '')
-  if (!jid) return res.json({ ok: false, error: 'no jid' })
-  // collect every jid form the app knows for this contact (primary + @s.whatsapp.net + @lid)
-  let jids = [jid]
-  const extra = req.body?.jids
-  if (Array.isArray(extra)) for (const j of extra) { const s = String(j); if (s && !s.includes('null') && !jids.includes(s)) jids.push(s) }
-  for (const j of [...jids]) for (const rj of relatedJids(j)) if (!jids.includes(rj)) jids.push(rj)   // add Baileys' known lid<->pn counterpart
-  const existing = watches.find(w => w.id === jid)
-  if (existing) { for (const j of jids) if (!existing.jids.includes(j)) existing.jids.push(j) }
-  else watches.push({ id: jid, jids })
-  if (!presenceState.has(jid)) presenceState.set(jid, { online: false, since: Date.now(), lastSeen: null })
-  saveReminders()
-  try {
-    if (sock) {
-      if (!settings.stayOffline) { try { await sock.sendPresenceUpdate('available') } catch (_) {} }  // go active so presence starts flowing
-      for (const j of jids) await sock.presenceSubscribe(j).catch(() => {})
-    }
-  } catch (_) {}
-  startReminderSweep()
-  res.json({ ok: true })
-})
-app.post('/reminder/remove', (req, res) => {
-  const jid = String(req.body?.jid || '')
-  watches = watches.filter(w => w.id !== jid)
-  presenceState.delete(jid); presenceLog.delete(jid)
-  reminderOnlineQueue = reminderOnlineQueue.filter(x => x.jid !== jid)
-  saveReminders()
-  res.json({ ok: true })
-})
-app.get('/reminder/list', (req, res) => {
-  const items = watches.map(w => {
-    const st = presenceState.get(w.id) || { online: false, since: 0, lastSeen: null }
-    return { jid: w.id, online: !!st.online, since: st.since || 0, lastSeen: st.lastSeen || 0, events: presenceLog.get(w.id) || [] }
-  })
-  res.json({ items })
-})
-// drained by the app's background poller to fire "X is online" notifications
-app.get('/reminder/pending', (req, res) => {
-  const items = reminderOnlineQueue; reminderOnlineQueue = []
-  res.json({ items })
-})
-// diagnostics: which jids we watch vs which jids WhatsApp has actually pushed presence for
-app.get('/reminder/debug', (req, res) => {
-  const seen = {}; for (const [k, v] of presences) seen[k] = v
-  res.json({
-    connection: status.connection,
-    stayOffline: !!settings.stayOffline,
-    watches: watches.map(w => ({ id: w.id, jids: w.jids })),
-    presenceSeenJids: Object.keys(seen),
-    presenceSeen: seen,
-    state: [...presenceState.entries()].map(([k, v]) => ({ id: k, ...v })),
-  })
 })
 
 app.get('/session/export', (req, res) => {
@@ -1375,6 +1226,7 @@ app.post('/settings', (req, res) => {
   if (typeof b.aiSystemPrompt === 'string') settings.aiSystemPrompt = b.aiSystemPrompt
   if (typeof b.saveMedia === 'boolean') settings.saveMedia = b.saveMedia
   if (typeof b.stayOffline === 'boolean') settings.stayOffline = b.stayOffline
+  if (Array.isArray(b.aiExcludeJids)) settings.aiExcludeJids = b.aiExcludeJids.map(x => String(x)).filter(Boolean)
   saveSettings(); applyPresence()
   res.json(settings)
 })
@@ -1485,9 +1337,7 @@ app.post('/logout', async (req, res) => {
     fs.rmSync(AUTH_DIR, { recursive: true, force: true })
     sock = null; currentQr = null; pairingCode = null; pairingNumber = null
     msgStore.clear(); rawStore.clear(); deletedList = []; msgLog = []; chatHistory.clear(); dpCache.clear(); presences.clear(); statuses = []
-    watches = []; presenceState.clear(); presenceLog.clear(); reminderOnlineQueue = []
     try { fs.rmSync(MESSAGES_FILE, { force: true }) } catch (_) {}
-    try { fs.rmSync(REMINDER_FILE, { force: true }) } catch (_) {}
     status = { connection: 'close', registered: false, me: null, lastError: null }
     await loadAuth(); await startSocket()
     res.json({ ok: true })
@@ -1501,7 +1351,6 @@ app.listen(PORT, '127.0.0.1', async () => {
   log('server on 127.0.0.1:' + PORT, 'auth=', AUTH_DIR)
   loadSettings(); loadMessages(); await loadAuth()
   startSocket().catch(e => log('initial start err', e?.message))
-  startReminderSweep()   // self-guards until the socket is open
 })
 
 process.on('uncaughtException', e => log('uncaughtException', e?.message))
