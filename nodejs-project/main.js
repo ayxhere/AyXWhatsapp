@@ -364,10 +364,11 @@ async function visionReply(jid, name, caption) {
     const p = path.join(MEDIA_DIR, name)
     if (!fs.existsSync(p)) return null
     const b64 = fs.readFileSync(p).toString('base64')
-    const sys = sysWith('You are a friendly WhatsApp chat partner. Look at the image and reply briefly and naturally like a real person.')
-    // put the language rule INTO the user text too — vision models follow the user message strongly (stops random Spanish/English)
-    const cap = caption && caption.trim() ? caption.trim() : 'Reply naturally to this image, in your usual chat style.'
-    const userText = 'LANGUAGE: ' + langRule() + '\n\n' + cap
+    // LEAN system for vision: the full 300+ line persona prompt overflows vision models and kills the reply,
+    // so use a SHORT instruction here (language + 1-line style). Text/voice still use the full persona.
+    const sys = 'You are Raju, a real person chatting on WhatsApp (never an AI/bot, never say you are one). Look at the image and reply in ONE short, casual, natural line. Never refuse or apologize. LANGUAGE (must follow): ' + langRule()
+    const cap = caption && caption.trim() ? caption.trim() : 'reply to this image'
+    const userText = cap
     const dataUrl = 'data:image/jpeg;base64,' + b64
     const tried = new Set()
     for (const model of [settings.aiVisionModel, ...VISION_FALLBACKS]) {
