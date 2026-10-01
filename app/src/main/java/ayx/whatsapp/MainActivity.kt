@@ -116,6 +116,8 @@ import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.PermMedia
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.RemoveRedEye
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Star
@@ -2090,6 +2092,13 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
         SettingRow(Icons.Filled.QuestionAnswer, Color(0xFFB69DF8), "Group AI reply", "Answer greetings/questions in groups (max 10/day); /ai works anytime", settings.groupAiEnabled) { onToggle(JSONObject().put("groupAiEnabled", it)) }
     }
 
+    SettingsGroup("Voice & image (free, via Groq)") {
+        SettingRow(Icons.Filled.Mic, Color(0xFF4DD0C4), "Reply to voice notes", "Transcribe incoming voice (Whisper) then AI-reply", settings.aiReplyVoice) { onToggle(JSONObject().put("aiReplyVoice", it)) }
+        SettingRow(Icons.Filled.Image, Color(0xFFFFB26B), "Reply to images", "AI looks at incoming images (vision) then replies", settings.aiReplyImage) { onToggle(JSONObject().put("aiReplyImage", it)) }
+        Text("Needs AI reply ON. Uses Groq's free Whisper + vision models (rate-limited). Images download automatically; for voice, this turns on saving voice notes.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 2.dp, top = 2.dp, bottom = 8.dp))
+    }
+
     // Exclude list — chats where NO auto-reply / AI reply is sent ("reply nothing to this person")
     SettingsGroup("Don't reply to these chats") {
         if (settings.aiExcludeJids.isEmpty()) {
@@ -2116,6 +2125,7 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
     var url by remember { mutableStateOf(settings.aiApiUrl) }
     var key by remember { mutableStateOf(settings.aiApiKey) }
     var model by remember { mutableStateOf(settings.aiModel) }
+    var vision by remember { mutableStateOf(settings.aiVisionModel) }
     var sys by remember { mutableStateOf(settings.aiSystemPrompt) }
     var showKey by remember { mutableStateOf(false) }
     Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
@@ -2127,9 +2137,10 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
                 visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
                 trailingIcon = { IconButton(onClick = { showKey = !showKey }) { Icon(if (showKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, "toggle key") } },
                 modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(model, { model = it }, label = { Text("Model") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(model, { model = it }, label = { Text("Model (text)") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(vision, { vision = it }, label = { Text("Vision model (for images)") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
             OutlinedTextField(sys, { sys = it }, label = { Text("System prompt (optional)") }, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
-            Button(onClick = { onToggle(JSONObject().put("aiApiUrl", url.trim()).put("aiApiKey", key.trim()).put("aiModel", model.trim()).put("aiSystemPrompt", sys)) },
+            Button(onClick = { onToggle(JSONObject().put("aiApiUrl", url.trim()).put("aiApiKey", key.trim()).put("aiModel", model.trim()).put("aiVisionModel", vision.trim()).put("aiSystemPrompt", sys)) },
                 modifier = Modifier.fillMaxWidth()) { Text("Save AI settings") }
         }
     }

@@ -37,6 +37,9 @@ object GatewayClient {
         val saveMedia: Boolean = false,
         val stayOffline: Boolean = false,
         val aiExcludeJids: List<String> = emptyList(),
+        val aiReplyVoice: Boolean = false,
+        val aiReplyImage: Boolean = false,
+        val aiVisionModel: String = "",
     )
     data class Contact(val jid: String, val name: String, val number: String)
     data class Msg(val chat: String, val name: String, val fromMe: Boolean, val text: String, val ts: Long,
@@ -342,6 +345,9 @@ object GatewayClient {
             saveMedia = o.optBoolean("saveMedia", false),
             stayOffline = o.optBoolean("stayOffline", false),
             aiExcludeJids = o.optJSONArray("aiExcludeJids")?.let { a -> (0 until a.length()).map { a.optString(it) }.filter { it.isNotBlank() } } ?: emptyList(),
+            aiReplyVoice = o.optBoolean("aiReplyVoice", false),
+            aiReplyImage = o.optBoolean("aiReplyImage", false),
+            aiVisionModel = o.optString("aiVisionModel", ""),
         )
     }
 

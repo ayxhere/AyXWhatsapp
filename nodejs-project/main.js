@@ -55,6 +55,9 @@ let settings = {
   hideStatusRead: true,
   stayOffline: false,
   aiExcludeJids: [],   // chats where NO auto-reply / AI reply is sent ("reply nothing to this person")
+  aiReplyVoice: false, // transcribe incoming voice notes (Groq Whisper) then AI-reply
+  aiReplyImage: false, // "look at" incoming images (vision model) then AI-reply
+  aiVisionModel: 'meta-llama/llama-4-scout-17b-16e-instruct', // Groq multimodal model for images
 }
 
 // stores for anti-delete + history (in-memory; reset on app restart)
@@ -296,6 +299,59 @@ async function groupAiReply(jid) {
   } catch (e) { log('group ai err', e?.message); return null }
 }
 
+// derive the OpenAI-compatible API base from the chat-completions URL (works for Groq & others)
+function apiBase() { return String(settings.aiApiUrl || '').replace(/\/chat\/completions.*$/, '') }
+
+// Groq Whisper: turn a saved voice note into text. Returns the transcript or null.
+async function transcribeMedia(name) {
+  if (!settings.aiApiKey) return null
+  try {
+    const p = path.join(MEDIA_DIR, name)
+    if (!fs.existsSync(p)) return null
+    const buf = fs.readFileSync(p)
+    const fd = new FormData()
+    fd.append('file', new Blob([buf]), name)
+    fd.append('model', 'whisper-large-v3')
+    const res = await fetch(apiBase() + '/audio/transcriptions', {
+      method: 'POST', headers: { Authorization: 'Bearer ' + settings.aiApiKey }, body: fd,
+    })
+    if (!res.ok) { log('stt http', res.status, (await res.text()).slice(0, 150)); return null }
+    const data = await res.json()
+    const t = (data?.text || '').trim()
+    return t || null
+  } catch (e) { log('stt err', e?.message); return null }
+}
+
+// Vision: send a saved image + caption to a multimodal model and get a natural reply.
+async function visionReply(jid, name, caption) {
+  if (!settings.aiApiKey) return null
+  try {
+    const p = path.join(MEDIA_DIR, name)
+    if (!fs.existsSync(p)) return null
+    const b64 = fs.readFileSync(p).toString('base64')
+    const sys = settings.aiSystemPrompt || 'You are a friendly WhatsApp chat partner. Look at the image and reply briefly and naturally like a real person, in the same language the user uses. Never say you are an AI.'
+    const userText = caption && caption.trim() ? caption.trim() : 'Reply naturally to this image.'
+    const res = await fetch(settings.aiApiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + settings.aiApiKey },
+      body: JSON.stringify({
+        model: settings.aiVisionModel || 'meta-llama/llama-4-scout-17b-16e-instruct',
+        messages: [
+          { role: 'system', content: sys },
+          { role: 'user', content: [
+            { type: 'text', text: userText },
+            { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,' + b64 } },
+          ] },
+        ],
+      }),
+    })
+    if (!res.ok) { log('vision http', res.status, (await res.text()).slice(0, 200)); return null }
+    const data = await res.json()
+    const out = data?.choices?.[0]?.message?.content
+    return out ? String(out).trim() : null
+  } catch (e) { log('vision err', e?.message); return null }
+}
+
 function remember(id, entry) {
   if (id) {
     entry.id = id
@@ -449,7 +505,7 @@ async function enrichMedia(msg, entry) {
   const caption = node.caption || node.fileName || ''
   entry.media = { name, type, thumb, saved: false }
   if (!entry.text) entry.text = caption
-  if (settings.saveMedia || type === 'image' || type === 'video' || type === 'sticker') {
+  if (settings.saveMedia || type === 'image' || type === 'video' || type === 'sticker' || (type === 'audio' && settings.aiReplyVoice)) {
     try {
       // top-level media downloads via downloadMediaMessage; nested business-header
       // media (interactive/template/buttons) must download the node directly.
@@ -577,17 +633,33 @@ async function handleMessages({ messages, type }) {
           try { await sock.readMessages([msg.key]); log('auto-read ok') }
           catch (e) { log('auto-read err', e?.message) }
         }
-        if (text && !aiExcluded(from)) {   // excluded chats: reply nothing (no keyword, no AI)
-          pushHistory(from, 'user', text)
-          let reply = null
-          if (settings.autoReplyEnabled) reply = matchReply(text)
-          if (!reply && settings.aiReplyEnabled) reply = await aiReply(from)
-          if (reply) {
-            try {
-              await sock.sendMessage(from, { text: reply })
-              pushHistory(from, 'assistant', reply)
-              log('auto-reply sent:', reply)
-            } catch (e) { log('auto-reply err', e?.message) }
+        if (!aiExcluded(from)) {   // excluded chats: reply nothing (no keyword, no AI, no voice/image)
+          const mtype = entry.media && entry.media.type
+          // IMAGE → reply using a vision model (sees the picture + caption)
+          if (mtype === 'image' && settings.aiReplyEnabled && settings.aiReplyImage) {
+            pushHistory(from, 'user', text ? text : '[image]')
+            const vr = await visionReply(from, entry.media.name, text)
+            if (vr) {
+              try { await sock.sendMessage(from, { text: vr }); pushHistory(from, 'assistant', vr); log('ai image reply sent') }
+              catch (e) { log('ai image reply err', e?.message) }
+            }
+          } else {
+            // VOICE → transcribe to text first, then the normal text reply path
+            let effText = text
+            if (!effText && mtype === 'audio' && settings.aiReplyEnabled && settings.aiReplyVoice) {
+              effText = await transcribeMedia(entry.media.name)
+              if (effText) log('voice transcribed:', effText.slice(0, 60))
+            }
+            if (effText) {
+              pushHistory(from, 'user', effText)
+              let reply = null
+              if (settings.autoReplyEnabled) reply = matchReply(effText)
+              if (!reply && settings.aiReplyEnabled) reply = await aiReply(from)
+              if (reply) {
+                try { await sock.sendMessage(from, { text: reply }); pushHistory(from, 'assistant', reply); log('auto-reply sent:', reply) }
+                catch (e) { log('auto-reply err', e?.message) }
+              }
+            }
           }
         }
       }
@@ -1227,6 +1299,9 @@ app.post('/settings', (req, res) => {
   if (typeof b.saveMedia === 'boolean') settings.saveMedia = b.saveMedia
   if (typeof b.stayOffline === 'boolean') settings.stayOffline = b.stayOffline
   if (Array.isArray(b.aiExcludeJids)) settings.aiExcludeJids = b.aiExcludeJids.map(x => String(x)).filter(Boolean)
+  if (typeof b.aiReplyVoice === 'boolean') settings.aiReplyVoice = b.aiReplyVoice
+  if (typeof b.aiReplyImage === 'boolean') settings.aiReplyImage = b.aiReplyImage
+  if (typeof b.aiVisionModel === 'string') settings.aiVisionModel = b.aiVisionModel
   saveSettings(); applyPresence()
   res.json(settings)
 })
