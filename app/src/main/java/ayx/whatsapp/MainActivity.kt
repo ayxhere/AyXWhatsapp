@@ -121,6 +121,7 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.RemoveRedEye
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Star
@@ -1775,11 +1776,11 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
 // sub-page title shown in the top app bar (single source of the back arrow)
 private fun settingsTitle(page: String): String = when (page) {
     "general" -> "General"; "autoreply" -> "Auto-reply"; "ai" -> "AI Assistant"; "chat" -> "Chat Settings"
-    "imageai" -> "Image AI"
+    "imageai" -> "Image AI"; "aimemory" -> "AI Memory"
     "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "about" -> "About"; "support" -> "Support Development"; else -> "Settings"
 }
-// parent page for nested back (Wallpaper lives under Chat Settings, Image AI under AI Assistant)
-private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; else -> "home" }
+// parent page for nested back (Wallpaper lives under Chat Settings, Image AI & AI Memory under AI Assistant)
+private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; else -> "home" }
 
 @Composable
 private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient.Settings, page: String, onPage: (String) -> Unit, wallpaperVersion: Int,
@@ -1792,8 +1793,9 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
         when (p) {
             "general" -> SettingsSubPage { GeneralSettings(settings, onToggle) }
             "autoreply" -> SettingsSubPage { AutoReplySection(settings, onToggle, onRules) }
-            "ai" -> SettingsSubPage { AiSettings(settings, onToggle, messages, dpCache, onOpenImageAi = { onPage("imageai") }) }
+            "ai" -> SettingsSubPage { AiSettings(settings, onToggle, messages, dpCache, onOpenImageAi = { onPage("imageai") }, onOpenMemory = { onPage("aimemory") }) }
             "imageai" -> SettingsSubPage { ImageAiSettings(settings, onToggle, ctx) }
+            "aimemory" -> SettingsSubPage { AiMemoryScreen() }
             "chat" -> SettingsSubPage { ChatSettings(onOpenWallpaper = { onPage("wallpaper") }) }
             "wallpaper" -> SettingsSubPage { WallpaperSettings(ctx, wallpaperVersion, onPickWallpaper, onRemoveWallpaper) }
             "appearance" -> SettingsSubPage { AppearanceSettings() }
@@ -2087,7 +2089,7 @@ private fun AutoReplySection(settings: GatewayClient.Settings, onToggle: (JSONOb
 }
 
 @Composable
-private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit, messages: List<GatewayClient.Msg>, dpCache: MutableMap<String, ImageBitmap?>, onOpenImageAi: () -> Unit) {
+private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit, messages: List<GatewayClient.Msg>, dpCache: MutableMap<String, ImageBitmap?>, onOpenImageAi: () -> Unit, onOpenMemory: () -> Unit) {
     val ctx = LocalContext.current
     var showExcludePicker by remember { mutableStateOf(false) }
     fun setExcludes(list: List<String>) { onToggle(JSONObject().put("aiExcludeJids", org.json.JSONArray(list.distinct()))) }
@@ -2104,9 +2106,10 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 2.dp, top = 2.dp, bottom = 6.dp))
     }
 
-    // Image AI — opens its own page (provider, fallback & keys live there)
-    SettingsGroup("Image") {
+    // Image AI + AI Memory — each opens its own page
+    SettingsGroup("AI tools") {
         ActionRow(Icons.Filled.Image, Color(0xFFFFB26B), "Image AI", "Vision provider, auto-fallback, OCR & API keys") { onOpenImageAi() }
+        ActionRow(Icons.Filled.Memory, CAT_AI, "AI Memory", "Har contact ki chat history, naam & language") { onOpenMemory() }
     }
 
     // Voice-note reply — reply to incoming voice notes WITH a soft human voice note
@@ -2126,15 +2129,19 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
         SettingRow(Icons.Filled.Terminal, Color(0xFFB69DF8), "Enable /create & /prompt", "/create <text> makes an image (free) · /prompt on an image gives its prompt", settings.aiCommandsEnabled) { onToggle(JSONObject().put("aiCommandsEnabled", it)) }
     }
 
-    // Reply language — its own box; AI replies ONLY in this language/style (text, voice & image)
-    var lang by remember { mutableStateOf(settings.aiReplyLang) }
+    // Reply language — pick ONE language so the AI stops mixing Hindi/Bangla
     SettingsGroup("Reply language") {
-        Text("What language should the AI reply in? Applies to text, voice and image replies.",
+        Text("Ek language chuno — AI sirf usi me reply karega (Hindi/Bangla mix band ho jayega). \"Auto\" sender ki language mirror karta hai.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 4.dp))
-        OutlinedTextField(lang, { lang = it }, placeholder = { Text("e.g. Roman Hindi + Roman Bangla, English letters only") },
-            shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            FilledTonalButton(onClick = { onToggle(JSONObject().put("aiReplyLang", lang.trim())); Toast.makeText(ctx, "Language saved", Toast.LENGTH_SHORT).show() }) { Text("Save language") }
+        LanguageSelector(settings.aiLangMode) { onToggle(JSONObject().put("aiLangMode", it)) }
+        if (settings.aiLangMode == "custom") {
+            var lang by remember(settings.aiReplyLang) { mutableStateOf(settings.aiReplyLang) }
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(lang, { lang = it }, placeholder = { Text("e.g. Reply only in Roman Bangla, English letters") },
+                shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                FilledTonalButton(onClick = { onToggle(JSONObject().put("aiReplyLang", lang.trim())); Toast.makeText(ctx, "Language saved", Toast.LENGTH_SHORT).show() }) { Text("Save") }
+            }
         }
     }
 

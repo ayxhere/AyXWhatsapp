@@ -49,6 +49,7 @@ object GatewayClient {
         val aiCommandsEnabled: Boolean = true,
         val aiVoiceNoteReply: Boolean = false,
         val aiTtsVoice: String = "hi-IN-SwaraNeural",
+        val aiLangMode: String = "auto",
         val aiReplyLang: String = "",
     )
     data class Contact(val jid: String, val name: String, val number: String)
@@ -264,6 +265,35 @@ object GatewayClient {
         }
     }
 
+    // ---- AI Memory ----
+    data class MemMsg(val role: String, val content: String, val ts: Long)
+    data class MemContact(
+        val jid: String, val name: String, val number: String, val lid: String,
+        val msgCount: Int, val lastTs: Long, val lang: String, val recent: List<MemMsg>,
+    )
+
+    /** Every contact the AI has talked to (newest first) with recent chat logs. */
+    suspend fun getAiMemory(): List<MemContact> = withContext(Dispatchers.IO) {
+        try {
+            val arr = get("/aimemory").optJSONArray("items") ?: return@withContext emptyList()
+            (0 until arr.length()).mapNotNull { i ->
+                val c = arr.optJSONObject(i) ?: return@mapNotNull null
+                val rArr = c.optJSONArray("recent")
+                val recent = if (rArr != null) (0 until rArr.length()).mapNotNull { j ->
+                    val m = rArr.optJSONObject(j) ?: return@mapNotNull null
+                    MemMsg(m.optString("role"), m.optString("content"), m.optLong("ts"))
+                } else emptyList()
+                MemContact(c.optString("jid"), c.optString("name"), c.optString("number"), c.optString("lid"),
+                    c.optInt("msgCount"), c.optLong("lastTs"), c.optString("lang"), recent)
+            }
+        } catch (e: Exception) { emptyList() }
+    }
+
+    /** Clear memory for one contact, or all when jid is blank. */
+    suspend fun clearAiMemory(jid: String): Boolean = withContext(Dispatchers.IO) {
+        try { post("/aimemory/clear", JSONObject().put("jid", jid)).optBoolean("ok", false) } catch (e: Exception) { false }
+    }
+
     suspend fun setRules(rules: List<Rule>): Settings = withContext(Dispatchers.IO) {
         val arr = JSONArray()
         rules.forEach { arr.put(JSONObject().put("match", it.match).put("reply", it.reply).put("mode", it.mode)) }
@@ -379,6 +409,7 @@ object GatewayClient {
             aiCommandsEnabled = o.optBoolean("aiCommandsEnabled", true),
             aiVoiceNoteReply = o.optBoolean("aiVoiceNoteReply", false),
             aiTtsVoice = o.optString("aiTtsVoice", "hi-IN-SwaraNeural"),
+            aiLangMode = o.optString("aiLangMode", "auto"),
             aiReplyLang = o.optString("aiReplyLang", ""),
         )
     }
