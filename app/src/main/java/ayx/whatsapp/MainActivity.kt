@@ -118,6 +118,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.PermMedia
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.RemoveRedEye
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Star
@@ -2095,7 +2096,7 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
         SettingRow(Icons.Filled.Image, Color(0xFFFFB26B), "Image reply", "AI looks at incoming images (vision) then replies", settings.aiReplyImage) { onToggle(JSONObject().put("aiReplyImage", it)) }
         SettingRow(Icons.Filled.Mic, Color(0xFF4DD0C4), "Voice reply", "Transcribe incoming voice (Whisper) then AI-reply", settings.aiReplyVoice) { onToggle(JSONObject().put("aiReplyVoice", it)) }
         SettingRow(Icons.Filled.QuestionAnswer, Color(0xFFB69DF8), "Group AI reply", "Answer greetings/questions in groups (max 10/day); /ai works anytime", settings.groupAiEnabled) { onToggle(JSONObject().put("groupAiEnabled", it)) }
-        Text("Image & voice work on their own (no need for \"AI reply (text)\"). Free via Groq (rate-limited).",
+        Text("Image & voice work on their own (no need for \"AI reply (text)\"). Image uses the \"Image AI\" box below; text/voice use Groq.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 2.dp, top = 2.dp, bottom = 6.dp))
     }
 
@@ -2140,12 +2141,21 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
     var vision by remember { mutableStateOf(settings.aiVisionModel) }
     var visionUrl by remember { mutableStateOf(settings.aiVisionApiUrl) }
     var visionKey by remember { mutableStateOf(settings.aiVisionApiKey) }
+    var vision2 by remember { mutableStateOf(settings.aiVisionModel2) }
+    var vision2Url by remember { mutableStateOf(settings.aiVisionApiUrl2) }
+    var vision2Key by remember { mutableStateOf(settings.aiVisionApiKey2) }
     var sys by remember { mutableStateOf(settings.aiSystemPrompt) }
     var showKey by remember { mutableStateOf(false) }
     fun saveApi() {
         onToggle(JSONObject().put("aiApiUrl", url.trim()).put("aiApiKey", key.trim()).put("aiModel", model.trim())
-            .put("aiVisionModel", vision.trim()).put("aiVisionApiUrl", visionUrl.trim()).put("aiVisionApiKey", visionKey.trim()).put("aiSystemPrompt", sys))
+            .put("aiSystemPrompt", sys))
         Toast.makeText(ctx, "AI settings saved", Toast.LENGTH_SHORT).show()
+    }
+    fun saveVision() {
+        onToggle(JSONObject()
+            .put("aiVisionModel", vision.trim()).put("aiVisionApiUrl", visionUrl.trim()).put("aiVisionApiKey", visionKey.trim())
+            .put("aiVisionModel2", vision2.trim()).put("aiVisionApiUrl2", vision2Url.trim()).put("aiVisionApiKey2", vision2Key.trim()))
+        Toast.makeText(ctx, "Image AI saved", Toast.LENGTH_SHORT).show()
     }
     Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -2162,22 +2172,50 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
                 modifier = Modifier.fillMaxWidth())
             OutlinedTextField(model, { model = it }, label = { Text("Model (text)") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
             OutlinedTextField(sys, { sys = it }, label = { Text("System prompt (optional)") }, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+        }
+    }
 
-            HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-            Text("IMAGE / VISION", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-            Text("Groq vision keeps breaking. For reliable free image replies use Google Gemini — get a free key at aistudio.google.com, tap below, paste the key, Save.",
+    // IMAGE AI — its own box: dedicated vision provider + automatic fallback + optional on-device OCR
+    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Image AI", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                FilledTonalButton(onClick = { saveVision() }) { Text("Save") }
+            }
+            Text("Images ke liye alag AI. Pehla provider down/overload ho to app apne aap fallback provider pe switch kar leta hai.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+            Text("PROVIDER 1", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
             FilledTonalButton(onClick = {
                 visionUrl = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-                vision = "gemini-2.0-flash"
-                Toast.makeText(ctx, "Gemini filled — paste Vision API key & Save", Toast.LENGTH_LONG).show()
-            }) { Text("Use Gemini for images (free)") }
-            OutlinedTextField(vision, { vision = it }, label = { Text("Vision model (for images)") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(visionUrl, { visionUrl = it }, label = { Text("Vision API URL (optional)") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(visionKey, { visionKey = it }, label = { Text("Vision API key (optional)") }, singleLine = true, shape = RoundedCornerShape(14.dp),
+                vision = "gemini-2.5-flash, gemini-2.0-flash"
+                Toast.makeText(ctx, "Gemini filled — key paste karke Save", Toast.LENGTH_LONG).show()
+            }) { Text("Use Gemini (free)") }
+            OutlinedTextField(vision, { vision = it }, label = { Text("Vision model(s) — comma se multiple") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(visionUrl, { visionUrl = it }, label = { Text("Vision API URL") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(visionKey, { visionKey = it }, label = { Text("Vision API key") }, singleLine = true, shape = RoundedCornerShape(14.dp),
+                visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = { IconButton(onClick = { showKey = !showKey }) { Icon(if (showKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, "toggle key") } },
+                modifier = Modifier.fillMaxWidth())
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+            Text("PROVIDER 2 — fallback (jab pehla down ho)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            FilledTonalButton(onClick = {
+                vision2Url = "https://openrouter.ai/api/v1/chat/completions"
+                vision2 = "google/gemini-2.0-flash-exp:free, qwen/qwen2.5-vl-72b-instruct:free, meta-llama/llama-3.2-11b-vision-instruct:free"
+                Toast.makeText(ctx, "OpenRouter filled — key paste karke Save", Toast.LENGTH_LONG).show()
+            }) { Text("Use OpenRouter (free)") }
+            OutlinedTextField(vision2, { vision2 = it }, label = { Text("Fallback model(s) — comma se multiple") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(vision2Url, { vision2Url = it }, label = { Text("Fallback API URL") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(vision2Key, { vision2Key = it }, label = { Text("Fallback API key") }, singleLine = true, shape = RoundedCornerShape(14.dp),
                 visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-            Text("Leave Vision URL/key empty to use the main (Groq) API for images.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            FilledTonalButton(onClick = { saveApi() }, modifier = Modifier.align(Alignment.End)) { Text("Save") }
+            Text("Free keys: aistudio.google.com · openrouter.ai. Model purana pad jaye to naya free vision model paste kar dena.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+            SettingRow(Icons.Filled.TextFields, Color(0xFF80DEEA), "Read image text on phone", "Offline & unlimited. Screenshot/text image ka reply tab bhi jab vision API down ho.", settings.aiImageOcr) { onToggle(JSONObject().put("aiImageOcr", it)) }
+
+            FilledTonalButton(onClick = { saveVision() }, modifier = Modifier.align(Alignment.End)) { Text("Save") }
         }
     }
 }

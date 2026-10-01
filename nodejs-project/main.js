@@ -60,6 +60,10 @@ let settings = {
   aiVisionModel: 'meta-llama/llama-4-scout-17b-16e-instruct', // multimodal model for images
   aiVisionApiUrl: '', // optional separate provider for images (e.g. Gemini free); empty = use main (Groq) API
   aiVisionApiKey: '',
+  aiVisionApiUrl2: '', // FALLBACK vision provider (e.g. OpenRouter) — used automatically when the primary is down/overloaded
+  aiVisionApiKey2: '',
+  aiVisionModel2: '',
+  aiImageOcr: false, // read text IN the image on-device (offline, unlimited) and feed it to the AI
   aiReplyLang: 'Reply in Roman Hindi (Hinglish). If they write Bangla, reply in Roman Bangla. ALWAYS use Latin/English letters — never Devanagari or Bangla script. Mirror the sender language.',
 }
 
@@ -357,55 +361,124 @@ const VISION_FALLBACKS = [
   'llama-3.2-90b-vision-preview',
   'llama-3.2-11b-vision-preview',
 ]
-// Vision: send a saved image + caption to a multimodal model and get a natural reply.
-// Tries the configured model, then falls back through the known IDs until one works (so a
-// deprecated/renamed model ID doesn't silently kill image replies).
-async function visionReply(jid, name, caption) {
-  // image can use a SEPARATE provider (e.g. Google Gemini free) — falls back to the main (Groq) API if not set
-  const vUrl = (settings.aiVisionApiUrl && settings.aiVisionApiUrl.trim()) || settings.aiApiUrl
-  const vKey = (settings.aiVisionApiKey && settings.aiVisionApiKey.trim()) || settings.aiApiKey
-  const dedicated = !!(settings.aiVisionApiUrl && settings.aiVisionApiUrl.trim())
-  if (!vUrl || !vKey) return null
+
+// split a "model" field that may hold several comma-separated IDs (absorbs provider model-ID churn)
+function splitModels(s, def) {
+  const arr = String(s || '').split(',').map(x => x.trim()).filter(Boolean)
+  return arr.length ? arr : (def || [])
+}
+// ordered list of vision providers to try: primary (e.g. Gemini) -> fallback (e.g. OpenRouter) -> main Groq API.
+// Each has {url, key, models[]}. "Out of service" on one automatically moves to the next.
+function visionProviders() {
+  const list = []
+  const seen = new Set()
+  const add = (url, key, models) => {
+    url = (url || '').trim(); key = (key || '').trim()
+    if (!url || !key || !models.length) return
+    const sig = url + '|' + key
+    if (seen.has(sig)) return
+    seen.add(sig)
+    list.push({ url, key, models })
+  }
+  // primary dedicated provider
+  add(settings.aiVisionApiUrl, settings.aiVisionApiKey, splitModels(settings.aiVisionModel, ['gemini-2.5-flash', 'gemini-2.0-flash']))
+  // secondary / fallback provider
+  add(settings.aiVisionApiUrl2, settings.aiVisionApiKey2, splitModels(settings.aiVisionModel2, []))
+  // final fallback: the main (Groq) API with its known rotating vision IDs
+  add(settings.aiApiUrl, settings.aiApiKey, splitModels(settings.aiVisionModel, []).concat(VISION_FALLBACKS))
+  return list
+}
+
+// one vision call with a hard timeout (so a hung/overloaded provider fails fast -> next provider)
+async function visionCall(url, key, model, sys, userText, dataUrl) {
+  const ctrl = new AbortController()
+  const to = setTimeout(() => ctrl.abort(), 25000)
+  try {
+    const res = await fetch(url, {
+      method: 'POST', signal: ctrl.signal,
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: sys },
+          { role: 'user', content: [
+            { type: 'text', text: userText },
+            { type: 'image_url', image_url: { url: dataUrl } },
+          ] },
+        ],
+      }),
+    })
+    if (!res.ok) { log('vision http', model, res.status, (await res.text()).slice(0, 140)); return null }
+    const data = await res.json()
+    const out = data?.choices?.[0]?.message?.content
+    return out ? String(out).trim() : null
+  } catch (e) { log('vision call err', model, e?.message); return null }
+  finally { clearTimeout(to) }
+}
+
+// ---- on-device OCR (optional) ----
+// Reads the text that is IN the image, fully on the phone (offline, unlimited). We read with the
+// 'eng' model because the whole app replies in ROMAN Hindi/Bangla/English (Latin letters), which is
+// exactly what 'eng' recognises. Lazy-required + fully isolated: if tesseract.js can't load/run on
+// this device it just disables itself — it can NEVER crash the gateway.
+let _ocrBroken = false
+async function ocrImage(name) {
+  if (!settings.aiImageOcr || _ocrBroken) return ''
   try {
     const p = path.join(MEDIA_DIR, name)
-    if (!fs.existsSync(p)) return null
-    const b64 = fs.readFileSync(p).toString('base64')
-    // LEAN system for vision: the full 300+ line persona prompt overflows vision models and kills the reply,
-    // so use a SHORT instruction here (language + 1-line style). Text/voice still use the full persona.
-    const sys = 'You are Raju, a real person chatting on WhatsApp (never an AI/bot, never say you are one). Look at the image and reply in ONE short, casual, natural line. Never refuse or apologize. LANGUAGE (must follow): ' + langRule()
-    const cap = caption && caption.trim() ? caption.trim() : 'reply to this image'
-    const userText = cap
-    const dataUrl = 'data:image/jpeg;base64,' + b64
-    // dedicated provider (Gemini etc.): use ONLY its model. Groq: try the configured model + known Groq fallbacks.
-    const models = dedicated ? [settings.aiVisionModel || 'gemini-2.0-flash'] : [settings.aiVisionModel, ...VISION_FALLBACKS]
+    if (!fs.existsSync(p)) return ''
+    let Tesseract
+    try { Tesseract = require('tesseract.js') }
+    catch (e) { _ocrBroken = true; log('ocr: tesseract.js unavailable —', e?.message); return '' }
+    const run = Tesseract.recognize(p, 'eng')
+    const timeout = new Promise(r => setTimeout(() => r(null), 22000))
+    const res = await Promise.race([run, timeout])
+    const t = (res && res.data && res.data.text ? res.data.text : '').replace(/\s+/g, ' ').trim()
+    if (t) log('ocr text:', t.slice(0, 90))
+    return t
+  } catch (e) { log('ocr err', e?.message); return '' }
+}
+
+// Vision: send a saved image (+ caption + any OCR'd text) to a multimodal model and get a natural reply.
+// Tries every configured provider/model in order; if ALL vision providers fail but OCR found text,
+// falls back to a plain TEXT reply built from that text (works even when every vision API is down).
+async function visionReply(jid, name, caption) {
+  const p = path.join(MEDIA_DIR, name)
+  if (!fs.existsSync(p)) return null
+  let b64
+  try { b64 = fs.readFileSync(p).toString('base64') } catch (_) { return null }
+  const dataUrl = 'data:image/jpeg;base64,' + b64
+
+  // optional on-device read of any text inside the image
+  const ocrText = await ocrImage(name)
+
+  // LEAN system for vision: the full persona prompt overflows vision models and kills the reply.
+  const sys = 'You are Raju, a real person chatting on WhatsApp (never an AI/bot, never say you are one). Look at the image and reply in ONE short, casual, natural line. Never refuse or apologize. LANGUAGE (must follow): ' + langRule()
+  const cap = (caption && caption.trim()) ? caption.trim() : 'reply to this image'
+  let userText = cap
+  if (ocrText && ocrText.length >= 3) userText += '\n\n(Text visible in the image: "' + ocrText.slice(0, 500) + '")'
+
+  const providers = visionProviders()
+  for (const prov of providers) {
     const tried = new Set()
-    for (const model of models) {
+    for (const model of prov.models) {
       if (!model || tried.has(model)) continue
       tried.add(model)
-      try {
-        const res = await fetch(vUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + vKey },
-          body: JSON.stringify({
-            model,
-            messages: [
-              { role: 'system', content: sys },
-              { role: 'user', content: [
-                { type: 'text', text: userText },
-                { type: 'image_url', image_url: { url: dataUrl } },
-              ] },
-            ],
-          }),
-        })
-        if (!res.ok) { log('vision http', model, res.status, (await res.text()).slice(0, 160)); continue }
-        const data = await res.json()
-        const out = data?.choices?.[0]?.message?.content
-        if (out && String(out).trim()) { log('vision ok via', model); return String(out).trim() }
-      } catch (e) { log('vision try err', model, e?.message) }
+      const out = await visionCall(prov.url, prov.key, model, sys, userText, dataUrl)
+      if (out && !looksRefusal(out)) { log('vision ok via', model); return out }
     }
-    log('vision: all models failed')
-    return null
-  } catch (e) { log('vision err', e?.message); return null }
+  }
+
+  // every vision provider failed — if we read text off the image, answer from that via the main text API
+  if (ocrText && ocrText.length >= 3 && settings.aiApiUrl && settings.aiApiKey) {
+    const out = await chatComplete(settings.aiModel || 'openai/gpt-oss-20b', [
+      { role: 'system', content: sysWith() },
+      { role: 'user', content: 'Image aaya jisme ye likha hai: "' + ocrText.slice(0, 600) + '". Iska ek short casual reply de.' },
+    ])
+    if (out && !looksRefusal(out)) { log('vision fallback via OCR+text'); return out }
+  }
+  log('vision: all providers failed')
+  return null
 }
 
 function remember(id, entry) {
@@ -1366,6 +1439,10 @@ app.post('/settings', (req, res) => {
   if (typeof b.aiVisionModel === 'string') settings.aiVisionModel = b.aiVisionModel
   if (typeof b.aiVisionApiUrl === 'string') settings.aiVisionApiUrl = b.aiVisionApiUrl
   if (typeof b.aiVisionApiKey === 'string') settings.aiVisionApiKey = b.aiVisionApiKey
+  if (typeof b.aiVisionApiUrl2 === 'string') settings.aiVisionApiUrl2 = b.aiVisionApiUrl2
+  if (typeof b.aiVisionApiKey2 === 'string') settings.aiVisionApiKey2 = b.aiVisionApiKey2
+  if (typeof b.aiVisionModel2 === 'string') settings.aiVisionModel2 = b.aiVisionModel2
+  if (typeof b.aiImageOcr === 'boolean') settings.aiImageOcr = b.aiImageOcr
   if (typeof b.aiReplyLang === 'string') settings.aiReplyLang = b.aiReplyLang
   saveSettings(); applyPresence()
   res.json(settings)
