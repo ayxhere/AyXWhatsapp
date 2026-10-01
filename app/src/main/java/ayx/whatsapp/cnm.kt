@@ -242,25 +242,30 @@ private fun LogLine(m: GatewayClient.MemMsg) {
 // ---- AI Voice picker: male/female artists, demo-play then select (free Edge voices, no key) ----
 private data class VoiceOpt(val id: String, val label: String, val sub: String)
 
-// StreamElements / Amazon Polly voice names (free, no key)
+// Real-human NEURAL voices (free, no key). Grouped by language. Each distinct & soft.
 private val FEMALE_VOICES = listOf(
-    VoiceOpt("Aditi", "Aditi", "Indian · Hindi + English"),
-    VoiceOpt("Raveena", "Raveena", "Indian · warm"),
-    VoiceOpt("Joanna", "Joanna", "US · smooth"),
-    VoiceOpt("Salli", "Salli", "US · bright"),
-    VoiceOpt("Ivy", "Ivy", "US · cute (young)"),
-    VoiceOpt("Kimberly", "Kimberly", "US · soft"),
-    VoiceOpt("Amy", "Amy", "British · calm"),
-    VoiceOpt("Emma", "Emma", "British"),
-    VoiceOpt("Nicole", "Nicole", "Australian"),
+    VoiceOpt("hi-IN-SwaraNeural", "Swara", "Hindi · soft 🇮🇳"),
+    VoiceOpt("bn-IN-TanishaaNeural", "Tanishaa", "Bangla · soft 🇮🇳"),
+    VoiceOpt("bn-BD-NabanitaNeural", "Nabanita", "Bangla · warm 🇧🇩"),
+    VoiceOpt("en-IN-NeerjaNeural", "Neerja", "Indian English · soft"),
+    VoiceOpt("en-US-AriaNeural", "Aria", "English · soft"),
+    VoiceOpt("en-US-JennyNeural", "Jenny", "English · friendly"),
+    VoiceOpt("en-US-AnaNeural", "Ana", "English · cute"),
+    VoiceOpt("en-GB-SoniaNeural", "Sonia", "British · calm"),
 )
 private val MALE_VOICES = listOf(
-    VoiceOpt("Matthew", "Matthew", "US · deep"),
-    VoiceOpt("Joey", "Joey", "US · casual"),
-    VoiceOpt("Justin", "Justin", "US · young"),
-    VoiceOpt("Brian", "Brian", "British"),
-    VoiceOpt("Russell", "Russell", "Australian"),
-    VoiceOpt("Geraint", "Geraint", "Welsh English"),
+    VoiceOpt("hi-IN-MadhurNeural", "Madhur", "Hindi · warm 🇮🇳"),
+    VoiceOpt("bn-IN-BashkarNeural", "Bashkar", "Bangla 🇮🇳"),
+    VoiceOpt("bn-BD-PradeepNeural", "Pradeep", "Bangla 🇧🇩"),
+    VoiceOpt("en-IN-PrabhatNeural", "Prabhat", "Indian English"),
+    VoiceOpt("en-US-GuyNeural", "Guy", "English · casual"),
+    VoiceOpt("en-GB-RyanNeural", "Ryan", "British"),
+)
+// reliable backup voices (Amazon Polly via StreamElements) — used if the neural ones don't play
+private val BACKUP_VOICES = listOf(
+    VoiceOpt("Aditi", "Aditi", "Backup · Indian"),
+    VoiceOpt("Joanna", "Joanna", "Backup · US female"),
+    VoiceOpt("Matthew", "Matthew", "Backup · US male"),
 )
 
 @Composable
@@ -308,6 +313,9 @@ internal fun VoicePickerScreen(settings: GatewayClient.Settings, onToggle: (JSON
 
         Text("MALE", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
         MALE_VOICES.forEach { v -> VoiceRow(v, selected == v.id, playing == v.id, loading == v.id, { demo(v.id) }, { pick(v.id) }) }
+
+        Text("BACKUP (agar upar wale na chale)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
+        BACKUP_VOICES.forEach { v -> VoiceRow(v, selected == v.id, playing == v.id, loading == v.id, { demo(v.id) }, { pick(v.id) }) }
 
         Spacer(Modifier.height(20.dp))
     }

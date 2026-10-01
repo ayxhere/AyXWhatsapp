@@ -68,7 +68,7 @@ let settings = {
   aiImageFree: true, // use free no-key vision (Pollinations) as a fallback so images work without any API key
   aiCommandsEnabled: true, // /create (make image) and /prompt (describe image as a prompt)
   aiVoiceNoteReply: false, // reply to incoming voice notes WITH a voice note (TTS)
-  aiTtsVoice: 'Aditi', // StreamElements/Polly voice (free, no key)
+  aiTtsVoice: 'hi-IN-SwaraNeural', // Edge neural voice (free, no key); falls back to Polly if Edge is blocked
   aiLangMode: 'auto', // auto | hinglish | bangla | english | hindi | banglascript | custom  (forces ONE reply language)
   aiReplyLang: 'Reply in Roman Hindi (Hinglish). If they write Bangla, reply in Roman Bangla. ALWAYS use Latin/English letters — never Devanagari or Bangla script. Mirror the sender language.',
 }
@@ -518,11 +518,40 @@ async function visionCall(url, key, model, sys, userText, dataUrl) {
   finally { clearTimeout(to) }
 }
 
+// Auto-discover which Gemini models THIS key can actually use (fixes "model not found" after Google renames).
+// Cached for an hour. Returns usable vision-capable model IDs, flash first.
+let _gemCache = null
+async function resolveGeminiModels(url, key) {
+  try {
+    if (_gemCache && _gemCache.key === key && (Date.now() - _gemCache.ts) < 3600000) return _gemCache.models
+    const origin = String(url).split('/v1beta/')[0]
+    const ctrl = new AbortController(); const to = setTimeout(() => ctrl.abort(), 12000)
+    const res = await fetch(origin + '/v1beta/models?key=' + encodeURIComponent(key), { signal: ctrl.signal })
+    clearTimeout(to)
+    if (!res.ok) { log('gemini list http', res.status); return [] }
+    const data = await res.json()
+    const models = (data.models || [])
+      .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
+      .map(m => String(m.name || '').replace(/^models\//, ''))
+      .filter(n => /gemini/i.test(n) && /(flash|pro)/i.test(n) && !/(embedding|aqa|tts|image|audio|thinking|live|exp-)/i.test(n))
+    models.sort((a, b) => (a.includes('flash') ? 0 : 1) - (b.includes('flash') ? 0 : 1))
+    _gemCache = { key, ts: Date.now(), models }
+    log('gemini models resolved:', models.slice(0, 6).join(', '))
+    return models
+  } catch (e) { log('gemini list err', e?.message); return [] }
+}
+
 // shared provider loop over a ready data URL (used by both real replies and the self-test)
 async function visionAskDataUrl(dataUrl, sys, userText) {
   for (const prov of visionProviders()) {
+    let models = prov.models
+    // for Gemini, ask the key what it actually supports and try those first
+    if (/generativelanguage/i.test(prov.url) && prov.key) {
+      const fetched = await resolveGeminiModels(prov.url, prov.key)
+      if (fetched.length) models = [...new Set([...fetched, ...prov.models])]
+    }
     const tried = new Set()
-    for (const model of prov.models) {
+    for (const model of models) {
       if (!model || tried.has(model)) continue
       tried.add(model)
       const r = await visionCall(prov.url, prov.key, model, sys, userText, dataUrl)
@@ -544,8 +573,13 @@ async function visionSelfTest() {
   const report = []
   for (const prov of provs) {
     const host = (String(prov.url).match(/https?:\/\/([^/]+)/) || ['', prov.url])[1]
+    let models = prov.models
+    if (/generativelanguage/i.test(prov.url) && prov.key) {
+      const fetched = await resolveGeminiModels(prov.url, prov.key)
+      if (fetched.length) { report.push({ host, model: 'available for your key: ' + fetched.slice(0, 6).join(', '), status: 200, ok: true, err: null, text: null }); models = [...new Set([...fetched, ...prov.models])] }
+    }
     const tried = new Set()
-    for (const model of prov.models) {
+    for (const model of models) {
       if (!model || tried.has(model)) continue
       tried.add(model)
       const r = await visionCall(prov.url, prov.key, model, sys, 'What is in this image?', dataUrl)
@@ -715,14 +749,33 @@ async function googleTts(text) {
   } catch (e) { return null }
 }
 
+// map an Edge neural voice to the closest StreamElements/Polly voice (used if Edge can't connect)
+function pollyFallback(voice) {
+  const v = String(voice || '')
+  if (v.startsWith('hi-')) return 'Aditi'
+  if (v.startsWith('bn-')) return 'Aditi'
+  if (v.startsWith('en-IN')) return v.includes('Prabhat') ? 'Matthew' : 'Raveena'
+  if (v.startsWith('en-GB')) return v.includes('Ryan') ? 'Brian' : 'Amy'
+  if (/Guy|Christopher|Ryan|Prabhat|Madhur|Bashkar|Pradeep/.test(v)) return 'Matthew'
+  return 'Joanna'
+}
+
 // Produce speech for a reply. Returns { buf, mime } or null. No API key needed.
-// StreamElements (MP3) first (reliable), then Edge (OGG/Opus), then Google (MP3).
+// Edge NEURAL voices (real-human, per-language) first for the quality voices; StreamElements for Polly names.
 async function synthVoice(text, voice) {
   if (!text) return null
-  const mp3 = await streamElementsTts(text, voice)
-  if (mp3) return { buf: mp3, mime: 'audio/mpeg' }
-  const ogg = await edgeTtsOgg(text, 'hi-IN-SwaraNeural')
-  if (ogg && ogg.length > 500) return { buf: ogg, mime: 'audio/ogg; codecs=opus' }
+  const isEdge = /Neural/i.test(voice || '')
+  if (isEdge) {
+    const ogg = await edgeTtsOgg(text, voice)
+    if (ogg && ogg.length > 500) return { buf: ogg, mime: 'audio/ogg; codecs=opus' }
+    const mp3 = await streamElementsTts(text, pollyFallback(voice))   // Edge blocked on device → closest Polly
+    if (mp3) return { buf: mp3, mime: 'audio/mpeg' }
+  } else {
+    const mp3 = await streamElementsTts(text, voice)
+    if (mp3) return { buf: mp3, mime: 'audio/mpeg' }
+    const ogg = await edgeTtsOgg(text, 'hi-IN-SwaraNeural')
+    if (ogg && ogg.length > 500) return { buf: ogg, mime: 'audio/ogg; codecs=opus' }
+  }
   const g = await googleTts(text)
   if (g) return { buf: g, mime: 'audio/mpeg' }
   return null
