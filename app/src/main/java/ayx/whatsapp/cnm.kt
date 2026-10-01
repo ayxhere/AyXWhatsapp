@@ -242,26 +242,31 @@ private fun LogLine(m: GatewayClient.MemMsg) {
 // ---- AI Voice picker: male/female artists, demo-play then select (free Edge voices, no key) ----
 private data class VoiceOpt(val id: String, val label: String, val sub: String)
 
-// Real-human NEURAL voices (free, no key). Grouped by language. Each distinct & soft.
-private val FEMALE_VOICES = listOf(
-    VoiceOpt("hi-IN-SwaraNeural", "Swara", "Hindi · soft 🇮🇳"),
-    VoiceOpt("bn-IN-TanishaaNeural", "Tanishaa", "Bangla · soft 🇮🇳"),
-    VoiceOpt("bn-BD-NabanitaNeural", "Nabanita", "Bangla · warm 🇧🇩"),
-    VoiceOpt("en-IN-NeerjaNeural", "Neerja", "Indian English · soft"),
-    VoiceOpt("en-US-AriaNeural", "Aria", "English · soft"),
-    VoiceOpt("en-US-JennyNeural", "Jenny", "English · friendly"),
-    VoiceOpt("en-US-AnaNeural", "Ana", "English · cute"),
-    VoiceOpt("en-GB-SoniaNeural", "Sonia", "British · calm"),
+// Groq PlayAI voices (English) — run on YOUR Groq key, real & different male/female. Most reliable here.
+private val GROQ_FEMALE = listOf(
+    VoiceOpt("Arista-PlayAI", "Arista", "English · natural"),
+    VoiceOpt("Celeste-PlayAI", "Celeste", "English · warm"),
+    VoiceOpt("Deedee-PlayAI", "Deedee", "English · soft"),
+    VoiceOpt("Gail-PlayAI", "Gail", "English · bright"),
+    VoiceOpt("Quinn-PlayAI", "Quinn", "English · calm"),
+    VoiceOpt("Cheyenne-PlayAI", "Cheyenne", "English · young"),
 )
-private val MALE_VOICES = listOf(
-    VoiceOpt("hi-IN-MadhurNeural", "Madhur", "Hindi · warm 🇮🇳"),
-    VoiceOpt("bn-IN-BashkarNeural", "Bashkar", "Bangla 🇮🇳"),
-    VoiceOpt("bn-BD-PradeepNeural", "Pradeep", "Bangla 🇧🇩"),
-    VoiceOpt("en-IN-PrabhatNeural", "Prabhat", "Indian English"),
-    VoiceOpt("en-US-GuyNeural", "Guy", "English · casual"),
-    VoiceOpt("en-GB-RyanNeural", "Ryan", "British"),
+private val GROQ_MALE = listOf(
+    VoiceOpt("Fritz-PlayAI", "Fritz", "English · deep"),
+    VoiceOpt("Atlas-PlayAI", "Atlas", "English · strong"),
+    VoiceOpt("Mason-PlayAI", "Mason", "English · casual"),
+    VoiceOpt("Mitch-PlayAI", "Mitch", "English · friendly"),
+    VoiceOpt("Thunder-PlayAI", "Thunder", "English · bold"),
+    VoiceOpt("Calum-PlayAI", "Calum", "English · chill"),
 )
-// reliable backup voices (Amazon Polly via StreamElements) — used if the neural ones don't play
+// Hindi / Bangla neural voices (Edge) — use these when reply language is Hindi/Bangla (need open network)
+private val INDIC_VOICES = listOf(
+    VoiceOpt("hi-IN-SwaraNeural", "Swara", "Hindi · female 🇮🇳"),
+    VoiceOpt("hi-IN-MadhurNeural", "Madhur", "Hindi · male 🇮🇳"),
+    VoiceOpt("bn-IN-TanishaaNeural", "Tanishaa", "Bangla · female 🇮🇳"),
+    VoiceOpt("bn-IN-BashkarNeural", "Bashkar", "Bangla · male 🇮🇳"),
+)
+// reliable backup (Amazon Polly via StreamElements) — used if the above don't play
 private val BACKUP_VOICES = listOf(
     VoiceOpt("Aditi", "Aditi", "Backup · Indian"),
     VoiceOpt("Joanna", "Joanna", "Backup · US female"),
@@ -300,24 +305,54 @@ internal fun VoicePickerScreen(settings: GatewayClient.Settings, onToggle: (JSON
         Toast.makeText(ctx, "Voice set", Toast.LENGTH_SHORT).show()
     }
 
+    val scope = rememberCoroutineScope()
+    var checking by remember { mutableStateOf(false) }
+    var checkResult by remember { mutableStateOf<String?>(null) }
+
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Spacer(Modifier.height(6.dp))
-        Text("Voice chuno — pehle ▶ se demo suno, phir select karo. AI voice-note isi awaaz me reply dega. Free hai, koi API key nahi.",
-            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 4.dp))
+        Text("Voice chuno — ▶ se demo suno, phir tap karke select. AI voice-note isi awaaz me reply dega.",
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 2.dp))
+        Text("English voices (neeche) teri Groq key se chalti hain — asli, alag-alag. Pehli baar ek baar console.groq.com pe PlayAI TTS ki terms accept karni pad sakti hai.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-        Text("FEMALE", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 4.dp))
-        FEMALE_VOICES.forEach { v -> VoiceRow(v, selected == v.id, playing == v.id, loading == v.id, { demo(v.id) }, { pick(v.id) }) }
+        FilledTonalButton(onClick = {
+            checking = true
+            scope.launch {
+                val r = GatewayClient.voiceCheck(selected)
+                checkResult = if (r.optBoolean("ok", false)) "✅ Groq voice chal rahi hai! Ab koi bhi English voice select kar."
+                else (r.optString("message").ifBlank { "Groq TTS abhi nahi chala." })
+                checking = false
+            }
+        }, enabled = !checking, modifier = Modifier.fillMaxWidth()) {
+            Text(if (checking) "Checking…" else "Check Groq voice")
+        }
 
-        Text("MALE", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
-        MALE_VOICES.forEach { v -> VoiceRow(v, selected == v.id, playing == v.id, loading == v.id, { demo(v.id) }, { pick(v.id) }) }
+        Text("ENGLISH · FEMALE (Groq)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 4.dp))
+        GROQ_FEMALE.forEach { v -> VoiceRow(v, selected == v.id, playing == v.id, loading == v.id, { demo(v.id) }, { pick(v.id) }) }
+
+        Text("ENGLISH · MALE (Groq)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
+        GROQ_MALE.forEach { v -> VoiceRow(v, selected == v.id, playing == v.id, loading == v.id, { demo(v.id) }, { pick(v.id) }) }
+
+        Text("HINDI / BANGLA", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
+        INDIC_VOICES.forEach { v -> VoiceRow(v, selected == v.id, playing == v.id, loading == v.id, { demo(v.id) }, { pick(v.id) }) }
 
         Text("BACKUP (agar upar wale na chale)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
         BACKUP_VOICES.forEach { v -> VoiceRow(v, selected == v.id, playing == v.id, loading == v.id, { demo(v.id) }, { pick(v.id) }) }
 
         Spacer(Modifier.height(20.dp))
+    }
+
+    if (checkResult != null) {
+        AlertDialog(
+            onDismissRequest = { checkResult = null },
+            title = { Text("Groq voice") },
+            text = { Text(checkResult ?: "") },
+            confirmButton = { TextButton(onClick = { checkResult = null }) { Text("OK") } },
+        )
     }
 }
 

@@ -2131,7 +2131,10 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
     SettingsGroup("Reply language") {
         Text("Ek language chuno — AI sirf usi me reply karega (Hindi/Bangla mix band ho jayega). \"Auto\" sender ki language mirror karta hai.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 4.dp))
-        LanguageSelector(settings.aiLangMode) { onToggle(JSONObject().put("aiLangMode", it)) }
+        LanguageSelector(settings.aiLangMode) {
+            onToggle(JSONObject().put("aiLangMode", it))
+            Toast.makeText(ctx, "Reply language: " + it, Toast.LENGTH_SHORT).show()
+        }
         if (settings.aiLangMode == "custom") {
             var lang by remember(settings.aiReplyLang) { mutableStateOf(settings.aiReplyLang) }
             Spacer(Modifier.height(8.dp))

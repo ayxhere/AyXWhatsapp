@@ -68,7 +68,8 @@ let settings = {
   aiImageFree: true, // use free no-key vision (Pollinations) as a fallback so images work without any API key
   aiCommandsEnabled: true, // /create (make image) and /prompt (describe image as a prompt)
   aiVoiceNoteReply: false, // reply to incoming voice notes WITH a voice note (TTS)
-  aiTtsVoice: 'hi-IN-SwaraNeural', // Edge neural voice (free, no key); falls back to Polly if Edge is blocked
+  aiTtsVoice: 'Arista-PlayAI', // Groq PlayAI voice (uses the working Groq key) — real, varied voices
+  aiTtsModel: 'playai-tts',
   aiFullContext: true, // forward the real recent conversation (both sides) to the AI every reply
   aiLangMode: 'auto', // auto | hinglish | bangla | english | hindi | banglascript | custom  (forces ONE reply language)
   aiReplyLang: 'Reply in Roman Hindi (Hinglish). If they write Bangla, reply in Roman Bangla. ALWAYS use Latin/English letters — never Devanagari or Bangla script. Mirror the sender language.',
@@ -388,11 +389,17 @@ function contactContext(jid) {
   return bits.length ? ('\n\n' + bits.join(' ') + ' Keep your language consistent across the whole chat.') : ''
 }
 
-async function aiReply(jid, force) {
+async function aiReply(jid, force, currentText) {
   // force = called from voice/image path, which has its own enable toggle (don't require the master text toggle)
   if ((!force && !settings.aiReplyEnabled) || !settings.aiApiUrl || !settings.aiApiKey) return null
   // forward the REAL recent conversation (both sides) so Groq replies in context, not generic
-  const history = (settings.aiFullContext === false) ? histMsgs(jid) : fullChatContext(jid, 18)
+  let history = (settings.aiFullContext === false) ? histMsgs(jid) : fullChatContext(jid, 18)
+  // currentText = the actual message to answer NOW (voice transcript). It may not be in msgLog (voice has no
+  // text there), so append it as the LAST user turn — otherwise the AI replies to the previous image/text.
+  if (currentText && currentText.trim()) {
+    history = history.filter(h => !(h.role === 'user' && h.content === currentText.trim()))
+    history = [...history, { role: 'user', content: currentText.trim() }]
+  }
   const model = settings.aiModel || 'openai/gpt-oss-20b'
   const sys = sysWith() + contactContext(jid)
   let out = await chatComplete(model, [{ role: 'system', content: sys }, ...history])
@@ -767,35 +774,57 @@ async function googleTts(text) {
   } catch (e) { return null }
 }
 
+// Groq TTS (PlayAI) — uses the SAME Groq key that already works on this device, so it's the most reliable
+// source of real, DIFFERENT, natural voices (male & female). English voices. Returns MP3.
+let _groqTtsErr = ''
+async function groqTts(text, voice) {
+  if (!settings.aiApiKey) { _groqTtsErr = 'no key'; return null }
+  try {
+    const ctrl = new AbortController(); const to = setTimeout(() => ctrl.abort(), 30000)
+    const res = await fetch(apiBase() + '/audio/speech', {
+      method: 'POST', signal: ctrl.signal,
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + settings.aiApiKey },
+      body: JSON.stringify({ model: settings.aiTtsModel || 'playai-tts', voice: voice || 'Arista-PlayAI', input: text.slice(0, 900), response_format: 'mp3' }),
+    })
+    clearTimeout(to)
+    if (!res.ok) {
+      const b = (await res.text()).slice(0, 220)
+      _groqTtsErr = (res.status === 400 && /terms/i.test(b)) ? 'terms' : (res.status + '')
+      log('groq tts http', res.status, b)
+      return null
+    }
+    _groqTtsErr = ''
+    const buf = Buffer.from(await res.arrayBuffer())
+    return buf.length > 500 ? buf : null
+  } catch (e) { _groqTtsErr = e?.message || 'err'; log('groq tts err', e?.message); return null }
+}
+
 // map an Edge neural voice to the closest StreamElements/Polly voice (used if Edge can't connect)
 function pollyFallback(voice) {
   const v = String(voice || '')
-  if (v.startsWith('hi-')) return 'Aditi'
-  if (v.startsWith('bn-')) return 'Aditi'
+  if (v.startsWith('hi-') || v.startsWith('bn-')) return 'Aditi'
   if (v.startsWith('en-IN')) return v.includes('Prabhat') ? 'Matthew' : 'Raveena'
   if (v.startsWith('en-GB')) return v.includes('Ryan') ? 'Brian' : 'Amy'
-  if (/Guy|Christopher|Ryan|Prabhat|Madhur|Bashkar|Pradeep/.test(v)) return 'Matthew'
   return 'Joanna'
 }
 
-// Produce speech for a reply. Returns { buf, mime } or null. No API key needed.
-// Edge NEURAL voices (real-human, per-language) first for the quality voices; StreamElements for Polly names.
+// Produce speech. Returns { buf, mime } or null.
+// PlayAI voice (…-PlayAI) → Groq TTS (works with the existing Groq key, best + varied). Edge Neural → Edge.
+// Polly name → StreamElements. Always fall back to Groq, then Google, so SOMETHING plays.
 async function synthVoice(text, voice) {
   if (!text) return null
-  const isEdge = /Neural/i.test(voice || '')
-  if (isEdge) {
-    const ogg = await edgeTtsOgg(text, voice)
-    if (ogg && ogg.length > 500) return { buf: ogg, mime: 'audio/ogg; codecs=opus' }
-    const mp3 = await streamElementsTts(text, pollyFallback(voice))   // Edge blocked on device → closest Polly
-    if (mp3) return { buf: mp3, mime: 'audio/mpeg' }
+  const v = voice || 'Arista-PlayAI'
+  if (/-PlayAI$/i.test(v) || /^(troy|hannah|austin)$/i.test(v)) {
+    const g = await groqTts(text, v); if (g) return { buf: g, mime: 'audio/mpeg' }
+  } else if (/Neural/i.test(v)) {
+    const ogg = await edgeTtsOgg(text, v); if (ogg && ogg.length > 500) return { buf: ogg, mime: 'audio/ogg; codecs=opus' }
+    const se = await streamElementsTts(text, pollyFallback(v)); if (se) return { buf: se, mime: 'audio/mpeg' }
   } else {
-    const mp3 = await streamElementsTts(text, voice)
-    if (mp3) return { buf: mp3, mime: 'audio/mpeg' }
-    const ogg = await edgeTtsOgg(text, 'hi-IN-SwaraNeural')
-    if (ogg && ogg.length > 500) return { buf: ogg, mime: 'audio/ogg; codecs=opus' }
+    const se = await streamElementsTts(text, v); if (se) return { buf: se, mime: 'audio/mpeg' }
   }
-  const g = await googleTts(text)
-  if (g) return { buf: g, mime: 'audio/mpeg' }
+  // universal fallbacks
+  const g2 = await groqTts(text, /-PlayAI$/i.test(v) ? v : 'Arista-PlayAI'); if (g2) return { buf: g2, mime: 'audio/mpeg' }
+  const gg = await googleTts(text); if (gg) return { buf: gg, mime: 'audio/mpeg' }
   return null
 }
 
@@ -1124,7 +1153,7 @@ async function handleMessages({ messages, type }) {
               log('voice transcribed:', tr.slice(0, 60))
               pushHistory(from, 'user', tr)
               let reply = settings.autoReplyEnabled ? matchReply(tr) : null
-              if (!reply) reply = await aiReply(from, true)
+              if (!reply) reply = await aiReply(from, true, tr)   // tr = the actual voice content to answer
               if (reply) {
                 pushHistory(from, 'assistant', reply)
                 let sent = false
@@ -1781,6 +1810,17 @@ app.get('/visiontest', async (req, res) => {
   try { res.json(await visionSelfTest()) }
   catch (e) { res.json({ ok: false, error: e?.message || 'test failed', report: [] }) }
 })
+// Voice check: tells the app whether Groq TTS works with the current key (or needs terms acceptance)
+app.get('/voicecheck', async (req, res) => {
+  try {
+    const voice = String(req.query.voice || settings.aiTtsVoice || 'Arista-PlayAI')
+    const buf = await groqTts('Hi, this is a voice test.', voice)
+    if (buf) return res.json({ ok: true, provider: 'groq', voice })
+    if (_groqTtsErr === 'terms') return res.json({ ok: false, reason: 'terms', message: 'Groq PlayAI TTS ke liye ek baar terms accept karni hogi: console.groq.com → Playground → TTS → Accept.' })
+    if (_groqTtsErr === 'no key') return res.json({ ok: false, reason: 'nokey', message: 'API configuration me Groq key daal ke Save kar.' })
+    return res.json({ ok: false, reason: _groqTtsErr || 'fail', message: 'Groq TTS abhi nahi chala (' + (_groqTtsErr || 'error') + '). App Google awaaz pe chala jayega.' })
+  } catch (e) { res.json({ ok: false, reason: 'err', message: e?.message || 'error' }) }
+})
 // Voice demo: synthesize a short sample in the chosen voice so the user can hear it before saving
 app.get('/ttsdemo', async (req, res) => {
   try {
@@ -1839,6 +1879,7 @@ app.post('/settings', (req, res) => {
   if (typeof b.aiCommandsEnabled === 'boolean') settings.aiCommandsEnabled = b.aiCommandsEnabled
   if (typeof b.aiVoiceNoteReply === 'boolean') settings.aiVoiceNoteReply = b.aiVoiceNoteReply
   if (typeof b.aiTtsVoice === 'string') settings.aiTtsVoice = b.aiTtsVoice
+  if (typeof b.aiTtsModel === 'string') settings.aiTtsModel = b.aiTtsModel
   if (typeof b.aiFullContext === 'boolean') settings.aiFullContext = b.aiFullContext
   if (typeof b.aiLangMode === 'string') settings.aiLangMode = b.aiLangMode
   if (typeof b.aiReplyLang === 'string') settings.aiReplyLang = b.aiReplyLang

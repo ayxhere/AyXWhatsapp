@@ -49,7 +49,7 @@ object GatewayClient {
         val aiImageFree: Boolean = true,
         val aiCommandsEnabled: Boolean = true,
         val aiVoiceNoteReply: Boolean = false,
-        val aiTtsVoice: String = "hi-IN-SwaraNeural",
+        val aiTtsVoice: String = "Arista-PlayAI",
         val aiLangMode: String = "auto",
         val aiFullContext: Boolean = true,
         val aiReplyLang: String = "",
@@ -107,6 +107,16 @@ object GatewayClient {
     fun ttsDemoUrl(voice: String): String =
         "$base/ttsdemo?voice=" + java.net.URLEncoder.encode(voice, "UTF-8") +
             "&text=" + java.net.URLEncoder.encode("Hi! Main aapka assistant hoon, aise reply karunga.", "UTF-8")
+
+    /** Check whether Groq TTS works with the current key (or needs terms acceptance). */
+    suspend fun voiceCheck(voice: String): JSONObject = withContext(Dispatchers.IO) {
+        try {
+            val c = (URL("$base/voicecheck?voice=" + java.net.URLEncoder.encode(voice, "UTF-8")).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"; connectTimeout = 4000; readTimeout = 40000
+            }
+            readJson(c)
+        } catch (e: Exception) { JSONObject().put("ok", false).put("message", e.message ?: "error") }
+    }
 
     suspend fun sendMedia(jid: String, dataB64: String, type: String, filename: String, caption: String): Boolean = withContext(Dispatchers.IO) {
         val body = JSONObject().put("jid", jid).put("type", type).put("data", dataB64).put("filename", filename).put("caption", caption)
@@ -414,7 +424,7 @@ object GatewayClient {
             aiImageFree = o.optBoolean("aiImageFree", true),
             aiCommandsEnabled = o.optBoolean("aiCommandsEnabled", true),
             aiVoiceNoteReply = o.optBoolean("aiVoiceNoteReply", false),
-            aiTtsVoice = o.optString("aiTtsVoice", "hi-IN-SwaraNeural"),
+            aiTtsVoice = o.optString("aiTtsVoice", "Arista-PlayAI"),
             aiLangMode = o.optString("aiLangMode", "auto"),
             aiFullContext = o.optBoolean("aiFullContext", true),
             aiReplyLang = o.optString("aiReplyLang", ""),
