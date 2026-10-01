@@ -2257,7 +2257,7 @@ private fun ImageAiSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
             LinkRow(Icons.Filled.Language, Color(0xFF4DD07A), "Get Gemini key", "aistudio.google.com → tap to create key") { openUrl(ctx, "https://aistudio.google.com/apikey") }
             FilledTonalButton(onClick = {
                 visionUrl = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-                vision = "gemini-2.5-flash, gemini-2.0-flash"
+                vision = "gemini-flash-latest, gemini-3-flash, gemini-2.5-flash, gemini-2.0-flash"
                 Toast.makeText(ctx, "Gemini filled — key paste karke Save", Toast.LENGTH_LONG).show()
             }) { Text("Use Gemini (free)") }
             OutlinedTextField(vision, { vision = it }, label = { Text("Vision model(s) — comma se multiple") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())

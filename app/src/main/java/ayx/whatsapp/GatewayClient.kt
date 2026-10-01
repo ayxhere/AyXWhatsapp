@@ -49,7 +49,7 @@ object GatewayClient {
         val aiImageFree: Boolean = true,
         val aiCommandsEnabled: Boolean = true,
         val aiVoiceNoteReply: Boolean = false,
-        val aiTtsVoice: String = "hi-IN-SwaraNeural",
+        val aiTtsVoice: String = "Aditi",
         val aiLangMode: String = "auto",
         val aiReplyLang: String = "",
     )
@@ -413,7 +413,7 @@ object GatewayClient {
             aiImageFree = o.optBoolean("aiImageFree", true),
             aiCommandsEnabled = o.optBoolean("aiCommandsEnabled", true),
             aiVoiceNoteReply = o.optBoolean("aiVoiceNoteReply", false),
-            aiTtsVoice = o.optString("aiTtsVoice", "hi-IN-SwaraNeural"),
+            aiTtsVoice = o.optString("aiTtsVoice", "Aditi"),
             aiLangMode = o.optString("aiLangMode", "auto"),
             aiReplyLang = o.optString("aiReplyLang", ""),
         )

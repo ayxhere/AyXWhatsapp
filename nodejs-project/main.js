@@ -68,7 +68,7 @@ let settings = {
   aiImageFree: true, // use free no-key vision (Pollinations) as a fallback so images work without any API key
   aiCommandsEnabled: true, // /create (make image) and /prompt (describe image as a prompt)
   aiVoiceNoteReply: false, // reply to incoming voice notes WITH a voice note (TTS)
-  aiTtsVoice: 'hi-IN-SwaraNeural', // Edge neural voice used for voice-note replies
+  aiTtsVoice: 'Aditi', // StreamElements/Polly voice (free, no key)
   aiLangMode: 'auto', // auto | hinglish | bangla | english | hindi | banglascript | custom  (forces ONE reply language)
   aiReplyLang: 'Reply in Roman Hindi (Hinglish). If they write Bangla, reply in Roman Bangla. ALWAYS use Latin/English letters — never Devanagari or Bangla script. Mirror the sender language.',
 }
@@ -447,9 +447,9 @@ function splitModels(s, def) {
 }
 // ordered list of vision providers to try: primary (e.g. Gemini) -> fallback (e.g. OpenRouter) -> main Groq API.
 // Each has {url, key, models[]}. "Out of service" on one automatically moves to the next.
-// Pollinations: free vision with NO API key. This is the default so images work out of the box.
-const POLLINATIONS_VISION_URL = 'https://text.pollinations.ai/openai'
-const POLLINATIONS_VISION_MODELS = ['openai', 'openai-large']
+// Pollinations: free vision with no key (best-effort — they are moving to paid tiers, so may fail).
+const POLLINATIONS_VISION_URL = 'https://text.pollinations.ai/openai?referrer=ayxwhatsapp'
+const POLLINATIONS_VISION_MODELS = ['openai', 'gemini']
 function visionProviders() {
   const list = []
   const seen = new Set()
@@ -461,8 +461,8 @@ function visionProviders() {
     seen.add(sig)
     list.push({ url, key, models })
   }
-  // primary dedicated provider (if the user added one, e.g. Gemini)
-  add(settings.aiVisionApiUrl, settings.aiVisionApiKey, splitModels(settings.aiVisionModel, ['gemini-2.5-flash', 'gemini-2.0-flash']))
+  // primary dedicated provider (if the user added one, e.g. Gemini). Broad model list absorbs Gemini's renames.
+  add(settings.aiVisionApiUrl, settings.aiVisionApiKey, splitModels(settings.aiVisionModel, ['gemini-flash-latest', 'gemini-3-flash', 'gemini-2.5-flash', 'gemini-2.0-flash']))
   // secondary / fallback provider
   add(settings.aiVisionApiUrl2, settings.aiVisionApiKey2, splitModels(settings.aiVisionModel2, []))
   // the main (Groq) API with its known rotating vision IDs (only if a key is set)
@@ -690,26 +690,41 @@ async function edgeTtsOgg(text, voice) {
   })
 }
 
-// Pollinations TTS fallback (free, no key) — returns MP3.
-async function pollinationsTts(text, voice) {
+// StreamElements TTS (free, NO API key) — Amazon Polly voices. Returns MP3. This is the reliable path.
+async function streamElementsTts(text, voice) {
   try {
-    const v = (voice || '').toLowerCase().includes('male') ? 'onyx' : 'nova'
-    const url = 'https://text.pollinations.ai/' + encodeURIComponent(text.slice(0, 300)) + '?model=openai-audio&voice=' + v
+    const v = (voice && /^[A-Za-z]+$/.test(voice)) ? voice : 'Aditi'
+    const url = 'https://api.streamelements.com/kappa/v2/speech?voice=' + encodeURIComponent(v) + '&text=' + encodeURIComponent(text.slice(0, 480))
     const ctrl = new AbortController(); const to = setTimeout(() => ctrl.abort(), 25000)
-    const res = await fetch(url, { signal: ctrl.signal }); clearTimeout(to)
+    const res = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'Mozilla/5.0' } }); clearTimeout(to)
+    if (!res.ok) { log('se tts http', res.status); return null }
+    const buf = Buffer.from(await res.arrayBuffer())
+    return buf.length > 500 ? buf : null
+  } catch (e) { log('se tts err', e?.message); return null }
+}
+
+// Google Translate TTS fallback (free, no key) — MP3, short text only.
+async function googleTts(text) {
+  try {
+    const url = 'https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=hi&q=' + encodeURIComponent(text.slice(0, 190))
+    const ctrl = new AbortController(); const to = setTimeout(() => ctrl.abort(), 15000)
+    const res = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'Mozilla/5.0' } }); clearTimeout(to)
     if (!res.ok) return null
     const buf = Buffer.from(await res.arrayBuffer())
     return buf.length > 500 ? buf : null
-  } catch (e) { log('pollinations tts err', e?.message); return null }
+  } catch (e) { return null }
 }
 
-// Produce speech for a reply. Returns { buf, mime } or null. Tries Edge (OGG/Opus) then Pollinations (MP3).
+// Produce speech for a reply. Returns { buf, mime } or null. No API key needed.
+// StreamElements (MP3) first (reliable), then Edge (OGG/Opus), then Google (MP3).
 async function synthVoice(text, voice) {
   if (!text) return null
-  const ogg = await edgeTtsOgg(text, voice)
+  const mp3 = await streamElementsTts(text, voice)
+  if (mp3) return { buf: mp3, mime: 'audio/mpeg' }
+  const ogg = await edgeTtsOgg(text, 'hi-IN-SwaraNeural')
   if (ogg && ogg.length > 500) return { buf: ogg, mime: 'audio/ogg; codecs=opus' }
-  const mp3 = await pollinationsTts(text, voice)
-  if (mp3 && mp3.length > 500) return { buf: mp3, mime: 'audio/mpeg' }
+  const g = await googleTts(text)
+  if (g) return { buf: g, mime: 'audio/mpeg' }
   return null
 }
 
@@ -1046,8 +1061,10 @@ async function handleMessages({ messages, type }) {
                 if (settings.aiVoiceNoteReply) {
                   const v = await synthVoice(reply, settings.aiTtsVoice)
                   if (v && v.buf) {
-                    try { await sock.sendMessage(from, { audio: v.buf, ptt: true, mimetype: v.mime }, q); sent = true; log('ai voice-note reply sent', v.mime) }
-                    catch (e) { log('voicenote send err', e?.message) }
+                    // MP3 → send as a normal audio message (plays fine); OGG/Opus → true voice note
+                    const isOgg = v.mime.includes('ogg')
+                    try { await sock.sendMessage(from, { audio: v.buf, ptt: isOgg, mimetype: v.mime }, q); sent = true; log('ai voice reply sent', v.mime) }
+                    catch (e) { log('voice send err', e?.message) }
                   }
                 }
                 if (!sent) {

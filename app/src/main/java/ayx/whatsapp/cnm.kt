@@ -242,22 +242,25 @@ private fun LogLine(m: GatewayClient.MemMsg) {
 // ---- AI Voice picker: male/female artists, demo-play then select (free Edge voices, no key) ----
 private data class VoiceOpt(val id: String, val label: String, val sub: String)
 
+// StreamElements / Amazon Polly voice names (free, no key)
 private val FEMALE_VOICES = listOf(
-    VoiceOpt("hi-IN-SwaraNeural", "Swara", "Hindi · soft"),
-    VoiceOpt("bn-IN-TanishaaNeural", "Tanishaa", "Bangla · warm"),
-    VoiceOpt("en-IN-NeerjaNeural", "Neerja", "Indian English"),
-    VoiceOpt("en-US-AnaNeural", "Ana", "English · cute"),
-    VoiceOpt("en-US-AriaNeural", "Aria", "English · soft"),
-    VoiceOpt("en-US-JennyNeural", "Jenny", "English · friendly"),
-    VoiceOpt("en-GB-SoniaNeural", "Sonia", "British · calm"),
+    VoiceOpt("Aditi", "Aditi", "Indian · Hindi + English"),
+    VoiceOpt("Raveena", "Raveena", "Indian · warm"),
+    VoiceOpt("Joanna", "Joanna", "US · smooth"),
+    VoiceOpt("Salli", "Salli", "US · bright"),
+    VoiceOpt("Ivy", "Ivy", "US · cute (young)"),
+    VoiceOpt("Kimberly", "Kimberly", "US · soft"),
+    VoiceOpt("Amy", "Amy", "British · calm"),
+    VoiceOpt("Emma", "Emma", "British"),
+    VoiceOpt("Nicole", "Nicole", "Australian"),
 )
 private val MALE_VOICES = listOf(
-    VoiceOpt("hi-IN-MadhurNeural", "Madhur", "Hindi · deep"),
-    VoiceOpt("bn-IN-BashkarNeural", "Bashkar", "Bangla"),
-    VoiceOpt("en-IN-PrabhatNeural", "Prabhat", "Indian English"),
-    VoiceOpt("en-US-GuyNeural", "Guy", "English · casual"),
-    VoiceOpt("en-US-ChristopherNeural", "Christopher", "English · deep"),
-    VoiceOpt("en-GB-RyanNeural", "Ryan", "British"),
+    VoiceOpt("Matthew", "Matthew", "US · deep"),
+    VoiceOpt("Joey", "Joey", "US · casual"),
+    VoiceOpt("Justin", "Justin", "US · young"),
+    VoiceOpt("Brian", "Brian", "British"),
+    VoiceOpt("Russell", "Russell", "Australian"),
+    VoiceOpt("Geraint", "Geraint", "Welsh English"),
 )
 
 @Composable
