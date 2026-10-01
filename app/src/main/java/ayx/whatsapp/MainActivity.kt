@@ -1776,11 +1776,11 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
 // sub-page title shown in the top app bar (single source of the back arrow)
 private fun settingsTitle(page: String): String = when (page) {
     "general" -> "General"; "autoreply" -> "Auto-reply"; "ai" -> "AI Assistant"; "chat" -> "Chat Settings"
-    "imageai" -> "Image AI"; "aimemory" -> "AI Memory"
+    "imageai" -> "Image AI"; "aimemory" -> "AI Memory"; "voice" -> "AI Voice"
     "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "about" -> "About"; "support" -> "Support Development"; else -> "Settings"
 }
-// parent page for nested back (Wallpaper lives under Chat Settings, Image AI & AI Memory under AI Assistant)
-private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; else -> "home" }
+// parent page for nested back (Wallpaper under Chat Settings; Image AI / AI Memory / Voice under AI Assistant)
+private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; "voice" -> "ai"; else -> "home" }
 
 @Composable
 private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient.Settings, page: String, onPage: (String) -> Unit, wallpaperVersion: Int,
@@ -1793,9 +1793,10 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
         when (p) {
             "general" -> SettingsSubPage { GeneralSettings(settings, onToggle) }
             "autoreply" -> SettingsSubPage { AutoReplySection(settings, onToggle, onRules) }
-            "ai" -> SettingsSubPage { AiSettings(settings, onToggle, messages, dpCache, onOpenImageAi = { onPage("imageai") }, onOpenMemory = { onPage("aimemory") }) }
+            "ai" -> SettingsSubPage { AiSettings(settings, onToggle, messages, dpCache, onOpenImageAi = { onPage("imageai") }, onOpenMemory = { onPage("aimemory") }, onOpenVoice = { onPage("voice") }) }
             "imageai" -> SettingsSubPage { ImageAiSettings(settings, onToggle, ctx) }
-            "aimemory" -> SettingsSubPage { AiMemoryScreen() }
+            "aimemory" -> AiMemoryScreen()   // has its OWN scroll — must NOT be wrapped in SettingsSubPage
+            "voice" -> VoicePickerScreen(settings, onToggle, ctx)
             "chat" -> SettingsSubPage { ChatSettings(onOpenWallpaper = { onPage("wallpaper") }) }
             "wallpaper" -> SettingsSubPage { WallpaperSettings(ctx, wallpaperVersion, onPickWallpaper, onRemoveWallpaper) }
             "appearance" -> SettingsSubPage { AppearanceSettings() }
@@ -2089,7 +2090,7 @@ private fun AutoReplySection(settings: GatewayClient.Settings, onToggle: (JSONOb
 }
 
 @Composable
-private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit, messages: List<GatewayClient.Msg>, dpCache: MutableMap<String, ImageBitmap?>, onOpenImageAi: () -> Unit, onOpenMemory: () -> Unit) {
+private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit, messages: List<GatewayClient.Msg>, dpCache: MutableMap<String, ImageBitmap?>, onOpenImageAi: () -> Unit, onOpenMemory: () -> Unit, onOpenVoice: () -> Unit) {
     val ctx = LocalContext.current
     var showExcludePicker by remember { mutableStateOf(false) }
     fun setExcludes(list: List<String>) { onToggle(JSONObject().put("aiExcludeJids", org.json.JSONArray(list.distinct()))) }
@@ -2112,16 +2113,10 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
         ActionRow(Icons.Filled.Memory, CAT_AI, "AI Memory", "Har contact ki chat history, naam & language") { onOpenMemory() }
     }
 
-    // Voice-note reply — reply to incoming voice notes WITH a soft human voice note
-    var ttsVoice by remember { mutableStateOf(settings.aiTtsVoice) }
+    // Voice-note reply — reply to incoming voice notes WITH a soft human voice note (free, no key)
     SettingsGroup("Voice note reply") {
-        SettingRow(Icons.Filled.GraphicEq, Color(0xFF4DD0C4), "Reply with a voice note", "When someone sends a voice note, reply back in a real voice note (needs \"Voice reply\" on)", settings.aiVoiceNoteReply) { onToggle(JSONObject().put("aiVoiceNoteReply", it)) }
-        OutlinedTextField(ttsVoice, { ttsVoice = it }, label = { Text("Voice") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
-        Text("Soft/cute voices: hi-IN-SwaraNeural (Hindi), bn-IN-TanishaaNeural (Bangla), en-US-AnaNeural (cute), en-US-AriaNeural (soft).",
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            FilledTonalButton(onClick = { onToggle(JSONObject().put("aiTtsVoice", ttsVoice.trim())); Toast.makeText(ctx, "Voice saved", Toast.LENGTH_SHORT).show() }) { Text("Save voice") }
-        }
+        SettingRow(Icons.Filled.GraphicEq, Color(0xFF4DD0C4), "Reply with a voice note", "When someone sends a voice note, reply back in a real voice note (needs \"Voice reply\" on) — free, no API key", settings.aiVoiceNoteReply) { onToggle(JSONObject().put("aiVoiceNoteReply", it)) }
+        ActionRow(Icons.Filled.GraphicEq, Color(0xFF4DD0C4), "Choose voice", "Current: ${settings.aiTtsVoice}  ·  demo & select") { onOpenVoice() }
     }
 
     // Custom commands
@@ -2243,10 +2238,12 @@ private fun ImageAiSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
                 Text("Image AI", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                 FilledTonalButton(onClick = { saveVision() }) { Text("Save") }
             }
-            Text("Images ke liye alag AI. Pehla provider down/overload ho to app apne aap fallback provider pe switch kar leta hai.",
+            Text("Images ab bina kisi API key ke chalti hain (free). Neeche apni Gemini/OpenRouter key dalo to wo pehle use hogi, warna free wala apne aap chalega.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-            // Self-test: Save first, then tap to see if the AI can actually SEE an image (and the exact error if not)
+            SettingRow(Icons.Filled.Image, Color(0xFF4DD07A), "Free image AI (no key)", "Bina API key ke images samajhta hai — default ON", settings.aiImageFree) { onToggle(JSONObject().put("aiImageFree", it)) }
+
+            // Self-test: tap to see if the AI can actually SEE an image (and the exact error if not)
             Button(onClick = {
                 testing = true
                 scope.launch { val r = GatewayClient.visionTest(); testResult = fmtVisionTest(r); testing = false }

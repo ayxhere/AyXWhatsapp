@@ -65,6 +65,7 @@ let settings = {
   aiVisionApiKey2: '',
   aiVisionModel2: '',
   aiImageOcr: false, // read text IN the image on-device (offline, unlimited) and feed it to the AI
+  aiImageFree: true, // use free no-key vision (Pollinations) as a fallback so images work without any API key
   aiCommandsEnabled: true, // /create (make image) and /prompt (describe image as a prompt)
   aiVoiceNoteReply: false, // reply to incoming voice notes WITH a voice note (TTS)
   aiTtsVoice: 'hi-IN-SwaraNeural', // Edge neural voice used for voice-note replies
@@ -446,23 +447,28 @@ function splitModels(s, def) {
 }
 // ordered list of vision providers to try: primary (e.g. Gemini) -> fallback (e.g. OpenRouter) -> main Groq API.
 // Each has {url, key, models[]}. "Out of service" on one automatically moves to the next.
+// Pollinations: free vision with NO API key. This is the default so images work out of the box.
+const POLLINATIONS_VISION_URL = 'https://text.pollinations.ai/openai'
+const POLLINATIONS_VISION_MODELS = ['openai', 'openai-large']
 function visionProviders() {
   const list = []
   const seen = new Set()
-  const add = (url, key, models) => {
+  const add = (url, key, models, noauth) => {
     url = (url || '').trim(); key = (key || '').trim()
-    if (!url || !key || !models.length) return
+    if (!url || (!key && !noauth) || !models.length) return
     const sig = url + '|' + key
     if (seen.has(sig)) return
     seen.add(sig)
     list.push({ url, key, models })
   }
-  // primary dedicated provider
+  // primary dedicated provider (if the user added one, e.g. Gemini)
   add(settings.aiVisionApiUrl, settings.aiVisionApiKey, splitModels(settings.aiVisionModel, ['gemini-2.5-flash', 'gemini-2.0-flash']))
   // secondary / fallback provider
   add(settings.aiVisionApiUrl2, settings.aiVisionApiKey2, splitModels(settings.aiVisionModel2, []))
-  // final fallback: the main (Groq) API with its known rotating vision IDs
+  // the main (Groq) API with its known rotating vision IDs (only if a key is set)
   add(settings.aiApiUrl, settings.aiApiKey, splitModels(settings.aiVisionModel, []).concat(VISION_FALLBACKS))
+  // ALWAYS-ON free fallback: Pollinations needs no key, so image replies work even with nothing configured
+  if (settings.aiImageFree !== false) add(POLLINATIONS_VISION_URL, '', POLLINATIONS_VISION_MODELS, true)
   return list
 }
 
@@ -478,13 +484,16 @@ function detectImageMime(buf) {
 }
 
 // one vision call. Returns { ok, text, status, err } so callers (and the self-test) can see WHY it failed.
+// key may be empty for no-auth providers (e.g. Pollinations) — then no Authorization header is sent.
 async function visionCall(url, key, model, sys, userText, dataUrl) {
   const ctrl = new AbortController()
   const to = setTimeout(() => ctrl.abort(), 25000)
   try {
+    const headers = { 'Content-Type': 'application/json' }
+    if (key) headers.Authorization = 'Bearer ' + key
     const res = await fetch(url, {
       method: 'POST', signal: ctrl.signal,
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },
+      headers,
       body: JSON.stringify({
         model,
         messages: [
@@ -633,32 +642,75 @@ async function generateImage(prompt) {
   } catch (e) { log('imggen err', e?.message); return null }
 }
 
-// Voice-note reply: turn text into a natural OGG/Opus voice note (so WhatsApp plays it as a real PTT).
-// Uses Microsoft Edge neural voices (free). Fully isolated/optional: if it can't run, caller sends text.
-let _ttsBroken = false
-async function ttsToOgg(text, voice) {
-  if (_ttsBroken || !text) return null
-  let mod
-  try { mod = require('msedge-tts') }
-  catch (e) { _ttsBroken = true; log('tts: msedge-tts unavailable —', e?.message); return null }
-  try {
-    const { MsEdgeTTS, OUTPUT_FORMAT } = mod
-    const tts = new MsEdgeTTS()
-    // WhatsApp voice notes need OGG/Opus. Use the enum if present, else the raw format string.
-    const fmt = (OUTPUT_FORMAT && OUTPUT_FORMAT.OGG_24KHZ_16BIT_MONO_OPUS) || 'ogg-24khz-16bit-mono-opus'
-    await tts.setMetadata(voice || 'hi-IN-SwaraNeural', fmt)
-    const res = await tts.toStream(text)
-    const stream = (res && res.audioStream) ? res.audioStream : res
+// ---- Text-to-speech (FREE, NO API KEY) ----
+// Microsoft Edge neural voices via a direct WebSocket (ws is already a Baileys dependency). Returns
+// OGG/Opus so WhatsApp plays it as a real voice note. No key, no extra install.
+function xmlEsc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;') }
+async function edgeTtsOgg(text, voice) {
+  let WS
+  try { WS = require('ws') } catch (e) { return null }
+  return await new Promise((resolve) => {
+    let done = false, ws = null
     const chunks = []
-    await new Promise((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error('tts timeout')), 20000)
-      stream.on('data', c => chunks.push(c))
-      stream.on('end', () => { clearTimeout(t); resolve() })
-      stream.on('error', e => { clearTimeout(t); reject(e) })
-    })
-    const buf = Buffer.concat(chunks)
+    const finish = (v) => { if (!done) { done = true; try { ws && ws.close() } catch (_) {} resolve(v) } }
+    try {
+      const TRUSTED = '6A5AA1D4EAFF4E9FB37E23D68491D6F4'
+      const sec = Math.floor(Date.now() / 1000) + 11644473600
+      const ticks = BigInt(sec - (sec % 300)) * 10000000n
+      const gec = crypto.createHash('sha256').update(ticks.toString() + TRUSTED, 'ascii').digest('hex').toUpperCase()
+      const url = 'wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1' +
+        '?TrustedClientToken=' + TRUSTED + '&Sec-MS-GEC=' + gec + '&Sec-MS-GEC-Version=1-130.0.2849.68'
+      ws = new WS(url, { headers: {
+        Origin: 'chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0',
+      } })
+      const to = setTimeout(() => finish(chunks.length ? Buffer.concat(chunks) : null), 20000)
+      ws.on('open', () => {
+        try {
+          ws.send('X-Timestamp:' + new Date().toString() + '\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n' +
+            '{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},"outputFormat":"ogg-24khz-16bit-mono-opus"}}}}')
+          const reqId = crypto.randomUUID().replace(/-/g, '')
+          const ssml = "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'><voice name='" +
+            (voice || 'hi-IN-SwaraNeural') + "'>" + xmlEsc(text) + '</voice></speak>'
+          ws.send('X-RequestId:' + reqId + '\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:' + new Date().toString() + 'Z\r\nPath:ssml\r\n\r\n' + ssml)
+        } catch (e) { clearTimeout(to); finish(null) }
+      })
+      ws.on('message', (data, isBinary) => {
+        try {
+          const buf = Buffer.isBuffer(data) ? data : Buffer.from(data)
+          const head = buf.slice(0, Math.min(buf.length, 130)).toString('utf8')
+          if (isBinary || head.includes('Path:audio')) {
+            if (buf.length > 2) { const hlen = buf.readUInt16BE(0); if (2 + hlen <= buf.length) chunks.push(buf.slice(2 + hlen)) }
+          } else if (head.includes('Path:turn.end')) { clearTimeout(to); finish(chunks.length ? Buffer.concat(chunks) : null) }
+        } catch (_) {}
+      })
+      ws.on('error', (e) => { clearTimeout(to); log('edge-tts ws err', e?.message); finish(chunks.length ? Buffer.concat(chunks) : null) })
+      ws.on('close', () => { clearTimeout(to); finish(chunks.length ? Buffer.concat(chunks) : null) })
+    } catch (e) { log('edge-tts err', e?.message); finish(null) }
+  })
+}
+
+// Pollinations TTS fallback (free, no key) — returns MP3.
+async function pollinationsTts(text, voice) {
+  try {
+    const v = (voice || '').toLowerCase().includes('male') ? 'onyx' : 'nova'
+    const url = 'https://text.pollinations.ai/' + encodeURIComponent(text.slice(0, 300)) + '?model=openai-audio&voice=' + v
+    const ctrl = new AbortController(); const to = setTimeout(() => ctrl.abort(), 25000)
+    const res = await fetch(url, { signal: ctrl.signal }); clearTimeout(to)
+    if (!res.ok) return null
+    const buf = Buffer.from(await res.arrayBuffer())
     return buf.length > 500 ? buf : null
-  } catch (e) { log('tts err', e?.message); return null }
+  } catch (e) { log('pollinations tts err', e?.message); return null }
+}
+
+// Produce speech for a reply. Returns { buf, mime } or null. Tries Edge (OGG/Opus) then Pollinations (MP3).
+async function synthVoice(text, voice) {
+  if (!text) return null
+  const ogg = await edgeTtsOgg(text, voice)
+  if (ogg && ogg.length > 500) return { buf: ogg, mime: 'audio/ogg; codecs=opus' }
+  const mp3 = await pollinationsTts(text, voice)
+  if (mp3 && mp3.length > 500) return { buf: mp3, mime: 'audio/mpeg' }
+  return null
 }
 
 function remember(id, entry) {
@@ -990,11 +1042,11 @@ async function handleMessages({ messages, type }) {
               if (reply) {
                 pushHistory(from, 'assistant', reply)
                 let sent = false
-                // reply WITH a voice note (soft human TTS) when enabled; otherwise text
+                // reply WITH a voice note (soft human TTS, free/no-key) when enabled; otherwise text
                 if (settings.aiVoiceNoteReply) {
-                  const ogg = await ttsToOgg(reply, settings.aiTtsVoice)
-                  if (ogg) {
-                    try { await sock.sendMessage(from, { audio: ogg, ptt: true, mimetype: 'audio/ogg; codecs=opus' }, q); sent = true; log('ai voice-note reply sent') }
+                  const v = await synthVoice(reply, settings.aiTtsVoice)
+                  if (v && v.buf) {
+                    try { await sock.sendMessage(from, { audio: v.buf, ptt: true, mimetype: v.mime }, q); sent = true; log('ai voice-note reply sent', v.mime) }
                     catch (e) { log('voicenote send err', e?.message) }
                   }
                 }
@@ -1641,6 +1693,18 @@ app.get('/visiontest', async (req, res) => {
   try { res.json(await visionSelfTest()) }
   catch (e) { res.json({ ok: false, error: e?.message || 'test failed', report: [] }) }
 })
+// Voice demo: synthesize a short sample in the chosen voice so the user can hear it before saving
+app.get('/ttsdemo', async (req, res) => {
+  try {
+    const voice = String(req.query.voice || 'hi-IN-SwaraNeural')
+    const text = String(req.query.text || 'Hi! Main aapka assistant hoon, aise reply karunga.')
+    const v = await synthVoice(text, voice)
+    if (!v || !v.buf) { res.status(502).json({ ok: false, error: 'tts failed' }); return }
+    res.setHeader('Content-Type', v.mime.split(';')[0])
+    res.setHeader('Cache-Control', 'no-store')
+    res.send(v.buf)
+  } catch (e) { res.status(500).json({ ok: false, error: e?.message || 'tts error' }) }
+})
 // AI Memory: list every contact the AI has talked to, newest first, with recent chat logs
 app.get('/aimemory', (req, res) => {
   const items = [...contactMem.values()].sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0)).map(m => ({
@@ -1683,6 +1747,7 @@ app.post('/settings', (req, res) => {
   if (typeof b.aiVisionApiKey2 === 'string') settings.aiVisionApiKey2 = b.aiVisionApiKey2
   if (typeof b.aiVisionModel2 === 'string') settings.aiVisionModel2 = b.aiVisionModel2
   if (typeof b.aiImageOcr === 'boolean') settings.aiImageOcr = b.aiImageOcr
+  if (typeof b.aiImageFree === 'boolean') settings.aiImageFree = b.aiImageFree
   if (typeof b.aiCommandsEnabled === 'boolean') settings.aiCommandsEnabled = b.aiCommandsEnabled
   if (typeof b.aiVoiceNoteReply === 'boolean') settings.aiVoiceNoteReply = b.aiVoiceNoteReply
   if (typeof b.aiTtsVoice === 'string') settings.aiTtsVoice = b.aiTtsVoice

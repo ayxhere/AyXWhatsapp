@@ -30,18 +30,24 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -57,6 +63,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import android.content.Context
+import android.media.AudioAttributes
+import android.media.MediaPlayer
+import android.widget.Toast
+import org.json.JSONObject
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -223,6 +234,104 @@ private fun LogLine(m: GatewayClient.MemMsg) {
                 Text(m.content, style = MaterialTheme.typography.bodyMedium)
                 val t = timeOf(m.ts)
                 if (t.isNotBlank()) Text(t, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.align(Alignment.End))
+            }
+        }
+    }
+}
+
+// ---- AI Voice picker: male/female artists, demo-play then select (free Edge voices, no key) ----
+private data class VoiceOpt(val id: String, val label: String, val sub: String)
+
+private val FEMALE_VOICES = listOf(
+    VoiceOpt("hi-IN-SwaraNeural", "Swara", "Hindi · soft"),
+    VoiceOpt("bn-IN-TanishaaNeural", "Tanishaa", "Bangla · warm"),
+    VoiceOpt("en-IN-NeerjaNeural", "Neerja", "Indian English"),
+    VoiceOpt("en-US-AnaNeural", "Ana", "English · cute"),
+    VoiceOpt("en-US-AriaNeural", "Aria", "English · soft"),
+    VoiceOpt("en-US-JennyNeural", "Jenny", "English · friendly"),
+    VoiceOpt("en-GB-SoniaNeural", "Sonia", "British · calm"),
+)
+private val MALE_VOICES = listOf(
+    VoiceOpt("hi-IN-MadhurNeural", "Madhur", "Hindi · deep"),
+    VoiceOpt("bn-IN-BashkarNeural", "Bashkar", "Bangla"),
+    VoiceOpt("en-IN-PrabhatNeural", "Prabhat", "Indian English"),
+    VoiceOpt("en-US-GuyNeural", "Guy", "English · casual"),
+    VoiceOpt("en-US-ChristopherNeural", "Christopher", "English · deep"),
+    VoiceOpt("en-GB-RyanNeural", "Ryan", "British"),
+)
+
+@Composable
+internal fun VoicePickerScreen(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit, ctx: Context) {
+    val player = remember { MediaPlayer() }
+    var playing by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf<String?>(null) }
+    var selected by remember { mutableStateOf(settings.aiTtsVoice) }
+    DisposableEffect(Unit) { onDispose { runCatching { player.release() } } }
+
+    fun stop() { runCatching { if (player.isPlaying) player.stop() }; playing = null; loading = null }
+
+    fun demo(v: String) {
+        if (playing == v) { stop(); return }
+        runCatching {
+            player.reset()
+            player.setAudioAttributes(
+                AudioAttributes.Builder().setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).setUsage(AudioAttributes.USAGE_MEDIA).build()
+            )
+            loading = v; playing = null
+            player.setDataSource(GatewayClient.ttsDemoUrl(v))
+            player.setOnPreparedListener { loading = null; playing = v; it.start() }
+            player.setOnCompletionListener { playing = null }
+            player.setOnErrorListener { _, _, _ -> loading = null; playing = null; Toast.makeText(ctx, "Demo nahi chala, dobara try kar", Toast.LENGTH_SHORT).show(); true }
+            player.prepareAsync()
+        }.onFailure { loading = null; Toast.makeText(ctx, "Demo failed", Toast.LENGTH_SHORT).show() }
+    }
+
+    fun pick(v: String) {
+        selected = v
+        onToggle(JSONObject().put("aiTtsVoice", v))
+        Toast.makeText(ctx, "Voice set", Toast.LENGTH_SHORT).show()
+    }
+
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Spacer(Modifier.height(6.dp))
+        Text("Voice chuno — pehle ▶ se demo suno, phir select karo. AI voice-note isi awaaz me reply dega. Free hai, koi API key nahi.",
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 4.dp))
+
+        Text("FEMALE", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 4.dp))
+        FEMALE_VOICES.forEach { v -> VoiceRow(v, selected == v.id, playing == v.id, loading == v.id, { demo(v.id) }, { pick(v.id) }) }
+
+        Text("MALE", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
+        MALE_VOICES.forEach { v -> VoiceRow(v, selected == v.id, playing == v.id, loading == v.id, { demo(v.id) }, { pick(v.id) }) }
+
+        Spacer(Modifier.height(20.dp))
+    }
+}
+
+@Composable
+private fun VoiceRow(v: VoiceOpt, isSelected: Boolean, isPlaying: Boolean, isLoading: Boolean, onPlay: () -> Unit, onSelect: () -> Unit) {
+    Surface(
+        onClick = onSelect,
+        shape = RoundedCornerShape(18.dp),
+        color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            InitialAvatar(v.label, 40.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(v.label, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                Text(v.sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (isSelected) {
+                Icon(Icons.Filled.Check, "selected", tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(4.dp))
+            }
+            IconButton(onClick = onPlay) {
+                if (isLoading) CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+                else Icon(if (isPlaying) Icons.Filled.Stop else Icons.Filled.PlayArrow, "demo", tint = MaterialTheme.colorScheme.primary)
             }
         }
     }

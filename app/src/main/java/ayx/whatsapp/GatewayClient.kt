@@ -46,6 +46,7 @@ object GatewayClient {
         val aiVisionApiUrl2: String = "",
         val aiVisionApiKey2: String = "",
         val aiImageOcr: Boolean = false,
+        val aiImageFree: Boolean = true,
         val aiCommandsEnabled: Boolean = true,
         val aiVoiceNoteReply: Boolean = false,
         val aiTtsVoice: String = "hi-IN-SwaraNeural",
@@ -102,6 +103,9 @@ object GatewayClient {
     }
 
     fun mediaUrl(name: String) = "$base/media/$name"
+    fun ttsDemoUrl(voice: String): String =
+        "$base/ttsdemo?voice=" + java.net.URLEncoder.encode(voice, "UTF-8") +
+            "&text=" + java.net.URLEncoder.encode("Hi! Main aapka assistant hoon, aise reply karunga.", "UTF-8")
 
     suspend fun sendMedia(jid: String, dataB64: String, type: String, filename: String, caption: String): Boolean = withContext(Dispatchers.IO) {
         val body = JSONObject().put("jid", jid).put("type", type).put("data", dataB64).put("filename", filename).put("caption", caption)
@@ -406,6 +410,7 @@ object GatewayClient {
             aiVisionApiUrl2 = o.optString("aiVisionApiUrl2", ""),
             aiVisionApiKey2 = o.optString("aiVisionApiKey2", ""),
             aiImageOcr = o.optBoolean("aiImageOcr", false),
+            aiImageFree = o.optBoolean("aiImageFree", true),
             aiCommandsEnabled = o.optBoolean("aiCommandsEnabled", true),
             aiVoiceNoteReply = o.optBoolean("aiVoiceNoteReply", false),
             aiTtsVoice = o.optString("aiTtsVoice", "hi-IN-SwaraNeural"),
