@@ -2138,27 +2138,46 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
     var key by remember { mutableStateOf(settings.aiApiKey) }
     var model by remember { mutableStateOf(settings.aiModel) }
     var vision by remember { mutableStateOf(settings.aiVisionModel) }
+    var visionUrl by remember { mutableStateOf(settings.aiVisionApiUrl) }
+    var visionKey by remember { mutableStateOf(settings.aiVisionApiKey) }
     var sys by remember { mutableStateOf(settings.aiSystemPrompt) }
     var showKey by remember { mutableStateOf(false) }
+    fun saveApi() {
+        onToggle(JSONObject().put("aiApiUrl", url.trim()).put("aiApiKey", key.trim()).put("aiModel", model.trim())
+            .put("aiVisionModel", vision.trim()).put("aiVisionApiUrl", visionUrl.trim()).put("aiVisionApiKey", visionKey.trim()).put("aiSystemPrompt", sys))
+        Toast.makeText(ctx, "AI settings saved", Toast.LENGTH_SHORT).show()
+    }
     Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             // header row: title left, Save button on the right
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("API configuration", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                FilledTonalButton(onClick = {
-                    onToggle(JSONObject().put("aiApiUrl", url.trim()).put("aiApiKey", key.trim()).put("aiModel", model.trim()).put("aiVisionModel", vision.trim()).put("aiSystemPrompt", sys))
-                    Toast.makeText(ctx, "AI settings saved", Toast.LENGTH_SHORT).show()
-                }) { Text("Save") }
+                FilledTonalButton(onClick = { saveApi() }) { Text("Save") }
             }
             Text("Free key: console.groq.com", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            OutlinedTextField(url, { url = it }, label = { Text("API URL") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(url, { url = it }, label = { Text("API URL (text/voice)") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
             OutlinedTextField(key, { key = it }, label = { Text("API key") }, singleLine = true, shape = RoundedCornerShape(14.dp),
                 visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
                 trailingIcon = { IconButton(onClick = { showKey = !showKey }) { Icon(if (showKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, "toggle key") } },
                 modifier = Modifier.fillMaxWidth())
             OutlinedTextField(model, { model = it }, label = { Text("Model (text)") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(vision, { vision = it }, label = { Text("Vision model (for images)") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
             OutlinedTextField(sys, { sys = it }, label = { Text("System prompt (optional)") }, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+            Text("IMAGE / VISION", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            Text("Groq vision keeps breaking. For reliable free image replies use Google Gemini — get a free key at aistudio.google.com, tap below, paste the key, Save.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            FilledTonalButton(onClick = {
+                visionUrl = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+                vision = "gemini-2.0-flash"
+                Toast.makeText(ctx, "Gemini filled — paste Vision API key & Save", Toast.LENGTH_LONG).show()
+            }) { Text("Use Gemini for images (free)") }
+            OutlinedTextField(vision, { vision = it }, label = { Text("Vision model (for images)") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(visionUrl, { visionUrl = it }, label = { Text("Vision API URL (optional)") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(visionKey, { visionKey = it }, label = { Text("Vision API key (optional)") }, singleLine = true, shape = RoundedCornerShape(14.dp),
+                visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+            Text("Leave Vision URL/key empty to use the main (Groq) API for images.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            FilledTonalButton(onClick = { saveApi() }, modifier = Modifier.align(Alignment.End)) { Text("Save") }
         }
     }
 }

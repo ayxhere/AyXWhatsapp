@@ -40,6 +40,8 @@ object GatewayClient {
         val aiReplyVoice: Boolean = false,
         val aiReplyImage: Boolean = false,
         val aiVisionModel: String = "",
+        val aiVisionApiUrl: String = "",
+        val aiVisionApiKey: String = "",
         val aiReplyLang: String = "",
     )
     data class Contact(val jid: String, val name: String, val number: String)
@@ -349,6 +351,8 @@ object GatewayClient {
             aiReplyVoice = o.optBoolean("aiReplyVoice", false),
             aiReplyImage = o.optBoolean("aiReplyImage", false),
             aiVisionModel = o.optString("aiVisionModel", ""),
+            aiVisionApiUrl = o.optString("aiVisionApiUrl", ""),
+            aiVisionApiKey = o.optString("aiVisionApiKey", ""),
             aiReplyLang = o.optString("aiReplyLang", ""),
         )
     }

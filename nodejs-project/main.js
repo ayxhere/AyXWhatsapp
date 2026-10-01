@@ -57,7 +57,9 @@ let settings = {
   aiExcludeJids: [],   // chats where NO auto-reply / AI reply is sent ("reply nothing to this person")
   aiReplyVoice: false, // transcribe incoming voice notes (Groq Whisper) then AI-reply
   aiReplyImage: false, // "look at" incoming images (vision model) then AI-reply
-  aiVisionModel: 'meta-llama/llama-4-scout-17b-16e-instruct', // Groq multimodal model for images
+  aiVisionModel: 'meta-llama/llama-4-scout-17b-16e-instruct', // multimodal model for images
+  aiVisionApiUrl: '', // optional separate provider for images (e.g. Gemini free); empty = use main (Groq) API
+  aiVisionApiKey: '',
   aiReplyLang: 'Reply in Roman Hindi (Hinglish). If they write Bangla, reply in Roman Bangla. ALWAYS use Latin/English letters — never Devanagari or Bangla script. Mirror the sender language.',
 }
 
@@ -359,7 +361,11 @@ const VISION_FALLBACKS = [
 // Tries the configured model, then falls back through the known IDs until one works (so a
 // deprecated/renamed model ID doesn't silently kill image replies).
 async function visionReply(jid, name, caption) {
-  if (!settings.aiApiKey) return null
+  // image can use a SEPARATE provider (e.g. Google Gemini free) — falls back to the main (Groq) API if not set
+  const vUrl = (settings.aiVisionApiUrl && settings.aiVisionApiUrl.trim()) || settings.aiApiUrl
+  const vKey = (settings.aiVisionApiKey && settings.aiVisionApiKey.trim()) || settings.aiApiKey
+  const dedicated = !!(settings.aiVisionApiUrl && settings.aiVisionApiUrl.trim())
+  if (!vUrl || !vKey) return null
   try {
     const p = path.join(MEDIA_DIR, name)
     if (!fs.existsSync(p)) return null
@@ -370,14 +376,16 @@ async function visionReply(jid, name, caption) {
     const cap = caption && caption.trim() ? caption.trim() : 'reply to this image'
     const userText = cap
     const dataUrl = 'data:image/jpeg;base64,' + b64
+    // dedicated provider (Gemini etc.): use ONLY its model. Groq: try the configured model + known Groq fallbacks.
+    const models = dedicated ? [settings.aiVisionModel || 'gemini-2.0-flash'] : [settings.aiVisionModel, ...VISION_FALLBACKS]
     const tried = new Set()
-    for (const model of [settings.aiVisionModel, ...VISION_FALLBACKS]) {
+    for (const model of models) {
       if (!model || tried.has(model)) continue
       tried.add(model)
       try {
-        const res = await fetch(settings.aiApiUrl, {
+        const res = await fetch(vUrl, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + settings.aiApiKey },
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + vKey },
           body: JSON.stringify({
             model,
             messages: [
@@ -1356,6 +1364,8 @@ app.post('/settings', (req, res) => {
   if (typeof b.aiReplyVoice === 'boolean') settings.aiReplyVoice = b.aiReplyVoice
   if (typeof b.aiReplyImage === 'boolean') settings.aiReplyImage = b.aiReplyImage
   if (typeof b.aiVisionModel === 'string') settings.aiVisionModel = b.aiVisionModel
+  if (typeof b.aiVisionApiUrl === 'string') settings.aiVisionApiUrl = b.aiVisionApiUrl
+  if (typeof b.aiVisionApiKey === 'string') settings.aiVisionApiKey = b.aiVisionApiKey
   if (typeof b.aiReplyLang === 'string') settings.aiReplyLang = b.aiReplyLang
   saveSettings(); applyPresence()
   res.json(settings)
