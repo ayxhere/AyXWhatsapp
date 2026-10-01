@@ -69,6 +69,7 @@ let settings = {
   aiCommandsEnabled: true, // /create (make image) and /prompt (describe image as a prompt)
   aiVoiceNoteReply: false, // reply to incoming voice notes WITH a voice note (TTS)
   aiTtsVoice: 'hi-IN-SwaraNeural', // Edge neural voice (free, no key); falls back to Polly if Edge is blocked
+  aiFullContext: true, // forward the real recent conversation (both sides) to the AI every reply
   aiLangMode: 'auto', // auto | hinglish | bangla | english | hindi | banglascript | custom  (forces ONE reply language)
   aiReplyLang: 'Reply in Roman Hindi (Hinglish). If they write Bangla, reply in Roman Bangla. ALWAYS use Latin/English letters — never Devanagari or Bangla script. Mirror the sender language.',
 }
@@ -109,6 +110,21 @@ function histMsgs(jid, n) {
   const arr = chatHistory.get(jid) || []
   const slice = n ? arr.slice(-n) : arr
   return slice.map(h => ({ role: h.role, content: h.content }))
+}
+// Build the REAL conversation for this chat from the full message log (both sides), newest-first store
+// reversed to chronological order. This is what we forward to the AI so replies use real context,
+// not generic lines. Falls back to the AI-turn history if the log is empty.
+function fullChatContext(jid, n) {
+  const out = []
+  for (const e of msgLog) {           // msgLog is newest-first
+    if (!e || e.chat !== jid) continue
+    const t = (e.text || '').trim()
+    if (!t) continue
+    out.push({ role: e.fromMe ? 'assistant' : 'user', content: t })
+    if (out.length >= (n || 16)) break
+  }
+  out.reverse()                        // chronological (oldest -> newest)
+  return out.length ? out : histMsgs(jid, n)
 }
 
 // ---- AI Memory: per-contact chat logs + who they are, persisted so it survives restarts ----
@@ -337,8 +353,9 @@ function langRule() {
 function sysWith(base) {
   const lang = 'LANGUAGE RULE (MUST follow for every reply): ' + langRule()
   const noRefuse = 'You are a real human chatting on WhatsApp, never an AI/bot/assistant. Never refuse, never apologize, never say "I can\'t help" or "I\'m sorry". Always answer in character, short and casual.'
+  const ctx = 'The messages above are the real recent conversation with this person (their lines = user, your past lines = assistant). READ them and reply to the LAST message specifically, using that context. Do NOT give generic replies like "haan dekh liya" — actually answer what they said. If they refer to an earlier message, use it.'
   const persona = (settings.aiSystemPrompt && settings.aiSystemPrompt.trim()) ? settings.aiSystemPrompt.trim() : (base || '')
-  return [lang, noRefuse, persona].filter(Boolean).join('\n\n')
+  return [lang, noRefuse, ctx, persona].filter(Boolean).join('\n\n')
 }
 function looksRefusal(t) {
   const s = (t || '').toLowerCase()
@@ -374,7 +391,8 @@ function contactContext(jid) {
 async function aiReply(jid, force) {
   // force = called from voice/image path, which has its own enable toggle (don't require the master text toggle)
   if ((!force && !settings.aiReplyEnabled) || !settings.aiApiUrl || !settings.aiApiKey) return null
-  const history = histMsgs(jid)
+  // forward the REAL recent conversation (both sides) so Groq replies in context, not generic
+  const history = (settings.aiFullContext === false) ? histMsgs(jid) : fullChatContext(jid, 18)
   const model = settings.aiModel || 'openai/gpt-oss-20b'
   const sys = sysWith() + contactContext(jid)
   let out = await chatComplete(model, [{ role: 'system', content: sys }, ...history])
@@ -394,7 +412,7 @@ function incGroupDaily(jid) { const d = _today(); const e = groupDaily.get(jid);
 
 async function groupAiReply(jid) {
   if (!settings.aiApiUrl || !settings.aiApiKey) return null
-  const history = histMsgs(jid, 9)
+  const history = (settings.aiFullContext === false) ? histMsgs(jid, 9) : fullChatContext(jid, 12)
   const sys = sysWith('You are a friendly, witty member of a WhatsApp group chat. Reply briefly and naturally like a real person, in 1-2 short lines. Be relevant to what was just said, warm and casual.')
   try {
     const res = await fetch(settings.aiApiUrl, {
@@ -1821,6 +1839,7 @@ app.post('/settings', (req, res) => {
   if (typeof b.aiCommandsEnabled === 'boolean') settings.aiCommandsEnabled = b.aiCommandsEnabled
   if (typeof b.aiVoiceNoteReply === 'boolean') settings.aiVoiceNoteReply = b.aiVoiceNoteReply
   if (typeof b.aiTtsVoice === 'string') settings.aiTtsVoice = b.aiTtsVoice
+  if (typeof b.aiFullContext === 'boolean') settings.aiFullContext = b.aiFullContext
   if (typeof b.aiLangMode === 'string') settings.aiLangMode = b.aiLangMode
   if (typeof b.aiReplyLang === 'string') settings.aiReplyLang = b.aiReplyLang
   saveSettings(); applyPresence()

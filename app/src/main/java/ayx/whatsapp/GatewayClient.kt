@@ -51,6 +51,7 @@ object GatewayClient {
         val aiVoiceNoteReply: Boolean = false,
         val aiTtsVoice: String = "hi-IN-SwaraNeural",
         val aiLangMode: String = "auto",
+        val aiFullContext: Boolean = true,
         val aiReplyLang: String = "",
     )
     data class Contact(val jid: String, val name: String, val number: String)
@@ -415,6 +416,7 @@ object GatewayClient {
             aiVoiceNoteReply = o.optBoolean("aiVoiceNoteReply", false),
             aiTtsVoice = o.optString("aiTtsVoice", "hi-IN-SwaraNeural"),
             aiLangMode = o.optString("aiLangMode", "auto"),
+            aiFullContext = o.optBoolean("aiFullContext", true),
             aiReplyLang = o.optString("aiReplyLang", ""),
         )
     }

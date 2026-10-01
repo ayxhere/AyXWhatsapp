@@ -2113,6 +2113,9 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
         ActionRow(Icons.Filled.Memory, CAT_AI, "AI Memory", "Har contact ki chat history, naam & language") { onOpenMemory() }
     }
 
+    // Chat Forward — send real conversation context to the AI (cf.kt)
+    ChatForwardSettings(settings, onToggle)
+
     // Voice-note reply — reply to incoming voice notes WITH a soft human voice note (free, no key)
     SettingsGroup("Voice note reply") {
         SettingRow(Icons.Filled.GraphicEq, Color(0xFF4DD0C4), "Reply with a voice note", "When someone sends a voice note, reply back in a real voice note (needs \"Voice reply\" on) — free, no API key", settings.aiVoiceNoteReply) { onToggle(JSONObject().put("aiVoiceNoteReply", it)) }
