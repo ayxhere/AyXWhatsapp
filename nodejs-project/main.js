@@ -323,33 +323,52 @@ async function transcribeMedia(name) {
   } catch (e) { log('stt err', e?.message); return null }
 }
 
+// Known Groq multimodal model IDs to fall back through (Groq rotates these; the configured one is tried first).
+const VISION_FALLBACKS = [
+  'meta-llama/llama-4-scout-17b-16e-instruct',
+  'meta-llama/llama-4-maverick-17b-128e-instruct',
+  'llama-3.2-90b-vision-preview',
+  'llama-3.2-11b-vision-preview',
+]
 // Vision: send a saved image + caption to a multimodal model and get a natural reply.
+// Tries the configured model, then falls back through the known IDs until one works (so a
+// deprecated/renamed model ID doesn't silently kill image replies).
 async function visionReply(jid, name, caption) {
   if (!settings.aiApiKey) return null
   try {
     const p = path.join(MEDIA_DIR, name)
     if (!fs.existsSync(p)) return null
     const b64 = fs.readFileSync(p).toString('base64')
-    const sys = settings.aiSystemPrompt || 'You are a friendly WhatsApp chat partner. Look at the image and reply briefly and naturally like a real person, in the same language the user uses. Never say you are an AI.'
-    const userText = caption && caption.trim() ? caption.trim() : 'Reply naturally to this image.'
-    const res = await fetch(settings.aiApiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + settings.aiApiKey },
-      body: JSON.stringify({
-        model: settings.aiVisionModel || 'meta-llama/llama-4-scout-17b-16e-instruct',
-        messages: [
-          { role: 'system', content: sys },
-          { role: 'user', content: [
-            { type: 'text', text: userText },
-            { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,' + b64 } },
-          ] },
-        ],
-      }),
-    })
-    if (!res.ok) { log('vision http', res.status, (await res.text()).slice(0, 200)); return null }
-    const data = await res.json()
-    const out = data?.choices?.[0]?.message?.content
-    return out ? String(out).trim() : null
+    const sys = settings.aiSystemPrompt || 'You are a friendly WhatsApp chat partner. Look at the image and reply briefly and naturally like a real person, in the same language the user uses (always in Latin/Roman letters). Never say you are an AI.'
+    const userText = caption && caption.trim() ? caption.trim() : 'Reply naturally to this image, in your usual chat style.'
+    const dataUrl = 'data:image/jpeg;base64,' + b64
+    const tried = new Set()
+    for (const model of [settings.aiVisionModel, ...VISION_FALLBACKS]) {
+      if (!model || tried.has(model)) continue
+      tried.add(model)
+      try {
+        const res = await fetch(settings.aiApiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + settings.aiApiKey },
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: 'system', content: sys },
+              { role: 'user', content: [
+                { type: 'text', text: userText },
+                { type: 'image_url', image_url: { url: dataUrl } },
+              ] },
+            ],
+          }),
+        })
+        if (!res.ok) { log('vision http', model, res.status, (await res.text()).slice(0, 160)); continue }
+        const data = await res.json()
+        const out = data?.choices?.[0]?.message?.content
+        if (out && String(out).trim()) { log('vision ok via', model); return String(out).trim() }
+      } catch (e) { log('vision try err', model, e?.message) }
+    }
+    log('vision: all models failed')
+    return null
   } catch (e) { log('vision err', e?.message); return null }
 }
 
