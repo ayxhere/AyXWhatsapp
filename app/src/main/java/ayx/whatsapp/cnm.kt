@@ -13,6 +13,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,6 +41,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.Icons
@@ -275,20 +277,21 @@ private val BACKUP_VOICES = listOf(
     VoiceOpt("Joanna", "Joanna", "Backup · US female"),
     VoiceOpt("Matthew", "Matthew", "Backup · US male"),
 )
-// Sarvam AI — REAL Hindi/Bangla human voices (needs a free Sarvam key). id = sarvam:<lang>:<speaker>
+// Sarvam AI bulbul:v3 — REAL Hindi/Bangla human voices (needs a free Sarvam key). id = sarvam:<lang>:<speaker>
 private val SARVAM_HINDI = listOf(
-    VoiceOpt("sarvam:hi-IN:Anushka", "Anushka", "Hindi · female 🇮🇳"),
-    VoiceOpt("sarvam:hi-IN:Vidya", "Vidya", "Hindi · female 🇮🇳"),
-    VoiceOpt("sarvam:hi-IN:Manisha", "Manisha", "Hindi · female 🇮🇳"),
-    VoiceOpt("sarvam:hi-IN:Abhilash", "Abhilash", "Hindi · male 🇮🇳"),
-    VoiceOpt("sarvam:hi-IN:Karun", "Karun", "Hindi · male 🇮🇳"),
-    VoiceOpt("sarvam:hi-IN:Arjun", "Arjun", "Hindi · male 🇮🇳"),
+    VoiceOpt("sarvam:hi-IN:priya", "Priya", "Hindi · female 🇮🇳"),
+    VoiceOpt("sarvam:hi-IN:neha", "Neha", "Hindi · female 🇮🇳"),
+    VoiceOpt("sarvam:hi-IN:ritu", "Ritu", "Hindi · female 🇮🇳"),
+    VoiceOpt("sarvam:hi-IN:pooja", "Pooja", "Hindi · female 🇮🇳"),
+    VoiceOpt("sarvam:hi-IN:aditya", "Aditya", "Hindi · male 🇮🇳"),
+    VoiceOpt("sarvam:hi-IN:rahul", "Rahul", "Hindi · male 🇮🇳"),
+    VoiceOpt("sarvam:hi-IN:dev", "Dev", "Hindi · male 🇮🇳"),
 )
 private val SARVAM_BANGLA = listOf(
-    VoiceOpt("sarvam:bn-IN:Anushka", "Anushka", "Bangla · female 🇧🇩"),
-    VoiceOpt("sarvam:bn-IN:Manisha", "Manisha", "Bangla · female 🇧🇩"),
-    VoiceOpt("sarvam:bn-IN:Abhilash", "Abhilash", "Bangla · male 🇧🇩"),
-    VoiceOpt("sarvam:bn-IN:Karun", "Karun", "Bangla · male 🇧🇩"),
+    VoiceOpt("sarvam:bn-IN:priya", "Priya", "Bangla · female 🇧🇩"),
+    VoiceOpt("sarvam:bn-IN:neha", "Neha", "Bangla · female 🇧🇩"),
+    VoiceOpt("sarvam:bn-IN:aditya", "Aditya", "Bangla · male 🇧🇩"),
+    VoiceOpt("sarvam:bn-IN:rahul", "Rahul", "Bangla · male 🇧🇩"),
 )
 
 @Composable
@@ -327,12 +330,34 @@ internal fun VoicePickerScreen(settings: GatewayClient.Settings, onToggle: (JSON
     var checking by remember { mutableStateOf(false) }
     var checkResult by remember { mutableStateOf<String?>(null) }
     var sarvamKey by remember { mutableStateOf(settings.aiSarvamKey) }
+    var replyVoice by remember { mutableStateOf(settings.aiReplyVoice) }
+    var voiceNote by remember { mutableStateOf(settings.aiVoiceNoteReply) }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Spacer(Modifier.height(6.dp))
+
+        // Voice feature switches (voice read + voice play) — moved out of AI Assistant
+        Text("VOICE REPLY", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp))
+        Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+            Column {
+                VoiceToggle(
+                    "Voice note suno + reply",
+                    "Incoming voice note transcribe karke AI reply dega",
+                    replyVoice,
+                ) { replyVoice = it; onToggle(JSONObject().put("aiReplyVoice", it)) }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                VoiceToggle(
+                    "Awaaz me reply bhejo",
+                    "Text ke bajaye asli voice note (TTS) me reply dega — upar wala ON hona chahiye",
+                    voiceNote,
+                    enabled = replyVoice,
+                ) { voiceNote = it; onToggle(JSONObject().put("aiVoiceNoteReply", it)) }
+            }
+        }
+
         Text("Voice chuno — ▶ se demo suno, phir tap karke select. AI voice-note isi awaaz me reply dega.",
             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 2.dp))
 
@@ -390,6 +415,22 @@ internal fun VoicePickerScreen(settings: GatewayClient.Settings, onToggle: (JSON
             text = { Text(checkResult ?: "") },
             confirmButton = { TextButton(onClick = { checkResult = null }) { Text("OK") } },
         )
+    }
+}
+
+@Composable
+private fun VoiceToggle(title: String, sub: String, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(enabled = enabled) { onChange(!checked) }.padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold,
+                color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f))
+            Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.width(10.dp))
+        Switch(checked = checked, onCheckedChange = { onChange(it) }, enabled = enabled)
     }
 }
 

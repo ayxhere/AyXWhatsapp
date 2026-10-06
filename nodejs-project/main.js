@@ -809,35 +809,29 @@ async function groqTts(text, voice) {
 // Sarvam AI TTS — real HINDI / BANGLA (and other Indian) human voices. Needs a free Sarvam key.
 // Returns a WAV buffer. Tries bulbul:v2 then v3 (speaker names differ between versions).
 let _sarvamErr = ''
-// Sarvam speaker names are LOWERCASE. v2 and v3 use different speaker sets, so map v2 -> a valid v3 name.
-const SARVAM_V2_TO_V3 = { anushka: 'anushka', vidya: 'vidya', manisha: 'manisha', abhilash: 'abhilash', karun: 'karun', arjun: 'arjun' }
-async function sarvamOnce(text, speaker, lang, model) {
-  const sp = String(speaker || 'anushka').toLowerCase()
-  const body = { text: text.slice(0, 480), target_language_code: lang || 'hi-IN', speaker: sp }
-  if (model) body.model = model
+// Valid Sarvam bulbul:v3 speakers (lowercase). Anything else falls back to a safe default.
+const SARVAM_V3 = ['ritu', 'roopa', 'priya', 'kavya', 'neha', 'shreya', 'pooja', 'rahul', 'amit', 'dev', 'varun', 'kabir', 'rohan', 'aditya']
+const SARVAM_MALE = /^(rahul|amit|dev|varun|kabir|rohan|aditya)$/
+async function sarvamTts(text, speaker, lang) {
+  if (!settings.aiSarvamKey) { _sarvamErr = 'no key'; return null }
+  let sp = String(speaker || 'priya').toLowerCase()
+  if (!SARVAM_V3.includes(sp)) sp = 'priya'   // guard against stale v2 names
+  const body = { text: text.slice(0, 480), target_language_code: lang || 'hi-IN', speaker: sp, model: 'bulbul:v3', pace: 1.0, output_audio_codec: 'mp3' }
   const ctrl = new AbortController(); const to = setTimeout(() => ctrl.abort(), 30000)
   try {
     const res = await fetch('https://api.sarvam.ai/text-to-speech', {
       method: 'POST', signal: ctrl.signal,
-      headers: { 'Content-Type': 'application/json', 'api-subscription-key': settings.aiSarvamKey, Authorization: 'Bearer ' + settings.aiSarvamKey },
+      headers: { 'Content-Type': 'application/json', 'api-subscription-key': settings.aiSarvamKey },
       body: JSON.stringify(body),
     })
     clearTimeout(to)
-    if (!res.ok) { _sarvamErr = (await res.text()).slice(0, 240) || ('HTTP ' + res.status); log('sarvam http', model, res.status, _sarvamErr); return null }
+    if (!res.ok) { _sarvamErr = (await res.text()).slice(0, 240) || ('HTTP ' + res.status); log('sarvam http', res.status, _sarvamErr); return null }
     const data = await res.json()
     const b64 = data && data.audios && data.audios[0]
     if (!b64) { _sarvamErr = 'empty response'; return null }
     _sarvamErr = ''
-    return Buffer.from(b64, 'base64')
+    return Buffer.from(b64, 'base64')   // MP3
   } catch (e) { clearTimeout(to); _sarvamErr = e?.message || 'err'; log('sarvam err', e?.message); return null }
-}
-async function sarvamTts(text, speaker, lang) {
-  if (!settings.aiSarvamKey) { _sarvamErr = 'no key'; return null }
-  const sp = String(speaker || 'anushka').toLowerCase()
-  let b = await sarvamOnce(text, sp, lang, 'bulbul:v2'); if (b) return b
-  b = await sarvamOnce(text, SARVAM_V2_TO_V3[sp] || sp, lang, 'bulbul:v3'); if (b) return b
-  b = await sarvamOnce(text, sp, lang, null); if (b) return b   // no model → account default
-  return null
 }
 
 // map an Edge neural voice to the closest StreamElements/Polly voice (used if Edge can't connect)
@@ -857,8 +851,8 @@ async function synthVoice(text, voice) {
   const v = voice || 'Arista-PlayAI'
   if (v.startsWith('sarvam:')) {
     // sarvam:<lang>:<speaker>  → real Hindi/Bangla human voice
-    const parts = v.split(':'); const lang = parts[1] || 'hi-IN'; const speaker = parts[2] || 'Anushka'
-    const s = await sarvamTts(text, speaker, lang); if (s) return { buf: s, mime: 'audio/wav' }
+    const parts = v.split(':'); const lang = parts[1] || 'hi-IN'; const speaker = parts[2] || 'priya'
+    const s = await sarvamTts(text, speaker, lang); if (s) return { buf: s, mime: 'audio/mpeg' }
     return null   // sarvam selected but failed → text reply (no robot)
   }
   if (/-PlayAI$/i.test(v) || /^(troy|hannah|austin)$/i.test(v)) {

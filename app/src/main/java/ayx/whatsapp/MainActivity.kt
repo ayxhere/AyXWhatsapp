@@ -1780,7 +1780,7 @@ private fun settingsTitle(page: String): String = when (page) {
     "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "about" -> "About"; "support" -> "Support Development"; else -> "Settings"
 }
 // parent page for nested back (Wallpaper under Chat Settings; Image AI / AI Memory / Voice under AI Assistant)
-private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; "voice" -> "ai"; else -> "home" }
+private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; else -> "home" }
 
 @Composable
 private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient.Settings, page: String, onPage: (String) -> Unit, wallpaperVersion: Int,
@@ -1793,7 +1793,7 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
         when (p) {
             "general" -> SettingsSubPage { GeneralSettings(settings, onToggle) }
             "autoreply" -> SettingsSubPage { AutoReplySection(settings, onToggle, onRules) }
-            "ai" -> SettingsSubPage { AiSettings(settings, onToggle, messages, dpCache, onOpenImageAi = { onPage("imageai") }, onOpenMemory = { onPage("aimemory") }, onOpenVoice = { onPage("voice") }) }
+            "ai" -> SettingsSubPage { AiSettings(settings, onToggle, messages, dpCache, onOpenImageAi = { onPage("imageai") }, onOpenMemory = { onPage("aimemory") }) }
             "imageai" -> SettingsSubPage { ImageAiSettings(settings, onToggle, ctx) }
             "aimemory" -> AiMemoryScreen()   // has its OWN scroll — must NOT be wrapped in SettingsSubPage
             "voice" -> VoicePickerScreen(settings, onToggle, ctx)
@@ -1828,6 +1828,7 @@ private fun SettingsHome(status: GatewayClient.Status, onOpen: (String) -> Unit)
         CategoryCard(Icons.Filled.Tune, CAT_GENERAL, "General", "Online, privacy and messages") { onOpen("general") }
         CategoryCard(Icons.Filled.QuestionAnswer, CAT_AUTOREPLY, "Auto-reply", "Keyword rules and automatic replies") { onOpen("autoreply") }
         CategoryCard(Icons.Filled.AutoAwesome, CAT_AI, "AI Assistant", "AI replies, groups and language") { onOpen("ai") }
+        CategoryCard(Icons.Filled.GraphicEq, Color(0xFF4DD0C4), "AI Voice", "Voice reply, voice notes & voice artists") { onOpen("voice") }
         CategoryCard(Icons.Filled.Chat, CAT_WALLPAPER, "Chat", "Wallpaper, bubble style and header") { onOpen("chat") }
         CategoryCard(Icons.Filled.Palette, CAT_APPEARANCE, "Appearance", "Theme and accent color") { onOpen("appearance") }
         CategoryCard(Icons.Filled.Info, CAT_ABOUT, "About", "App information and reset") { onOpen("about") }
@@ -2090,7 +2091,7 @@ private fun AutoReplySection(settings: GatewayClient.Settings, onToggle: (JSONOb
 }
 
 @Composable
-private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit, messages: List<GatewayClient.Msg>, dpCache: MutableMap<String, ImageBitmap?>, onOpenImageAi: () -> Unit, onOpenMemory: () -> Unit, onOpenVoice: () -> Unit) {
+private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit, messages: List<GatewayClient.Msg>, dpCache: MutableMap<String, ImageBitmap?>, onOpenImageAi: () -> Unit, onOpenMemory: () -> Unit) {
     val ctx = LocalContext.current
     var showExcludePicker by remember { mutableStateOf(false) }
     fun setExcludes(list: List<String>) { onToggle(JSONObject().put("aiExcludeJids", org.json.JSONArray(list.distinct()))) }
@@ -2101,9 +2102,8 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
     SettingsGroup("Replies") {
         SettingRow(Icons.Filled.AutoAwesome, CAT_AI, "AI reply (text)", "AI replies to every personal text chat (when no keyword rule matches)", settings.aiReplyEnabled) { onToggle(JSONObject().put("aiReplyEnabled", it)) }
         SettingRow(Icons.Filled.Image, Color(0xFFFFB26B), "Image reply", "AI looks at incoming images (vision) then swipe-replies", settings.aiReplyImage) { onToggle(JSONObject().put("aiReplyImage", it)) }
-        SettingRow(Icons.Filled.Mic, Color(0xFF4DD0C4), "Voice reply", "Transcribe incoming voice (Whisper) then AI-reply", settings.aiReplyVoice) { onToggle(JSONObject().put("aiReplyVoice", it)) }
         SettingRow(Icons.Filled.QuestionAnswer, Color(0xFFB69DF8), "Group AI reply", "Answer greetings/questions in groups (max 10/day); /ai works anytime", settings.groupAiEnabled) { onToggle(JSONObject().put("groupAiEnabled", it)) }
-        Text("Image & voice work on their own (no need for \"AI reply (text)\"). Replies come as a swipe-left quote on the exact message.",
+        Text("Image replies come as a swipe-left quote on the exact message. Voice note reply ab \"AI Voice\" settings me hai.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 2.dp, top = 2.dp, bottom = 6.dp))
     }
 
@@ -2115,12 +2115,6 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
 
     // Chat Forward — send real conversation context to the AI (cf.kt)
     ChatForwardSettings(settings, onToggle)
-
-    // Voice-note reply — reply to incoming voice notes WITH a soft human voice note (free, no key)
-    SettingsGroup("Voice note reply") {
-        SettingRow(Icons.Filled.GraphicEq, Color(0xFF4DD0C4), "Reply with a voice note", "When someone sends a voice note, reply back in a real voice note (needs \"Voice reply\" on) — free, no API key", settings.aiVoiceNoteReply) { onToggle(JSONObject().put("aiVoiceNoteReply", it)) }
-        ActionRow(Icons.Filled.GraphicEq, Color(0xFF4DD0C4), "Choose voice", "Current: ${settings.aiTtsVoice}  ·  demo & select") { onOpenVoice() }
-    }
 
     // Custom commands
     SettingsGroup("Commands") {
