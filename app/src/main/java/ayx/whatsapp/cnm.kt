@@ -38,6 +38,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -64,6 +65,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.widget.Toast
@@ -272,6 +275,21 @@ private val BACKUP_VOICES = listOf(
     VoiceOpt("Joanna", "Joanna", "Backup · US female"),
     VoiceOpt("Matthew", "Matthew", "Backup · US male"),
 )
+// Sarvam AI — REAL Hindi/Bangla human voices (needs a free Sarvam key). id = sarvam:<lang>:<speaker>
+private val SARVAM_HINDI = listOf(
+    VoiceOpt("sarvam:hi-IN:Anushka", "Anushka", "Hindi · female 🇮🇳"),
+    VoiceOpt("sarvam:hi-IN:Vidya", "Vidya", "Hindi · female 🇮🇳"),
+    VoiceOpt("sarvam:hi-IN:Manisha", "Manisha", "Hindi · female 🇮🇳"),
+    VoiceOpt("sarvam:hi-IN:Abhilash", "Abhilash", "Hindi · male 🇮🇳"),
+    VoiceOpt("sarvam:hi-IN:Karun", "Karun", "Hindi · male 🇮🇳"),
+    VoiceOpt("sarvam:hi-IN:Arjun", "Arjun", "Hindi · male 🇮🇳"),
+)
+private val SARVAM_BANGLA = listOf(
+    VoiceOpt("sarvam:bn-IN:Anushka", "Anushka", "Bangla · female 🇧🇩"),
+    VoiceOpt("sarvam:bn-IN:Manisha", "Manisha", "Bangla · female 🇧🇩"),
+    VoiceOpt("sarvam:bn-IN:Abhilash", "Abhilash", "Bangla · male 🇧🇩"),
+    VoiceOpt("sarvam:bn-IN:Karun", "Karun", "Bangla · male 🇧🇩"),
+)
 
 @Composable
 internal fun VoicePickerScreen(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit, ctx: Context) {
@@ -308,6 +326,7 @@ internal fun VoicePickerScreen(settings: GatewayClient.Settings, onToggle: (JSON
     val scope = rememberCoroutineScope()
     var checking by remember { mutableStateOf(false) }
     var checkResult by remember { mutableStateOf<String?>(null) }
+    var sarvamKey by remember { mutableStateOf(settings.aiSarvamKey) }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
@@ -316,31 +335,49 @@ internal fun VoicePickerScreen(settings: GatewayClient.Settings, onToggle: (JSON
         Spacer(Modifier.height(6.dp))
         Text("Voice chuno — ▶ se demo suno, phir tap karke select. AI voice-note isi awaaz me reply dega.",
             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 2.dp))
-        Text("English voices (neeche) teri Groq key se chalti hain — asli, alag-alag. Pehli baar ek baar console.groq.com pe PlayAI TTS ki terms accept karni pad sakti hai.",
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
         FilledTonalButton(onClick = {
             checking = true
             scope.launch {
                 val r = GatewayClient.voiceCheck(selected)
-                checkResult = if (r.optBoolean("ok", false)) "✅ Groq voice chal rahi hai! Ab koi bhi English voice select kar."
-                else (r.optString("message").ifBlank { "Groq TTS abhi nahi chala." })
+                checkResult = if (r.optBoolean("ok", false)) "✅ Voice chal rahi hai (" + r.optString("provider") + ")! Ab is voice ko select kar le."
+                else (r.optString("message").ifBlank { "Voice abhi nahi chali." })
                 checking = false
             }
         }, enabled = !checking, modifier = Modifier.fillMaxWidth()) {
-            Text(if (checking) "Checking…" else "Check Groq voice")
+            Text(if (checking) "Checking…" else "Check voice (selected)")
         }
 
-        Text("ENGLISH · FEMALE (Groq)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 4.dp))
+        // SARVAM — real Hindi/Bangla human voices (needs a free Sarvam key)
+        Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("HINDI / BANGLA — asli human (Sarvam)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text("Hindi/Bangla human voice ke liye ek free Sarvam key chahiye. sarvam.ai pe sign-up karke key copy kar, yahan paste karke Save kar.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                FilledTonalButton(onClick = { runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://dashboard.sarvam.ai")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }) { Text("Get free Sarvam key") }
+                OutlinedTextField(sarvamKey, { sarvamKey = it }, label = { Text("Sarvam API key") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    FilledTonalButton(onClick = { onToggle(JSONObject().put("aiSarvamKey", sarvamKey.trim())); Toast.makeText(ctx, "Sarvam key saved", Toast.LENGTH_SHORT).show() }) { Text("Save key") }
+                }
+            }
+        }
+
+        Text("HINDI (Sarvam)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 4.dp))
+        SARVAM_HINDI.forEach { v -> VoiceRow(v, selected == v.id, playing == v.id, loading == v.id, { demo(v.id) }, { pick(v.id) }) }
+
+        Text("BANGLA (Sarvam)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
+        SARVAM_BANGLA.forEach { v -> VoiceRow(v, selected == v.id, playing == v.id, loading == v.id, { demo(v.id) }, { pick(v.id) }) }
+
+        Text("ENGLISH · FEMALE (Groq)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
         GROQ_FEMALE.forEach { v -> VoiceRow(v, selected == v.id, playing == v.id, loading == v.id, { demo(v.id) }, { pick(v.id) }) }
 
         Text("ENGLISH · MALE (Groq)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
         GROQ_MALE.forEach { v -> VoiceRow(v, selected == v.id, playing == v.id, loading == v.id, { demo(v.id) }, { pick(v.id) }) }
 
-        Text("HINDI / BANGLA", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
+        Text("HINDI / BANGLA (no key — may not play on your network)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
         INDIC_VOICES.forEach { v -> VoiceRow(v, selected == v.id, playing == v.id, loading == v.id, { demo(v.id) }, { pick(v.id) }) }
 
-        Text("BACKUP (agar upar wale na chale)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
+        Text("BACKUP", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
         BACKUP_VOICES.forEach { v -> VoiceRow(v, selected == v.id, playing == v.id, loading == v.id, { demo(v.id) }, { pick(v.id) }) }
 
         Spacer(Modifier.height(20.dp))
@@ -349,7 +386,7 @@ internal fun VoicePickerScreen(settings: GatewayClient.Settings, onToggle: (JSON
     if (checkResult != null) {
         AlertDialog(
             onDismissRequest = { checkResult = null },
-            title = { Text("Groq voice") },
+            title = { Text("Voice check") },
             text = { Text(checkResult ?: "") },
             confirmButton = { TextButton(onClick = { checkResult = null }) { Text("OK") } },
         )

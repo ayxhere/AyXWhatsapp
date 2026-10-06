@@ -70,6 +70,7 @@ let settings = {
   aiVoiceNoteReply: false, // reply to incoming voice notes WITH a voice note (TTS)
   aiTtsVoice: 'Arista-PlayAI', // Groq PlayAI voice (uses the working Groq key) — real, varied voices
   aiTtsModel: 'playai-tts',
+  aiSarvamKey: '', // Sarvam AI key (free) — real HINDI/BANGLA human voices; empty = Sarvam voices unavailable
   aiFullContext: true, // forward the real recent conversation (both sides) to the AI every reply
   aiLangMode: 'auto', // auto | hinglish | bangla | english | hindi | banglascript | custom  (forces ONE reply language)
   aiReplyLang: 'Reply in Roman Hindi (Hinglish). If they write Bangla, reply in Roman Bangla. ALWAYS use Latin/English letters — never Devanagari or Bangla script. Mirror the sender language.',
@@ -805,6 +806,36 @@ async function groqTts(text, voice) {
   return null
 }
 
+// Sarvam AI TTS — real HINDI / BANGLA (and other Indian) human voices. Needs a free Sarvam key.
+// Returns a WAV buffer. Tries bulbul:v2 then v3 (speaker names differ between versions).
+let _sarvamErr = ''
+const SARVAM_V2_TO_V3 = { Anushka: 'anushka', Vidya: 'neha', Manisha: 'ritu', Abhilash: 'aditya', Karun: 'rahul', Arjun: 'rohan' }
+async function sarvamOnce(text, speaker, lang, model) {
+  const body = { text: text.slice(0, 1400), target_language_code: lang || 'hi-IN', speaker }
+  if (model) body.model = model
+  const ctrl = new AbortController(); const to = setTimeout(() => ctrl.abort(), 30000)
+  try {
+    const res = await fetch('https://api.sarvam.ai/text-to-speech', {
+      method: 'POST', signal: ctrl.signal,
+      headers: { 'Content-Type': 'application/json', 'api-subscription-key': settings.aiSarvamKey },
+      body: JSON.stringify(body),
+    })
+    clearTimeout(to)
+    if (!res.ok) { _sarvamErr = (await res.text()).slice(0, 240) || ('HTTP ' + res.status); log('sarvam http', model, res.status, _sarvamErr); return null }
+    const data = await res.json()
+    const b64 = data && data.audios && data.audios[0]
+    if (!b64) { _sarvamErr = 'empty response'; return null }
+    _sarvamErr = ''
+    return Buffer.from(b64, 'base64')
+  } catch (e) { clearTimeout(to); _sarvamErr = e?.message || 'err'; log('sarvam err', e?.message); return null }
+}
+async function sarvamTts(text, speaker, lang) {
+  if (!settings.aiSarvamKey) { _sarvamErr = 'no key'; return null }
+  let b = await sarvamOnce(text, speaker, lang, 'bulbul:v2'); if (b) return b
+  b = await sarvamOnce(text, SARVAM_V2_TO_V3[speaker] || 'anushka', lang, 'bulbul:v3'); if (b) return b
+  return null
+}
+
 // map an Edge neural voice to the closest StreamElements/Polly voice (used if Edge can't connect)
 function pollyFallback(voice) {
   const v = String(voice || '')
@@ -820,6 +851,12 @@ function pollyFallback(voice) {
 async function synthVoice(text, voice) {
   if (!text) return null
   const v = voice || 'Arista-PlayAI'
+  if (v.startsWith('sarvam:')) {
+    // sarvam:<lang>:<speaker>  → real Hindi/Bangla human voice
+    const parts = v.split(':'); const lang = parts[1] || 'hi-IN'; const speaker = parts[2] || 'Anushka'
+    const s = await sarvamTts(text, speaker, lang); if (s) return { buf: s, mime: 'audio/wav' }
+    return null   // sarvam selected but failed → text reply (no robot)
+  }
   if (/-PlayAI$/i.test(v) || /^(troy|hannah|austin)$/i.test(v)) {
     const g = await groqTts(text, v); if (g) return { buf: g, mime: 'audio/wav' }
   } else if (/Neural/i.test(v)) {
@@ -1819,6 +1856,14 @@ app.get('/visiontest', async (req, res) => {
 app.get('/voicecheck', async (req, res) => {
   try {
     const voice = String(req.query.voice || settings.aiTtsVoice || 'Arista-PlayAI')
+    if (voice.startsWith('sarvam:')) {
+      const parts = voice.split(':'); const lang = parts[1] || 'hi-IN'; const speaker = parts[2] || 'Anushka'
+      const sb = await sarvamTts('Namaste, ye ek voice test hai.', speaker, lang)
+      if (sb) return res.json({ ok: true, provider: 'sarvam', voice })
+      const se = String(_sarvamErr || '')
+      if (se === 'no key') return res.json({ ok: false, reason: 'nokey', message: 'Voice page me Sarvam key daal ke Save kar (free: sarvam.ai).' })
+      return res.json({ ok: false, reason: 'err', message: 'Sarvam TTS error:\n' + se.slice(0, 200) })
+    }
     const buf = await groqTts('Hi, this is a voice test.', voice)
     if (buf) return res.json({ ok: true, provider: 'groq', voice })
     const e = String(_groqTtsErr || '')
@@ -1888,6 +1933,7 @@ app.post('/settings', (req, res) => {
   if (typeof b.aiVoiceNoteReply === 'boolean') settings.aiVoiceNoteReply = b.aiVoiceNoteReply
   if (typeof b.aiTtsVoice === 'string') settings.aiTtsVoice = b.aiTtsVoice
   if (typeof b.aiTtsModel === 'string') settings.aiTtsModel = b.aiTtsModel
+  if (typeof b.aiSarvamKey === 'string') settings.aiSarvamKey = b.aiSarvamKey
   if (typeof b.aiFullContext === 'boolean') settings.aiFullContext = b.aiFullContext
   if (typeof b.aiLangMode === 'string') settings.aiLangMode = b.aiLangMode
   if (typeof b.aiReplyLang === 'string') settings.aiReplyLang = b.aiReplyLang
