@@ -2960,13 +2960,15 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
 
     var bmp by remember(st.mediaName, si, ii) { mutableStateOf<ImageBitmap?>(null) }
     var imgLoading by remember(st.mediaName, si, ii) { mutableStateOf(st.mediaName != null && st.mediaType != "video") }
-    LaunchedEffect(st.mediaName, si, ii) {
+    var reloadKey by remember(st.mediaName, si, ii) { mutableStateOf(0) }
+    var fullLoaded by remember(st.mediaName, si, ii) { mutableStateOf(false) }
+    LaunchedEffect(st.mediaName, si, ii, reloadKey) {
         val name = st.mediaName
         if (name != null && st.mediaType != "video") {
             // show thumbnail instantly so the viewer is never blank/"…"
-            bmp = decodeThumb(st.thumb)
+            if (bmp == null) bmp = decodeThumb(st.thumb)
             imgLoading = true
-            // full media may still be downloading on the gateway — retry a few times
+            // full media may still be downloading on the gateway (it re-downloads from the raw msg) — retry a few times
             var full: ImageBitmap? = null
             var tries = 0
             while (full == null && tries < 5) {
@@ -2975,7 +2977,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                 if (full == null) delay(700)
                 tries++
             }
-            if (full != null) bmp = full
+            if (full != null) { bmp = full; fullLoaded = true }
             imgLoading = false
         } else { bmp = null; imgLoading = false }
     }
@@ -3009,8 +3011,25 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                 } else if (bmp != null) {
                     Image(bmp!!, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
                     if (imgLoading) CircularProgressIndicator(Modifier.align(Alignment.Center), color = Color.White.copy(alpha = 0.7f))
+                    // only a blurry thumbnail loaded (full media was deleted) → tap to re-download, like chat media
+                    else if (!fullLoaded && st.mediaName != null) {
+                        Box(Modifier.align(Alignment.Center).clip(CircleShape).background(Color.Black.copy(alpha = 0.55f))
+                            .clickable { reloadKey++ }.padding(horizontal = 18.dp, vertical = 12.dp), contentAlignment = Alignment.Center) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Filled.Download, null, tint = Color.White); Spacer(Modifier.width(8.dp)); Text("Tap to load", color = Color.White)
+                            }
+                        }
+                    }
                 } else if (imgLoading) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Color.White) }
+                } else if (st.mediaName != null && st.mediaType != "video") {
+                    // media missing (deleted / not downloaded yet) → tap to download instead of a blank screen
+                    Box(Modifier.fillMaxSize().clickable { reloadKey++ }, contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Filled.Download, null, tint = Color.White, modifier = Modifier.size(44.dp))
+                            Spacer(Modifier.height(8.dp)); Text("Tap to download", color = Color.White)
+                        }
+                    }
                 } else {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(st.text.ifBlank { "…" }, color = Color.White, modifier = Modifier.padding(24.dp)) }
                 }

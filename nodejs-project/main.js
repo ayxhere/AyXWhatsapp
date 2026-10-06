@@ -774,29 +774,35 @@ async function googleTts(text) {
   } catch (e) { return null }
 }
 
-// Groq TTS (PlayAI) — uses the SAME Groq key that already works on this device, so it's the most reliable
-// source of real, DIFFERENT, natural voices (male & female). English voices. Returns MP3.
+// Groq TTS — uses the SAME Groq key that already works on this device, so it's the most reliable source
+// of real, DIFFERENT, human voices. Tries PlayAI (needs 1-time terms) then Orpheus (fallback). Returns MP3.
 let _groqTtsErr = ''
-async function groqTts(text, voice) {
-  if (!settings.aiApiKey) { _groqTtsErr = 'no key'; return null }
+async function groqTtsTry(text, model, voice) {
   try {
     const ctrl = new AbortController(); const to = setTimeout(() => ctrl.abort(), 30000)
     const res = await fetch(apiBase() + '/audio/speech', {
       method: 'POST', signal: ctrl.signal,
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + settings.aiApiKey },
-      body: JSON.stringify({ model: settings.aiTtsModel || 'playai-tts', voice: voice || 'Arista-PlayAI', input: text.slice(0, 900), response_format: 'mp3' }),
+      body: JSON.stringify({ model, voice, input: text.slice(0, 900), response_format: 'mp3' }),
     })
     clearTimeout(to)
-    if (!res.ok) {
-      const b = (await res.text()).slice(0, 220)
-      _groqTtsErr = (res.status === 400 && /terms/i.test(b)) ? 'terms' : (res.status + '')
-      log('groq tts http', res.status, b)
-      return null
-    }
-    _groqTtsErr = ''
+    if (!res.ok) { _groqTtsErr = (await res.text()).slice(0, 300) || ('HTTP ' + res.status); log('groq tts http', model, res.status, _groqTtsErr); return null }
     const buf = Buffer.from(await res.arrayBuffer())
-    return buf.length > 500 ? buf : null
-  } catch (e) { _groqTtsErr = e?.message || 'err'; log('groq tts err', e?.message); return null }
+    if (buf.length > 500) { _groqTtsErr = ''; return buf }
+    return null
+  } catch (e) { _groqTtsErr = e?.message || 'err'; log('groq tts err', model, e?.message); return null }
+}
+async function groqTts(text, voice) {
+  if (!settings.aiApiKey) { _groqTtsErr = 'no key'; return null }
+  const v = voice || 'Arista-PlayAI'
+  // 1) PlayAI (the main voices) — needs one-time terms acceptance on console.groq.com
+  let b = await groqTtsTry(text, settings.aiTtsModel || 'playai-tts', v)
+  if (b) return b
+  // 2) Orpheus fallback (different model — may not need terms)
+  const ov = /female|arista|celeste|deedee|gail|quinn|cheyenne|hannah/i.test(v) ? 'hannah' : 'troy'
+  b = await groqTtsTry(text, 'canopylabs/orpheus-v1-english', ov)
+  if (b) return b
+  return null
 }
 
 // map an Edge neural voice to the closest StreamElements/Polly voice (used if Edge can't connect)
@@ -808,9 +814,9 @@ function pollyFallback(voice) {
   return 'Joanna'
 }
 
-// Produce speech. Returns { buf, mime } or null.
-// PlayAI voice (…-PlayAI) → Groq TTS (works with the existing Groq key, best + varied). Edge Neural → Edge.
-// Polly name → StreamElements. Always fall back to Groq, then Google, so SOMETHING plays.
+// Produce speech. Returns { buf, mime } or null. HUMAN voices only — NO Google robot.
+// PlayAI/Orpheus → Groq (existing key, best). Neural → Edge. Polly → StreamElements.
+// If nothing human works, return null (caller sends TEXT instead — never the robot voice).
 async function synthVoice(text, voice) {
   if (!text) return null
   const v = voice || 'Arista-PlayAI'
@@ -822,9 +828,8 @@ async function synthVoice(text, voice) {
   } else {
     const se = await streamElementsTts(text, v); if (se) return { buf: se, mime: 'audio/mpeg' }
   }
-  // universal fallbacks
+  // last resort: Groq human voice (NOT Google). If this also fails, caller falls back to a text reply.
   const g2 = await groqTts(text, /-PlayAI$/i.test(v) ? v : 'Arista-PlayAI'); if (g2) return { buf: g2, mime: 'audio/mpeg' }
-  const gg = await googleTts(text); if (gg) return { buf: gg, mime: 'audio/mpeg' }
   return null
 }
 
@@ -1816,9 +1821,12 @@ app.get('/voicecheck', async (req, res) => {
     const voice = String(req.query.voice || settings.aiTtsVoice || 'Arista-PlayAI')
     const buf = await groqTts('Hi, this is a voice test.', voice)
     if (buf) return res.json({ ok: true, provider: 'groq', voice })
-    if (_groqTtsErr === 'terms') return res.json({ ok: false, reason: 'terms', message: 'Groq PlayAI TTS ke liye ek baar terms accept karni hogi: console.groq.com → Playground → TTS → Accept.' })
-    if (_groqTtsErr === 'no key') return res.json({ ok: false, reason: 'nokey', message: 'API configuration me Groq key daal ke Save kar.' })
-    return res.json({ ok: false, reason: _groqTtsErr || 'fail', message: 'Groq TTS abhi nahi chala (' + (_groqTtsErr || 'error') + '). App Google awaaz pe chala jayega.' })
+    const e = String(_groqTtsErr || '')
+    if (e === 'no key') return res.json({ ok: false, reason: 'nokey', message: 'API configuration me Groq key daal ke Save kar.' })
+    if (/terms|accept|playground\?model|has not been accepted|model_terms/i.test(e)) {
+      return res.json({ ok: false, reason: 'terms', message: 'Ek baar terms accept karni hai:\nconsole.groq.com/playground?model=playai-tts\nus page pe "Accept"/"Agree" dabao, phir dubara Check karo.' })
+    }
+    return res.json({ ok: false, reason: 'err', message: 'Groq TTS error:\n' + e.slice(0, 200) })
   } catch (e) { res.json({ ok: false, reason: 'err', message: e?.message || 'error' }) }
 })
 // Voice demo: synthesize a short sample in the chosen voice so the user can hear it before saving
