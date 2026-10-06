@@ -809,15 +809,17 @@ async function groqTts(text, voice) {
 // Sarvam AI TTS — real HINDI / BANGLA (and other Indian) human voices. Needs a free Sarvam key.
 // Returns a WAV buffer. Tries bulbul:v2 then v3 (speaker names differ between versions).
 let _sarvamErr = ''
-const SARVAM_V2_TO_V3 = { Anushka: 'anushka', Vidya: 'neha', Manisha: 'ritu', Abhilash: 'aditya', Karun: 'rahul', Arjun: 'rohan' }
+// Sarvam speaker names are LOWERCASE. v2 and v3 use different speaker sets, so map v2 -> a valid v3 name.
+const SARVAM_V2_TO_V3 = { anushka: 'anushka', vidya: 'vidya', manisha: 'manisha', abhilash: 'abhilash', karun: 'karun', arjun: 'arjun' }
 async function sarvamOnce(text, speaker, lang, model) {
-  const body = { text: text.slice(0, 1400), target_language_code: lang || 'hi-IN', speaker }
+  const sp = String(speaker || 'anushka').toLowerCase()
+  const body = { text: text.slice(0, 480), target_language_code: lang || 'hi-IN', speaker: sp }
   if (model) body.model = model
   const ctrl = new AbortController(); const to = setTimeout(() => ctrl.abort(), 30000)
   try {
     const res = await fetch('https://api.sarvam.ai/text-to-speech', {
       method: 'POST', signal: ctrl.signal,
-      headers: { 'Content-Type': 'application/json', 'api-subscription-key': settings.aiSarvamKey },
+      headers: { 'Content-Type': 'application/json', 'api-subscription-key': settings.aiSarvamKey, Authorization: 'Bearer ' + settings.aiSarvamKey },
       body: JSON.stringify(body),
     })
     clearTimeout(to)
@@ -831,8 +833,10 @@ async function sarvamOnce(text, speaker, lang, model) {
 }
 async function sarvamTts(text, speaker, lang) {
   if (!settings.aiSarvamKey) { _sarvamErr = 'no key'; return null }
-  let b = await sarvamOnce(text, speaker, lang, 'bulbul:v2'); if (b) return b
-  b = await sarvamOnce(text, SARVAM_V2_TO_V3[speaker] || 'anushka', lang, 'bulbul:v3'); if (b) return b
+  const sp = String(speaker || 'anushka').toLowerCase()
+  let b = await sarvamOnce(text, sp, lang, 'bulbul:v2'); if (b) return b
+  b = await sarvamOnce(text, SARVAM_V2_TO_V3[sp] || sp, lang, 'bulbul:v3'); if (b) return b
+  b = await sarvamOnce(text, sp, lang, null); if (b) return b   // no model → account default
   return null
 }
 
