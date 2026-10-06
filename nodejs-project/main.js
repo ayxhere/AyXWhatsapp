@@ -783,7 +783,7 @@ async function groqTtsTry(text, model, voice) {
     const res = await fetch(apiBase() + '/audio/speech', {
       method: 'POST', signal: ctrl.signal,
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + settings.aiApiKey },
-      body: JSON.stringify({ model, voice, input: text.slice(0, 900), response_format: 'mp3' }),
+      body: JSON.stringify({ model, voice, input: text.slice(0, 900), response_format: 'wav' }),
     })
     clearTimeout(to)
     if (!res.ok) { _groqTtsErr = (await res.text()).slice(0, 300) || ('HTTP ' + res.status); log('groq tts http', model, res.status, _groqTtsErr); return null }
@@ -821,7 +821,7 @@ async function synthVoice(text, voice) {
   if (!text) return null
   const v = voice || 'Arista-PlayAI'
   if (/-PlayAI$/i.test(v) || /^(troy|hannah|austin)$/i.test(v)) {
-    const g = await groqTts(text, v); if (g) return { buf: g, mime: 'audio/mpeg' }
+    const g = await groqTts(text, v); if (g) return { buf: g, mime: 'audio/wav' }
   } else if (/Neural/i.test(v)) {
     const ogg = await edgeTtsOgg(text, v); if (ogg && ogg.length > 500) return { buf: ogg, mime: 'audio/ogg; codecs=opus' }
     const se = await streamElementsTts(text, pollyFallback(v)); if (se) return { buf: se, mime: 'audio/mpeg' }
@@ -829,7 +829,7 @@ async function synthVoice(text, voice) {
     const se = await streamElementsTts(text, v); if (se) return { buf: se, mime: 'audio/mpeg' }
   }
   // last resort: Groq human voice (NOT Google). If this also fails, caller falls back to a text reply.
-  const g2 = await groqTts(text, /-PlayAI$/i.test(v) ? v : 'Arista-PlayAI'); if (g2) return { buf: g2, mime: 'audio/mpeg' }
+  const g2 = await groqTts(text, /-PlayAI$/i.test(v) ? v : 'Arista-PlayAI'); if (g2) return { buf: g2, mime: 'audio/wav' }
   return null
 }
 
