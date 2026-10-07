@@ -210,6 +210,22 @@ object GatewayClient {
         } catch (e: Exception) { false to (e.message ?: "connection error") }
     }
 
+    // AI voice status: gateway synthesizes the text and posts it as a voice-note status
+    suspend fun postVoiceStatus(text: String, audience: String, jids: List<String>): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        try {
+            val arr = org.json.JSONArray(); jids.forEach { arr.put(it) }
+            val body = JSONObject().put("text", text).put("audience", audience).put("jids", arr).toString()
+            val c = (URL("$base/status/voice").openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"; doOutput = true; connectTimeout = 4000; readTimeout = 120000
+                setRequestProperty("Content-Type", "application/json")
+            }
+            c.outputStream.use { it.write(body.toByteArray()) }
+            val txt = (if (c.responseCode in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: "{}"
+            val o = JSONObject(txt)
+            o.optBoolean("ok", false) to (if (o.optBoolean("ok", false)) ("voice status sent to " + o.optInt("recipients") + " contacts") else o.optString("error"))
+        } catch (e: Exception) { false to (e.message ?: "connection error") }
+    }
+
     suspend fun onWhatsApp(numbers: List<String>): Map<String, String?> = withContext(Dispatchers.IO) {
         try {
             val arr = org.json.JSONArray(); numbers.forEach { arr.put(it) }

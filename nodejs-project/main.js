@@ -2041,10 +2041,15 @@ app.post('/translatelines', async (req, res) => {
       ? 'You transliterate song lyrics into English (Latin) letters, keeping the SAME language and words (do NOT translate the meaning). Input is numbered lines "N| text". Return EXACTLY one line per input as "N| <transliterated>" — same numbers, same order, same count, no extra lines, no commentary.'
       : ('You translate song lyrics into ' + lang + '. Input is numbered lines "N| text". Return EXACTLY one line per input as "N| <translation>" — same numbers, same order, same count, no extra lines, no commentary.')
     const numbered = lines.map((l, i) => (i + 1) + '| ' + l).join('\n')
-    const out = await chatComplete(settings.aiModel || 'openai/gpt-oss-20b', [{ role: 'system', content: sys }, { role: 'user', content: numbered }])
+    let out = await chatComplete(settings.aiModel || 'openai/gpt-oss-20b', [{ role: 'system', content: sys }, { role: 'user', content: numbered }])
     if (!out) return res.json({ ok: false, error: 'failed' })
+    out = out.replace(/```[a-z]*\n?/gi, '').trim()   // strip any code fences
     const map = {}
-    out.split('\n').forEach(line => { const m = line.match(/^\s*(\d+)\s*\|\s?(.*)$/); if (m) map[parseInt(m[1], 10) - 1] = m[2] })
+    out.split('\n').forEach(line => {
+      // accept "N| x", "N. x", "N) x", "N: x", "N - x"
+      const m = line.match(/^\s*(\d+)\s*[|.)\:\-]\s*(.*)$/)
+      if (m && m[2] != null) map[parseInt(m[1], 10) - 1] = m[2].trim()
+    })
     const result = lines.map((l, i) => (map[i] != null && String(map[i]).trim() ? map[i] : l))
     return res.json({ ok: true, lines: result })
   } catch (e) { res.json({ ok: false, error: e && e.message ? e.message : 'error' }) }
@@ -2111,6 +2116,42 @@ app.post('/onwhatsapp', async (req, res) => {
 })
 
 // mark someone's status as seen so they get the "viewed" receipt (only called when Hide-status-view is OFF)
+// AI voice status: type text → synthesize speech → post as a voice note status
+app.post('/status/voice', async (req, res) => {
+  try {
+    if (!sock || status.connection !== 'open') return res.json({ ok: false, error: 'not connected' })
+    const text = String((req.body && req.body.text) || '').trim()
+    if (!text) return res.json({ ok: false, error: 'no text' })
+    const v = await synthVoice(text, settings.aiTtsVoice, ttsLangCode(text))
+    if (!v || !v.buf) return res.json({ ok: false, error: 'Voice generation failed — check your Sarvam/Groq key in AI Voice settings.' })
+    const audience = String((req.body && req.body.audience) || 'all')
+    const selJids = Array.isArray(req.body && req.body.jids) ? req.body.jids : []
+    const set = new Set()
+    for (const j of contacts.keys()) if (j.endsWith('@s.whatsapp.net')) set.add(j)
+    for (const m of msgLog) if (m.chat && m.chat.endsWith('@s.whatsapp.net')) set.add(m.chat)
+    const all = Array.from(set)
+    let jids
+    if (audience === 'only') jids = selJids
+    else if (audience === 'except') jids = all.filter(j => !selJids.includes(j))
+    else jids = Array.from(new Set([...all, ...selJids]))
+    try { const meJid = sock?.user?.id?.split(':')[0] + '@s.whatsapp.net'; if (meJid && !jids.includes(meJid)) jids.push(meJid) } catch (_) {}
+    const content = { audio: v.buf, mimetype: v.mime, ptt: v.ptt !== false, seconds: estSeconds(text) }
+    const r = await sock.sendMessage('status@broadcast', content, { statusJidList: jids, broadcast: true })
+    const id = (r && r.key && r.key.id) || null
+    try {
+      fs.mkdirSync(MEDIA_DIR, { recursive: true })
+      const ext = (v.mime && v.mime.includes('ogg')) ? '.ogg' : (v.mime && v.mime.includes('mpeg') ? '.mp3' : '.wav')
+      const mediaName = 'own_' + (id || Date.now()) + ext
+      fs.writeFileSync(path.join(MEDIA_DIR, mediaName), v.buf)
+      const meJid = (sock && sock.user && sock.user.id) || 'me'
+      statuses = statuses.filter(x => !(x.mine && x.id === id))
+      statuses.unshift({ sender: meJid, name: 'My Status', mine: true, id, text: text.slice(0, 120), ts: Date.now(), mediaName, mediaType: 'audio' })
+      if (statuses.length > 120) statuses.length = 120
+      saveStatusesDebounced()
+    } catch (_) {}
+    res.json({ ok: !!id, id, recipients: jids.length })
+  } catch (e) { res.json({ ok: false, error: (e && e.message) || 'failed' }) }
+})
 app.post('/status/read', async (req, res) => {
   try {
     if (!sock || status.connection !== 'open') return res.json({ ok: false, error: 'not connected' })

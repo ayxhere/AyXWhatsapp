@@ -97,11 +97,14 @@ object MediaTools {
                 val active = lyrics.lastOrNull { it.first <= tMs }
                 val lyric = active?.second ?: ""
                 val lineStart = active?.first ?: 0L
+                val nextStart = lyrics.firstOrNull { it.first > lineStart }?.first ?: (lineStart + 3000L)
+                val lineDur = (nextStart - lineStart).coerceIn(700L, 6000L)
                 val elapsed = (tMs - lineStart).coerceAtLeast(0L)
-                val animDurMs = if (animStyle == 3) 900L else 420L
-                val phase = if (animStyle == 0) 1f else (elapsed.toFloat() / animDurMs).coerceIn(0f, 1f)
+                // reveal/typewriter play out over most of the line; pop/slide/fade are quick entrances
+                val window = if (animStyle == 1 || animStyle == 4) (lineDur * 0.55f).toLong().coerceIn(700L, 2000L) else 420L
+                val phase = if (animStyle == 0) 1f else (elapsed.toFloat() / window.toFloat()).coerceIn(0f, 1f)
                 // quantize the animation phase so we only redraw a handful of times per line
-                val pq = if (animStyle != 0 && phase < 1f) (phase * 14).toInt() else 99
+                val pq = if (animStyle != 0 && phase < 1f) (phase * 18).toInt() else 99
                 val key = "$imgIdx|$lyric|$pq"
                 if (key != lastKey) {
                     composite?.recycle()
@@ -408,34 +411,83 @@ object MediaTools {
         return target
     }
 
+    private val LYRIC_ACCENT = android.graphics.Color.rgb(255, 72, 72)   // highlight word (#FF4848), like the AM template
+
+    // animStyle: 0=None, 1=Reveal (word-by-word + two-tone + pop, the good one), 2=Pop, 3=Slide, 4=Type, 5=Fade
     private fun drawComposite(base: Bitmap, lyric: String, w: Int, h: Int, yFrac: Float, scale: Float, animStyle: Int = 0, phase: Float = 1f): Bitmap {
         val bmp = base.copy(Bitmap.Config.ARGB_8888, true)
-        if (lyric.isNotBlank()) {
-            val canvas = Canvas(bmp)
-            val baseSize = h * 0.048f * scale.coerceIn(0.5f, 2.5f)
-            val p = phase.coerceIn(0f, 1f)
-            val ease = 1f - (1f - p) * (1f - p)   // ease-out
-            var alpha = 1f; var sc = 1f; var dy = 0f; var charFrac = 1f
-            when (animStyle) {
-                1 -> { alpha = ease; sc = 0.72f + 0.28f * ease }           // Pop
-                2 -> { alpha = ease; dy = (1f - ease) * baseSize * 1.1f }  // Slide up
-                3 -> { charFrac = p }                                      // Typewriter
-                4 -> { alpha = ease }                                      // Fade
-            }
+        if (lyric.isBlank()) return bmp
+        val canvas = Canvas(bmp)
+        val baseSize = h * 0.052f * scale.coerceIn(0.5f, 2.5f)
+        val p = phase.coerceIn(0f, 1f)
+        val cx = w / 2f
+        val maxW = w * 0.9f
+        val y = h * yFrac.coerceIn(0.1f, 0.92f)
+
+        if (animStyle == 1) {
+            // Word-by-word reveal, last word in accent, each new word pops in, with a long shadow.
+            val words = lyric.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+            if (words.isEmpty()) return bmp
             val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = android.graphics.Color.WHITE
-                textSize = baseSize * sc
-                textAlign = Paint.Align.CENTER
-                typeface = android.graphics.Typeface.DEFAULT_BOLD
-                setShadowLayer(10f, 0f, 3f, android.graphics.Color.argb((200 * alpha).toInt().coerceIn(0, 255), 0, 0, 0))
-                this.alpha = (255 * alpha).toInt().coerceIn(0, 255)
+                textSize = baseSize; typeface = android.graphics.Typeface.DEFAULT_BOLD; textAlign = Paint.Align.LEFT
             }
-            val shown = if (animStyle == 3) lyric.take((lyric.length * charFrac).toInt().coerceIn(0, lyric.length)) else lyric
-            if (shown.isNotBlank()) {
-                val lines = wrapText(shown, paint, w * 0.9f)
-                var y = (h * yFrac.coerceIn(0.1f, 0.92f)) + dy
-                for (line in lines.takeLast(3)) { canvas.drawText(line, w / 2f, y, paint); y += paint.textSize * 1.3f }
+            // shrink to fit the full line on one row so words hold their final positions as they appear
+            val sp0 = paint.measureText(" ")
+            val w0 = words.map { paint.measureText(it) }
+            val full0 = w0.sum() + sp0 * (words.size - 1)
+            if (full0 > maxW) paint.textSize = baseSize * (maxW / full0) * 0.98f
+            val spaceW = paint.measureText(" ")
+            val wWidths = words.map { paint.measureText(it) }
+            val lineW = wWidths.sum() + spaceW * (words.size - 1)
+            val startX = cx - lineW / 2f
+            val shown = kotlin.math.ceil(p * words.size).toInt().coerceIn(1, words.size)
+            val step = 1f / words.size
+            var x = startX
+            for (i in words.indices) {
+                if (i < shown) {
+                    val isNewest = i == shown - 1
+                    val fracIn = if (isNewest) ((p - i * step) / step).coerceIn(0f, 1f) else 1f
+                    val e = 1f - (1f - fracIn) * (1f - fracIn)
+                    val popScale = 0.55f + 0.45f * e
+                    val a = (255 * e).toInt().coerceIn(0, 255)
+                    val col = if (i == words.size - 1) LYRIC_ACCENT else android.graphics.Color.WHITE
+                    val wcx = x + wWidths[i] / 2f
+                    canvas.save(); canvas.scale(popScale, popScale, wcx, y)
+                    // mini long-shadow (offset dark copies)
+                    paint.clearShadowLayer(); paint.color = android.graphics.Color.BLACK; paint.alpha = (a * 0.45f).toInt().coerceIn(0, 255)
+                    for (s in 1..5) canvas.drawText(words[i], x + s * 1.7f, y + s * 1.7f, paint)
+                    // main word
+                    paint.color = col; paint.alpha = a
+                    paint.setShadowLayer(8f, 0f, 2f, android.graphics.Color.argb((a * 0.7f).toInt().coerceIn(0, 255), 0, 0, 0))
+                    canvas.drawText(words[i], x, y, paint)
+                    paint.alpha = 255; paint.clearShadowLayer()
+                    canvas.restore()
+                }
+                x += wWidths[i] + spaceW
             }
+            return bmp
+        }
+
+        // whole-line styles: Pop / Slide / Type / Fade
+        val ease = 1f - (1f - p) * (1f - p)
+        var alpha = 1f; var sc = 1f; var dy = 0f; var charFrac = 1f
+        when (animStyle) {
+            2 -> { alpha = ease; sc = 0.72f + 0.28f * ease }
+            3 -> { alpha = ease; dy = (1f - ease) * baseSize * 1.1f }
+            4 -> { charFrac = p }
+            5 -> { alpha = ease }
+        }
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.WHITE; textSize = baseSize * sc; textAlign = Paint.Align.CENTER
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setShadowLayer(10f, 0f, 3f, android.graphics.Color.argb((200 * alpha).toInt().coerceIn(0, 255), 0, 0, 0))
+            this.alpha = (255 * alpha).toInt().coerceIn(0, 255)
+        }
+        val showTxt = if (animStyle == 4) lyric.take((lyric.length * charFrac).toInt().coerceIn(0, lyric.length)) else lyric
+        if (showTxt.isNotBlank()) {
+            val lines = wrapText(showTxt, paint, maxW)
+            var yy = y + dy
+            for (line in lines.takeLast(3)) { canvas.drawText(line, cx, yy, paint); yy += paint.textSize * 1.3f }
         }
         return bmp
     }

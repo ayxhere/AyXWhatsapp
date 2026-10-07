@@ -570,6 +570,8 @@ fun GatewayApp() {
         pendingStatusOpen = null
     }
     var pendingStatus by remember { mutableStateOf<Pair<Uri, String>?>(null) }
+    var statusFabMenu by remember { mutableStateOf(false) }
+    var voiceStatusDlg by remember { mutableStateOf(false) }
     val statusPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
         if (uri != null) {
             val mime = ctx.contentResolver.getType(uri) ?: ""
@@ -805,7 +807,7 @@ fun GatewayApp() {
                             val outFile = File(dir, "final_$stamp.mp4")
                             val durMs = (tEnd - tStart).coerceAtLeast(3000L)
                             val ly = if (lyrics.isNotEmpty()) lyrics else runCatching { GatewayClient.getLyrics(song.title, song.artist) }.getOrDefault(emptyList())
-                            val adjusted0 = ly.filter { it.first in tStart..tEnd }.map { ((it.first - tStart - 300L).coerceAtLeast(0L)) to it.second }
+                            val adjusted0 = ly.filter { it.first in tStart..tEnd }.map { ((it.first - tStart - 450L).coerceAtLeast(0L)) to it.second }
                             // Hindi (or any) lyrics → English letters when requested
                             val adjusted = if (romanize && adjusted0.isNotEmpty()) {
                                 val rom = runCatching { GatewayClient.translateLines(adjusted0.map { it.second }, true) }.getOrDefault(adjusted0.map { it.second })
@@ -840,6 +842,36 @@ fun GatewayApp() {
                 } catch (e: Exception) { processing = null; notify("failed: " + e.message) }
             }
         }, onCancel = { pendingStatus = null })
+    }
+
+    if (voiceStatusDlg) {
+        var vtext by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { voiceStatusDlg = false },
+            shape = RoundedCornerShape(24.dp),
+            icon = { Icon(Icons.Filled.GraphicEq, null, tint = AYX_GREEN) },
+            title = { Text("AI voice status") },
+            text = {
+                Column {
+                    Text("Type a message — AI speaks it and posts it as a voice-note status.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(vtext, { vtext = it }, placeholder = { Text("Type your status…") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), maxLines = 4)
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = vtext.isNotBlank(), onClick = {
+                    val t = vtext.trim(); voiceStatusDlg = false
+                    if (t.isNotEmpty()) scope.launch {
+                        processing = "Creating voice status…"
+                        val res = GatewayClient.postVoiceStatus(t, "all", emptyList())
+                        processing = null
+                        statusResult = (if (res.first) "✅ " else "❌ ") + res.second
+                        if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) }
+                    }
+                }) { Text("Post", color = AYX_GREEN) }
+            },
+            dismissButton = { TextButton(onClick = { voiceStatusDlg = false }) { Text("Cancel") } }
+        )
     }
 
     pendingMedia?.let { pm ->
@@ -972,7 +1004,15 @@ fun GatewayApp() {
     Scaffold(
         floatingActionButton = {
             if (status.registered && openChat == null && screen == "chats") {
-                if (chatsPage == 1) FloatingActionButton(onClick = { ensureContacts(); statusPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) }) { Icon(Icons.Filled.PhotoCamera, "add status") }
+                if (chatsPage == 1) Box {
+                    FloatingActionButton(onClick = { statusFabMenu = true }) { Icon(Icons.Filled.PhotoCamera, "add status") }
+                    DropdownMenu(expanded = statusFabMenu, onDismissRequest = { statusFabMenu = false }) {
+                        DropdownMenuItem(text = { Text("Photo / Video") }, leadingIcon = { Icon(Icons.Filled.PhotoCamera, null) },
+                            onClick = { statusFabMenu = false; ensureContacts(); statusPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) })
+                        DropdownMenuItem(text = { Text("Voice status (AI)") }, leadingIcon = { Icon(Icons.Filled.GraphicEq, null) },
+                            onClick = { statusFabMenu = false; ensureContacts(); voiceStatusDlg = true })
+                    }
+                }
                 else FloatingActionButton(onClick = { screen = "newchat"; ensureContacts() }) { Icon(Icons.Filled.Add, "new chat") }
             }
         },
@@ -3170,7 +3210,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                 if (songLyrics.isNotEmpty()) {
                     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("Text anim:", color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.labelMedium)
-                        listOf("None", "Pop", "Slide", "Type", "Fade").forEachIndexed { i, lbl ->
+                        listOf("None", "Reveal", "Pop", "Slide", "Type", "Fade").forEachIndexed { i, lbl ->
                             FilterChip(selected = animStyle == i, onClick = { animStyle = i }, label = { Text(lbl) })
                         }
                     }
