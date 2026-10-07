@@ -11,8 +11,8 @@ android {
         applicationId = "ayx.whatsapp"
         minSdk = 24
         targetSdk = 34
-        versionCode = 114
-        versionName = "6.54"
+        versionCode = 115
+        versionName = "6.55"
 
         ndk {
             // Ship arm64 only for the spike (covers essentially all modern phones).
@@ -103,5 +103,6 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("com.google.zxing:core:3.5.3")   // QR generation for Support Development
+    implementation("androidx.emoji2:emoji2:1.5.0")   // consistent colour emoji (downloadable, no APK size)
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

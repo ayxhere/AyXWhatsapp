@@ -1025,22 +1025,7 @@ fun GatewayApp() {
         }
     }
 
-    // Header hides as you scroll the chats/status list (slides up), shows again on scroll up.
-    var headerVisible by remember { mutableStateOf(true) }
-    LaunchedEffect(screen, openChat, searchMode) { headerVisible = true }   // always visible when (re)entering a screen or searching
-    val homeScrollConn = remember {
-        object : NestedScrollConnection {
-            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                if (available.y < -5f) headerVisible = false        // finger up / content scrolls down → hide
-                else if (available.y > 5f) headerVisible = true     // finger down / content scrolls up → show
-                return Offset.Zero
-            }
-        }
-    }
-    val homeActive = openChat == null && screen == "chats"
-
     Scaffold(
-        modifier = if (homeActive) Modifier.nestedScroll(homeScrollConn) else Modifier,
         floatingActionButton = {
             if (status.registered && openChat == null && screen == "chats") {
                 if (chatsPage == 1) Box {
@@ -1055,13 +1040,22 @@ fun GatewayApp() {
                 else FloatingActionButton(onClick = { screen = "newchat"; ensureContacts() }) { Icon(Icons.Filled.Add, "new chat") }
             }
         },
+        bottomBar = {
+            // Bottom navigation — Home (chats) and Status. Only on the main screen.
+            if (status.registered && openChat == null && screen == "chats") {
+                NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 3.dp) {
+                    NavigationBarItem(selected = chatsPage == 0, onClick = { chatsPage = 0 },
+                        icon = { Icon(Icons.Filled.Home, "Home") }, label = { Text("Home") })
+                    NavigationBarItem(selected = chatsPage == 1, onClick = { chatsPage = 1 },
+                        icon = { Icon(Icons.Filled.DonutLarge, "Status") }, label = { Text("Status") })
+                }
+            }
+        },
         topBar = {
             // Chat screen renders edge-to-edge with its own floating glass header, so the shared app bar is drawn only off-chat.
+            // Header stays PINNED; the Home/Status navigation is the bottom bar.
             if (openChat == null) {
-            AnimatedVisibility(visible = headerVisible,
-                enter = slideInVertically { -it } + expandVertically(),
-                exit = slideOutVertically { -it } + shrinkVertically()) {
-            Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f), shadowElevation = 8.dp, tonalElevation = 2.dp,
+            Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 8.dp, tonalElevation = 2.dp,
                 shape = RoundedCornerShape(bottomStart = 26.dp, bottomEnd = 26.dp), modifier = Modifier.fillMaxWidth()) {
             CenterAlignedTopAppBar(
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
@@ -1140,10 +1134,10 @@ fun GatewayApp() {
             )
             }
             }
-            }
         }
     ) { pad ->
-        Box(Modifier.fillMaxSize()) {
+        val homeBlur by animateDpAsState(if (statusFabMenu || textStatusDlg) 16.dp else 0.dp, label = "homeblur")
+        Box(Modifier.fillMaxSize().blur(homeBlur)) {
         if (openChat != null && status.registered) {
             // ===== Edge-to-edge chat: wallpaper + messages full-bleed, floating glass header on top =====
             val ocChat = openChat!!
@@ -1217,7 +1211,7 @@ fun GatewayApp() {
                 screen == "profile" -> ProfileScreen(myJid, dpCache,
                     onPickPhoto = { profilePicPicker.launch("image/*") },
                     onSaveName = { n -> scope.launch { runCatching { GatewayClient.setProfileName(n) }.onSuccess { notify("name updated") }.onFailure { notify("name: ${it.message}") } } })
-                else -> ChatsWithStatus(messages, statuses, dpCache, searchQuery,
+                else -> ChatsWithStatus(messages, statuses, dpCache, searchQuery, chatsPage,
                     onPageChange = { chatsPage = it },
                     onLoadStatuses = { scope.launch { val fresh = GatewayClient.getStatuses(); statuses = if (fresh.isNotEmpty()) StatusData.merge(fresh) else StatusData.load() } },
                     onOpenStatus = { st ->
@@ -2141,11 +2135,11 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
 // sub-page title shown in the top app bar (single source of the back arrow)
 private fun settingsTitle(page: String): String = when (page) {
     "general" -> "General"; "autoreply" -> "Auto-reply"; "ai" -> "AI Assistant"; "chat" -> "Chat Settings"
-    "imageai" -> "Image AI"; "aimemory" -> "AI Memory"; "voice" -> "AI Voice"
+    "imageai" -> "Image AI"; "aimemory" -> "AI Memory"; "voice" -> "AI Voice"; "font" -> "Font & Emoji"
     "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "about" -> "About"; "support" -> "Support Development"; else -> "Settings"
 }
-// parent page for nested back (Wallpaper under Chat Settings; Image AI / AI Memory / Voice under AI Assistant)
-private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; else -> "home" }
+// parent page for nested back (Wallpaper under Chat Settings; Image AI / AI Memory / Voice under AI Assistant; Font under General)
+private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "general"; else -> "home" }
 
 @Composable
 private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient.Settings, page: String, onPage: (String) -> Unit, wallpaperVersion: Int,
@@ -2156,7 +2150,8 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
     // back arrow + title live in the top app bar; sub-pages have no second arrow
     AnimatedContent(targetState = page, transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(140)) }, label = "setpage") { p ->
         when (p) {
-            "general" -> SettingsSubPage { GeneralSettings(settings, onToggle) }
+            "general" -> SettingsSubPage { GeneralSettings(settings, onToggle, onOpenFont = { onPage("font") }) }
+            "font" -> SettingsSubPage { FontSettings(ctx) }
             "autoreply" -> SettingsSubPage { AutoReplySection(settings, onToggle, onRules) }
             "ai" -> SettingsSubPage { AiSettings(settings, onToggle, messages, dpCache, onOpenImageAi = { onPage("imageai") }, onOpenMemory = { onPage("aimemory") }) }
             "imageai" -> SettingsSubPage { ImageAiSettings(settings, onToggle, ctx) }
@@ -2284,8 +2279,36 @@ private fun SettingRow(icon: androidx.compose.ui.graphics.vector.ImageVector, ti
     }
 }
 
+// Dedicated Font & Emoji page (opened from General) — tap a font to apply it app-wide.
 @Composable
-private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit) {
+private fun FontSettings(ctx: Context) {
+    var current by remember { mutableStateOf(FontStore.appFont) }
+    SettingsGroup("Preview") {
+        Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+            Text("The quick brown fox 123", fontFamily = FontStore.family(ctx, current), style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(4.dp))
+            Text("Tap any font below — it applies across the whole app instantly.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+    SettingsGroup("App font") {
+        FontStore.fonts.keys.forEach { name ->
+            val fam = FontStore.family(ctx, name)
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { FontStore.chooseFont(name); current = name }.padding(horizontal = 6.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(name, Modifier.weight(1f), fontFamily = fam, style = MaterialTheme.typography.bodyLarge)
+                if (name == current) Icon(Icons.Filled.CheckCircle, "selected", tint = AYX_GREEN)
+            }
+        }
+    }
+    SettingsGroup("Emoji") {
+        Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("😀 😂 ❤️ 👍 🙏 🎉 🔥 ✨ 😎 🥳", style = MaterialTheme.typography.headlineSmall)
+            Text("Colour emoji are enabled and kept consistent across devices (downloaded on demand — no extra app size).", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit, onOpenFont: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var refreshTick by remember { mutableStateOf(0) }
@@ -2305,11 +2328,9 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
         SettingRow(Icons.Filled.PermMedia, CAT_AUTOREPLY, "Save media", "Download incoming photos/videos (needed for view, deleted media)", settings.saveMedia) { onToggle(JSONObject().put("saveMedia", it)) }
         SettingRow(Icons.AutoMirrored.Filled.ArrowForward, CAT_AI, "Forwarded tag", "Show the \"Forwarded\" label on forwarded messages", ChatStyle.showForwardTag.value) { ChatStyle.setShowForwardTag(it) }
     }
-    var showFontPicker by remember { mutableStateOf(false) }
     SettingsGroup("Appearance") {
-        ActionRow(Icons.Filled.TextFields, CAT_GENERAL, "App font", "Current: ${FontStore.appFont}  ·  changes the whole app") { showFontPicker = true }
+        ActionRow(Icons.Filled.TextFields, CAT_GENERAL, "Font & Emoji", "Current: ${FontStore.appFont}  ·  change app font & emoji") { onOpenFont() }
     }
-    if (showFontPicker) FontPickerDialog(ctx, current = FontStore.appFont, onDismiss = { showFontPicker = false }, onPick = { FontStore.chooseFont(it); showFontPicker = false })
 
     SettingsGroup("Message translation") {
         Text("Double-tap any message in a chat to translate it. Pick how it works:",
@@ -3051,35 +3072,17 @@ private fun NewChatScreen(contacts: List<DeviceContact>, loading: Boolean, dpCac
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, statuses: List<GatewayClient.StatusItem>, dpCache: MutableMap<String, ImageBitmap?>, query: String, onPageChange: (Int) -> Unit, onLoadStatuses: () -> Unit, onOpenStatus: (GatewayClient.StatusItem) -> Unit, onToggleStatusReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit) {
-    val pager = rememberPagerState(initialPage = 0) { 2 }
-    val cs = rememberCoroutineScope()
+private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, statuses: List<GatewayClient.StatusItem>, dpCache: MutableMap<String, ImageBitmap?>, query: String, page: Int, onPageChange: (Int) -> Unit, onLoadStatuses: () -> Unit, onOpenStatus: (GatewayClient.StatusItem) -> Unit, onToggleStatusReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit) {
+    val pager = rememberPagerState(initialPage = page) { 2 }
+    // bottom-nav tap (page) ↔ swipe (pager) stay in sync
+    LaunchedEffect(page) { if (pager.currentPage != page) pager.animateScrollToPage(page) }
     LaunchedEffect(pager.currentPage) {
         onPageChange(pager.currentPage)
         while (pager.currentPage == 1) { onLoadStatuses(); delay(5000) }
     }
-    Column(Modifier.fillMaxSize()) {
-        // Custom tab bar — short rounded indicator that FOLLOWS the swipe (feels responsive, no lag).
-        Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
-            Row(Modifier.fillMaxWidth().height(44.dp)) {
-                listOf("Chats", "Status").forEachIndexed { i, label ->
-                    val sel = pager.currentPage == i
-                    Box(Modifier.weight(1f).fillMaxHeight().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { cs.launch { pager.animateScrollToPage(i) } }, contentAlignment = Alignment.Center) {
-                        Text(label, color = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal)
-                    }
-                }
-            }
-            BoxWithConstraints(Modifier.fillMaxWidth().height(3.dp)) {
-                val tabW = maxWidth / 2
-                val indW = 26.dp
-                val frac = (pager.currentPage + pager.currentPageOffsetFraction).coerceIn(0f, 1f)
-                Box(Modifier.offset(x = tabW * frac + (tabW - indW) / 2).width(indW).height(3.dp).clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.primary))
-            }
-        }
-        HorizontalPager(state = pager, modifier = Modifier.weight(1f).fillMaxWidth()) { page ->
-            if (page == 0) ChatList(messages, dpCache, query, onDelete, onOpen)
-            else StatusScreen(statuses, onOpenStatus, dpCache, onToggleStatusReveal)
-        }
+    HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { pg ->
+        if (pg == 0) ChatList(messages, dpCache, query, onDelete, onOpen)
+        else StatusScreen(statuses, onOpenStatus, dpCache, onToggleStatusReveal)
     }
 }
 
