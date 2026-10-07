@@ -151,6 +151,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -201,6 +202,14 @@ private const val APP_NAME = "WhatsAyX"
 private val IOS_BLUE = Color(0xFF0A84FF)
 private val AYX_GREEN = Color(0xFF25D366)
 private val AYX_RED = Color(0xFFFF5A5A)
+
+// One shared background for ALL dialogs/sheets app-wide — a distinct, brand-tinted surface
+// (deep teal-green in dark / amoled, soft mint in light) so dialogs read apart from plain cards.
+@Composable
+internal fun dialogBg(): Color {
+    val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    return if (dark) Color(0xFF15211D) else Color(0xFFEDF5F0)
+}
 
 private const val PRIVACY_TEXT = """WA Gateway runs entirely on your device. It does not collect, sell, or send your chats, contacts, or personal data to us or any third party.
 
@@ -741,7 +750,11 @@ fun GatewayApp() {
                 }
             } else {
                 qr = null; lastQrHash = 0
-                if (!settingsLoaded) { settings = GatewayClient.getSettings(); settingsLoaded = true }
+                if (!settingsLoaded) {
+                    settings = GatewayClient.getSettings(); settingsLoaded = true
+                    // keep the download-link auto-reply fed from the encrypted AyxHere store (single source of truth)
+                    runCatching { GatewayClient.patchSettings(JSONObject().put("ayxDownloadUrl", AyxHere.githubReleases).put("ayxShareMsg", AyxHere.shareMsg)) }
+                }
                 messages = GatewayClient.getMessages()
                 optimistic.removeAll { opt -> messages.any { it.fromMe && it.chat == opt.chat && it.text == opt.text && it.ts >= opt.ts - 8000 } }
             }
@@ -762,7 +775,7 @@ fun GatewayApp() {
 
     processing?.let { msg ->
         Dialog(onDismissRequest = {}) {
-            Surface(shape = RoundedCornerShape(16.dp)) {
+            Surface(shape = RoundedCornerShape(16.dp), color = dialogBg()) {
                 Column(Modifier.padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator()
                     Spacer(Modifier.height(14.dp))
@@ -848,16 +861,39 @@ fun GatewayApp() {
 
     if (voiceStatusDlg) {
         var vtext by remember { mutableStateOf("") }
+        var previewUrl by remember { mutableStateOf<String?>(null) }   // set when the mic is tapped → AI voice preview
         AlertDialog(
             onDismissRequest = { voiceStatusDlg = false },
+            containerColor = dialogBg(),
             shape = RoundedCornerShape(24.dp),
-            icon = { Icon(Icons.Filled.GraphicEq, null, tint = AYX_GREEN) },
+            icon = { Icon(Icons.Filled.Mic, null, tint = AYX_GREEN) },
             title = { Text("AI voice status") },
             text = {
                 Column {
-                    Text("Type a message — AI speaks it and posts it as a voice-note status.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Type a message, tap the mic 🎙 to hear it in the AI voice, then post it as a voice-note status.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(vtext, { vtext = it }, placeholder = { Text("Type your status…") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), maxLines = 4)
+                    OutlinedTextField(
+                        vtext, { vtext = it },
+                        placeholder = { Text("Type your status…") },
+                        modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), maxLines = 4,
+                        trailingIcon = {
+                            // mic → generate & preview the AI voice for this text (does NOT post)
+                            IconButton(enabled = vtext.isNotBlank(), onClick = { previewUrl = GatewayClient.ttsPreviewUrl(vtext.trim(), settings.aiTtsVoice) }) {
+                                Box(Modifier.size(38.dp).background((if (vtext.isNotBlank()) AYX_GREEN else MaterialTheme.colorScheme.onSurface).copy(alpha = 0.16f), CircleShape), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Filled.Mic, "record", tint = if (vtext.isNotBlank()) AYX_GREEN else MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        })
+                    if (previewUrl != null) {
+                        Spacer(Modifier.height(12.dp))
+                        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f), modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("PREVIEW", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                                AudioPlayer(previewUrl!!, AYX_GREEN)
+                                Text("Tap ▶ to hear the AI voice before posting. Edit the text and tap 🎙 again to re-record.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
                 }
             },
             confirmButton = {
@@ -881,7 +917,7 @@ fun GatewayApp() {
         var cap by remember(uri) { mutableStateOf("") }
         var original by remember(uri) { mutableStateOf(false) }
         Dialog(onDismissRequest = { pendingMedia = null }) {
-            Surface(shape = RoundedCornerShape(16.dp)) {
+            Surface(shape = RoundedCornerShape(16.dp), color = dialogBg()) {
                 Column(Modifier.padding(16.dp).widthIn(max = 340.dp)) {
                     Text("Send " + mtype, style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(8.dp))
@@ -976,7 +1012,7 @@ fun GatewayApp() {
         var csearch by remember { mutableStateOf("") }
         LaunchedEffect(Unit) { cts = GatewayClient.getContacts() }
         Dialog(onDismissRequest = { showNewChat = false }) {
-            Surface(shape = RoundedCornerShape(16.dp)) {
+            Surface(shape = RoundedCornerShape(16.dp), color = dialogBg()) {
                 Column(Modifier.padding(16.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("New chat", style = MaterialTheme.typography.titleLarge)
                     OutlinedTextField(num, { num = it.filter(Char::isDigit) }, label = { Text("Number with country code") },
@@ -1214,6 +1250,7 @@ fun GatewayApp() {
             statusResult?.let { msg ->
                 AlertDialog(
                     onDismissRequest = { statusResult = null },
+                    containerColor = dialogBg(),
                     confirmButton = { TextButton(onClick = { statusResult = null }) { Text("OK") } },
                     title = { Text("Status upload") },
                     text = { Text(msg, style = MaterialTheme.typography.bodyMedium) }
@@ -1225,6 +1262,7 @@ fun GatewayApp() {
                 var nameInput by remember(jidForName) { mutableStateOf(saved) }
                 AlertDialog(
                     onDismissRequest = { showSetName = false },
+                    containerColor = dialogBg(),
                     shape = RoundedCornerShape(24.dp),
                     icon = { Icon(Icons.Filled.Edit, null, tint = AYX_GREEN) },
                     title = { Text("Set name") },
@@ -1290,7 +1328,7 @@ private fun ForwardPicker(messages: List<GatewayClient.Msg>, dpCache: MutableMap
     }
     val filtered = chats.filter { query.isBlank() || chatTitleOf(messages, it).contains(query, true) || it.contains(query) }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface,
+        Surface(shape = RoundedCornerShape(24.dp), color = dialogBg(),
             modifier = Modifier.fillMaxWidth(0.94f).fillMaxHeight(0.8f)) {
             Column(Modifier.fillMaxSize().padding(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1458,7 +1496,7 @@ private fun ChatActionSheet(muted: Boolean, hidden: Boolean, locked: Boolean, on
     onMute: () -> Unit, onUnmute: () -> Unit, onHide: () -> Unit, onLock: () -> Unit, onDelete: () -> Unit) {
     val onSurf = MaterialTheme.colorScheme.onSurface
     Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
+        Surface(shape = RoundedCornerShape(24.dp), color = dialogBg().copy(alpha = 0.97f),
             tonalElevation = 6.dp, shadowElevation = 12.dp,
             modifier = Modifier.fillMaxWidth().border(1.dp, onSurf.copy(alpha = 0.10f), RoundedCornerShape(24.dp))) {
             Column(Modifier.padding(vertical = 8.dp)) {
@@ -1483,7 +1521,7 @@ private fun MuteTimerDialog(onDismiss: () -> Unit, onPick: (Long) -> Unit) {
         "Permanently" to ChatFlags.MUTE_FOREVER,
     )
     Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
+        Surface(shape = RoundedCornerShape(24.dp), color = dialogBg().copy(alpha = 0.97f),
             tonalElevation = 6.dp, shadowElevation = 12.dp,
             modifier = Modifier.fillMaxWidth().border(1.dp, onSurf.copy(alpha = 0.10f), RoundedCornerShape(24.dp))) {
             Column(Modifier.padding(vertical = 8.dp)) {
@@ -1669,7 +1707,7 @@ private fun TranslateLangDialog(onDismiss: () -> Unit, onPick: (String) -> Unit)
     val langs = listOf("English", "Hindi", "Roman Hindi (Hinglish)", "Bangla", "Roman Bangla", "Spanish", "French", "Arabic", "Urdu", "Tamil", "Telugu")
     var custom by remember { mutableStateOf("") }
     Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface, tonalElevation = 6.dp, shadowElevation = 12.dp,
+        Surface(shape = RoundedCornerShape(24.dp), color = dialogBg(), tonalElevation = 6.dp, shadowElevation = 12.dp,
             modifier = Modifier.fillMaxWidth().fillMaxHeight(0.82f)) {
             Column(Modifier.padding(vertical = 8.dp)) {
                 Text("Translate messages to…", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 10.dp))
@@ -1699,7 +1737,7 @@ private fun TranslateLangDialog(onDismiss: () -> Unit, onPick: (String) -> Unit)
 @Composable
 private fun FontPickerDialog(ctx: Context, current: String, onDismiss: () -> Unit, onPick: (String) -> Unit) {
     Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface, tonalElevation = 6.dp, shadowElevation = 12.dp,
+        Surface(shape = RoundedCornerShape(24.dp), color = dialogBg(), tonalElevation = 6.dp, shadowElevation = 12.dp,
             modifier = Modifier.fillMaxWidth().fillMaxHeight(0.8f)) {
             Column(Modifier.padding(vertical = 8.dp)) {
                 Text("App font", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
@@ -1735,7 +1773,7 @@ private fun MessageActionSheet(
 ) {
     val onSurf = MaterialTheme.colorScheme.onSurface
     Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
+        Surface(shape = RoundedCornerShape(24.dp), color = dialogBg().copy(alpha = 0.97f),
             tonalElevation = 6.dp, shadowElevation = 12.dp,
             modifier = Modifier.fillMaxWidth().border(1.dp, onSurf.copy(alpha = 0.10f), RoundedCornerShape(24.dp))) {
             Column(Modifier.padding(vertical = 8.dp)) {
@@ -1780,6 +1818,7 @@ private fun EditMessageDialog(m: GatewayClient.Msg, onDismiss: () -> Unit, onSav
     var newText by remember(m.id) { mutableStateOf(m.text) }
     AlertDialog(
         onDismissRequest = onDismiss,
+        containerColor = dialogBg(),
         shape = RoundedCornerShape(24.dp),
         icon = { Icon(Icons.Filled.Edit, null, tint = AYX_GREEN) },
         title = { Text("Edit message") },
@@ -1811,6 +1850,7 @@ private fun MessageInfoDialog(m: GatewayClient.Msg, onDismiss: () -> Unit) {
     }
     AlertDialog(
         onDismissRequest = onDismiss,
+        containerColor = dialogBg(),
         shape = RoundedCornerShape(24.dp),
         icon = { Icon(Icons.Filled.Info, null, tint = AYX_GREEN) },
         title = { Text("Message info") },
@@ -2330,6 +2370,7 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
     if (confirmClearData) {
         AlertDialog(
             onDismissRequest = { confirmClearData = false },
+            containerColor = dialogBg(),
             shape = RoundedCornerShape(24.dp),
             icon = { Icon(Icons.Filled.Delete, null, tint = ERR_RED) },
             title = { Text("Clear app data?") },
@@ -2640,6 +2681,7 @@ private fun ImageAiSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
     if (testResult != null) {
         AlertDialog(
             onDismissRequest = { testResult = null },
+            containerColor = dialogBg(),
             title = { Text("Image AI test") },
             text = { Text(testResult ?: "", style = MaterialTheme.typography.bodySmall) },
             confirmButton = { TextButton(onClick = { testResult = null }) { Text("OK") } }
@@ -2825,21 +2867,6 @@ private fun SupportSettings(ctx: Context) {
         }
     }
 
-    Spacer(Modifier.height(10.dp))
-    // Get / share AyX WhatsApp (download link stays AES-encrypted in the app)
-    Text("GET AYX WHATSAPP", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
-    Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(AyxHere.howTo, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilledTonalButton(onClick = { openUrl(ctx, AyxHere.githubReleases) }, modifier = Modifier.weight(1f)) { Text("Get latest APK") }
-                FilledTonalButton(onClick = {
-                    runCatching { ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, AyxHere.shareMsg + "\n" + AyxHere.githubReleases), "Share AyX WhatsApp")) }
-                }, modifier = Modifier.weight(1f)) { Text("Share") }
-            }
-        }
-    }
-
     Spacer(Modifier.height(8.dp))
     Text(AyxHere.builtBy,
         style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2918,20 +2945,6 @@ private fun AboutSettings(ctx: Context, onLogout: () -> Unit) {
         }
     }
 
-    // How to download / share AyX WhatsApp (link stays AES-encrypted)
-    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("How to download AyX WhatsApp", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-            Text(AyxHere.howTo, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilledTonalButton(onClick = { openUrl(ctx, AyxHere.githubReleases) }, modifier = Modifier.weight(1f)) { Text("Get latest APK") }
-                FilledTonalButton(onClick = {
-                    runCatching { ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, AyxHere.shareMsg + "\n" + AyxHere.githubReleases), "Share AyX WhatsApp")) }
-                }, modifier = Modifier.weight(1f)) { Text("Share") }
-            }
-        }
-    }
-
     Text("CONNECT", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
     LinkRow(Icons.Filled.PhotoCamera, Color(0xFFFF7EB6), AyxHere.igLabel, "Instagram") { openUrl(ctx, AyxHere.igUrl) }
     LinkRow(Icons.AutoMirrored.Filled.Send, CAT_AI, AyxHere.tgLabel, "Telegram") { openUrl(ctx, AyxHere.tgUrl) }
@@ -2947,6 +2960,7 @@ private fun AboutSettings(ctx: Context, onLogout: () -> Unit) {
     }
     if (confirm) {
         AlertDialog(onDismissRequest = { confirm = false },
+            containerColor = dialogBg(),
             icon = { Icon(Icons.AutoMirrored.Filled.Logout, null, tint = ERR_RED) },
             title = { Text("Unlink this device?") },
             text = { Text("This logs out the WhatsApp session and clears local data (chats, statuses, media cache). You'll need to link again with QR or pairing code.") },
@@ -3179,17 +3193,35 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     var previewPos by remember { mutableStateOf(0L) }
     // what the preview + video actually show: romanized when the toggle is on (shown live in the preview)
     var displayLyrics by remember { mutableStateOf<List<Pair<Long, String>>>(emptyList()) }
+    var lyricBusy by remember { mutableStateOf(false) }
     LaunchedEffect(songLyrics, romanize) {
-        displayLyrics = if (romanize && songLyrics.isNotEmpty()) {
-            val rom = runCatching { GatewayClient.translateLines(songLyrics.map { it.second }, true) }.getOrNull()
-            if (rom != null && rom.size == songLyrics.size) songLyrics.mapIndexed { i, pr -> pr.first to rom[i] } else songLyrics
-        } else songLyrics
+        if (!(romanize && songLyrics.isNotEmpty())) { displayLyrics = songLyrics; lyricBusy = false; return@LaunchedEffect }
+        lyricBusy = true
+        val src = songLyrics.map { it.second }
+        val native = Regex("[\\u0900-\\u0DFF]")   // Devanagari / Bengali / Gurmukhi / Tamil … native scripts
+        var rom = runCatching { GatewayClient.translateLines(src, true) }.getOrNull()
+        // retry once if it failed or came back unchanged while native-script text is still present
+        if ((rom == null || rom == src) && src.any { native.containsMatchIn(it) }) {
+            rom = runCatching { GatewayClient.translateLines(src, true) }.getOrNull()
+        }
+        displayLyrics = if (rom != null && rom.size == songLyrics.size)
+            songLyrics.mapIndexed { i, pr -> pr.first to rom!![i].ifBlank { pr.second } }
+        else songLyrics
+        lyricBusy = false
     }
     var musicOpen by remember { mutableStateOf(false) }
     val player = remember { MediaPlayer() }
     var playing by remember { mutableStateOf(false) }
     DisposableEffect(Unit) { onDispose { runCatching { player.release() } } }
     LaunchedEffect(playing) { while (playing) { previewPos = runCatching { player.currentPosition.toLong() }.getOrDefault(previewPos); if (trimEnd > 0 && previewPos >= trimEnd) { runCatching { player.seekTo(trimStart.toInt()) }; previewPos = trimStart }; delay(90) } }
+    // when music isn't playing, gently scrub through the lyric window so the (romanized) lines are visible live in the preview
+    LaunchedEffect(displayLyrics, playing, trimStart, trimEnd) {
+        if (playing || displayLyrics.isEmpty()) return@LaunchedEffect
+        val from = trimStart
+        val to = if (trimEnd > trimStart) trimEnd else (from + 15000L)
+        previewPos = from
+        while (!playing) { delay(140); previewPos += 240; if (previewPos > to) previewPos = from }
+    }
     val audLabel = when (audience) { "except" -> "Except " + selected.size; "only" -> "Only " + selected.size; else -> "My contacts" }
     Dialog(onDismissRequest = onCancel, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize(), color = Color.Black) {
@@ -3272,21 +3304,32 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
                                     Text("Hindi / Punjabi → English letters", color = Color.White, style = MaterialTheme.typography.bodyMedium)
-                                    Text("Shows live in the preview", color = Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.labelSmall)
+                                    Text(
+                                        if (lyricBusy) "Romanizing lyrics…" else if (romanize) "Romanized — showing live in preview" else "Shows live in the preview",
+                                        color = if (lyricBusy) IOS_BLUE else Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.labelSmall)
                                 }
-                                Switch(checked = romanize, onCheckedChange = { romanize = it })
+                                if (lyricBusy) CircularProgressIndicator(Modifier.size(18.dp), color = IOS_BLUE, strokeWidth = 2.dp)
+                                else Switch(checked = romanize, onCheckedChange = { romanize = it })
                             }
                         }
                     }
                 }
-                Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(caption, { caption = it }, placeholder = { Text("Add a caption…", color = Color.White.copy(alpha = 0.6f)) }, singleLine = true, shape = RoundedCornerShape(26.dp),
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent,
-                            focusedContainerColor = Color.White.copy(alpha = 0.14f), unfocusedContainerColor = Color.White.copy(alpha = 0.14f),
+                // Caption — rounded frosted (light-blur) box, sitting ABOVE the send box
+                Box(Modifier.fillMaxWidth().padding(top = 8.dp).clip(RoundedCornerShape(24.dp))) {
+                    Box(Modifier.matchParentSize().background(Color.White.copy(alpha = 0.08f)))
+                    // soft blurred sheen → frosted-glass feel
+                    Box(Modifier.matchParentSize().blur(22.dp).background(
+                        Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.16f), Color.White.copy(alpha = 0.03f)))))
+                    OutlinedTextField(caption, { caption = it }, placeholder = { Text("Add a caption…", color = Color.White.copy(alpha = 0.6f)) }, maxLines = 3, shape = RoundedCornerShape(24.dp),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.White.copy(alpha = 0.22f), unfocusedBorderColor = Color.White.copy(alpha = 0.10f),
+                            focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
                             focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White),
-                        modifier = Modifier.weight(1f))
-                    Spacer(Modifier.width(8.dp))
-                    FilledIconButton(onClick = { onUpload(caption.trim(), audience, selected.toList(), song, trimStart, trimEnd, songLyrics, lyricY, lyricScale, animStyle, romanize) }) { Icon(Icons.AutoMirrored.Filled.Send, "upload") }
+                        modifier = Modifier.fillMaxWidth())
+                }
+                // Send box — its own row, right-aligned, below the caption
+                Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                    FilledIconButton(onClick = { onUpload(caption.trim(), audience, selected.toList(), song, trimStart, trimEnd, songLyrics, lyricY, lyricScale, animStyle, romanize) },
+                        modifier = Modifier.size(54.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = AYX_GREEN)) { Icon(Icons.AutoMirrored.Filled.Send, "upload", tint = Color.White) }
                 }
             }
         }
@@ -3305,7 +3348,7 @@ private fun AudienceSheet(contacts: List<DeviceContact>, audienceIn: String, sel
     var q by remember { mutableStateOf("") }
     val filtered = remember(contacts, q) { if (q.isBlank()) contacts else contacts.filter { it.name.contains(q, true) || it.number.contains(q) } }
     Dialog(onDismissRequest = { onDone(aud, sel) }) {
-        Surface(shape = RoundedCornerShape(16.dp)) {
+        Surface(shape = RoundedCornerShape(16.dp), color = dialogBg()) {
             Column(Modifier.padding(14.dp).heightIn(max = 560.dp)) {
                 Text("Status privacy", fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
@@ -3361,6 +3404,8 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
     LaunchedEffect(st.id, si, ii) { if (!st.mine && !st.id.isNullOrBlank()) onSeen(st) }
     var replyText by remember { mutableStateOf("") }
     var progress by remember(si, ii) { mutableStateOf(0f) }
+    var videoReady by remember(st.mediaName, si, ii) { mutableStateOf(false) }   // video prepared → drive bar from real position
+    var videoView by remember(st.mediaName, si, ii) { mutableStateOf<VideoView?>(null) }
     var confirmDelete by remember { mutableStateOf<String?>(null) }
     var showViewers by remember { mutableStateOf(false) }
     val myMine = items.first().mine
@@ -3400,6 +3445,15 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
         }
         goNext()
     }
+    // video: drive the top bar from REAL playback position so it never looks stuck
+    LaunchedEffect(videoView, videoReady, si, ii) {
+        val vv = videoView ?: return@LaunchedEffect
+        while (true) {
+            val d = runCatching { vv.duration }.getOrDefault(0)
+            if (d > 0) progress = (runCatching { vv.currentPosition }.getOrDefault(0).toFloat() / d).coerceIn(0f, 1f)
+            delay(80)
+        }
+    }
 
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize(), color = Color.Black) {
@@ -3419,9 +3473,10 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                     key(si, ii, st.mediaName) {
                         AndroidView(factory = { c -> VideoView(c).apply {
                             setVideoURI(Uri.parse(GatewayClient.mediaUrl(st.mediaName!!)))
-                            setOnPreparedListener { it.start() }
+                            setOnPreparedListener { it.start(); videoReady = true }
                             setOnCompletionListener { goNext() }
                             setOnErrorListener { _, _, _ -> goNext(); true }   // failed video -> skip instead of black screen
+                            videoView = this
                         } }, modifier = Modifier.fillMaxSize())
                     }
                 } else if (bmp != null) {
@@ -3457,9 +3512,21 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                     Box(Modifier.weight(1.6f).fillMaxHeight().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { goNext() })
                 }
                 Column(Modifier.fillMaxWidth().statusBarsPadding().padding(8.dp)) {
+                    // active segment is "loading" (→ material snake) while media is still coming in or a voice note plays
+                    val activeLoading = when (st.mediaType) {
+                        "audio" -> true                       // voice status → indeterminate snake while it plays
+                        "video" -> !videoReady                 // buffering the clip
+                        else -> imgLoading && bmp == null      // image still downloading (no thumb yet)
+                    }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                         items.indices.forEach { idx ->
-                            LinearProgressIndicator(progress = { if (idx < ii) 1f else if (idx == ii) progress else 0f }, modifier = Modifier.weight(1f).height(3.dp), color = Color.White, trackColor = Color.White.copy(alpha = 0.35f))
+                            val segMod = Modifier.weight(1f).height(3.dp).clip(RoundedCornerShape(2.dp))
+                            when {
+                                idx < ii -> LinearProgressIndicator(progress = { 1f }, modifier = segMod, color = Color.White, trackColor = Color.White.copy(alpha = 0.35f))
+                                idx == ii && activeLoading -> LinearProgressIndicator(modifier = segMod, color = Color.White, trackColor = Color.White.copy(alpha = 0.35f))   // material snake (indeterminate)
+                                idx == ii -> LinearProgressIndicator(progress = { progress }, modifier = segMod, color = Color.White, trackColor = Color.White.copy(alpha = 0.35f))
+                                else -> LinearProgressIndicator(progress = { 0f }, modifier = segMod, color = Color.White, trackColor = Color.White.copy(alpha = 0.35f))
+                            }
                         }
                     }
                     Spacer(Modifier.height(8.dp))
@@ -3493,6 +3560,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                 }
                 confirmDelete?.let { id ->
                     AlertDialog(onDismissRequest = { confirmDelete = null },
+                        containerColor = dialogBg(),
                         title = { Text("Delete status?") },
                         text = { Text("This will delete it from your WhatsApp and from this app.") },
                         confirmButton = { TextButton(onClick = { confirmDelete = null; onDeleteStatus(id); onClose() }) { Text("Delete", color = Color(0xFFFF3B30)) } },
@@ -3548,7 +3616,7 @@ private fun MusicSearchSheet(onSelect: (GatewayClient.Song) -> Unit, onClose: ()
         }
     }
     Dialog(onDismissRequest = { runCatching { player.stop() }; onClose() }) {
-        Surface(shape = RoundedCornerShape(16.dp)) {
+        Surface(shape = RoundedCornerShape(16.dp), color = dialogBg()) {
             Column(Modifier.padding(12.dp).heightIn(max = 540.dp)) {
                 Text("Add music", fontWeight = FontWeight.Bold)
                 Text("tap ▶ to preview, tap song to use", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

@@ -78,6 +78,11 @@ let settings = {
   aiFullContext: true, // forward the real recent conversation (both sides) to the AI every reply
   aiLangMode: 'auto', // auto | hinglish | bangla | english | hindi | banglascript | custom  (forces ONE reply language)
   aiReplyLang: 'Reply in Roman Hindi (Hinglish). If they write Bangla, reply in Roman Bangla. ALWAYS use Latin/English letters — never Devanagari or Bangla script. Mirror the sender language.',
+  // "How do I download AyX WhatsApp?" auto-answer. Always on (no toggle): whoever asks gets the link
+  // directly in chat. The real values are pushed from the app's encrypted AyxHere store on connect;
+  // this public releases URL is only a safe fallback so it works even before the first sync.
+  ayxDownloadUrl: 'https://github.com/ayxhere/AyXWhatsapp/releases/latest',
+  ayxShareMsg: 'AyX WhatsApp — a smarter WhatsApp with on-device AI (auto-reply, voice notes, AI status). Download the latest APK here:',
 }
 
 // stores for anti-delete + history (in-memory; reset on app restart)
@@ -325,6 +330,17 @@ function matchReply(text) {
     if (mode === 'contains' && t.includes(m)) return r.reply
   }
   return null
+}
+
+// "How do I download AyX WhatsApp?" detector. Always-on (no toggle): whoever asks in a DM gets the
+// download link sent straight back. Requires BOTH an app reference AND a download/get intent in the
+// same message, so it never fires on ordinary "download" chatter.
+function isDownloadAsk(text) {
+  const t = (text || '').toLowerCase()
+  if (!t || t.length > 300) return false
+  const mentionsApp = /\bay\s?x\b|ayx|whats\s?ay\s?x|ay\s?x\s?whats\s?app|is\s?app|ye\s?app|yeh\s?app|this\s?app|aisa\s?whats\s?app|tera\s?app|tumhara\s?app|aapka\s?app|teri\s?wali\s?app/.test(t)
+  const wantsDownload = /download|donwload|dowwnload|dowload|install|setup|\bapk\b|kaha\s?se|kahan\s?se|kaise\s?(milega|milegi|le|paa|download|install|use)|where\s?(can|do|to).{0,12}(get|download|install)|how\s?(can|do|to).{0,12}(download|install|get|use)|get\s?(the\s?)?app|link\s?(de|do|dedo|bhej|send|chahiye|plz|please)/.test(t)
+  return mentionsApp && wantsDownload
 }
 
 // OpenAI-compatible chat completion (Groq / OpenRouter / etc.)
@@ -1236,7 +1252,16 @@ async function handleMessages({ messages, type }) {
           // human-like presence: read + come online + "typing" before replying (restored to offline after)
           await presenceBefore(from, msg.key)
 
-          if (settings.aiCommandsEnabled && lc.startsWith('/create')) {
+          const dlUrl = String(settings.ayxDownloadUrl || '').trim()
+          if (text && dlUrl && isDownloadAsk(text)) {
+            // "how do I download AyX WhatsApp?" → always send the link straight back (no toggle)
+            const share = String(settings.ayxShareMsg || '').trim()
+            const body = (share ? share + '\n' : '') + dlUrl
+            pushHistory(from, 'user', text)
+            try { await sock.sendMessage(from, { text: body }, q); pushHistory(from, 'assistant', body); log('ayx download link sent') }
+            catch (e) { log('ayx link err', e?.message) }
+
+          } else if (settings.aiCommandsEnabled && lc.startsWith('/create')) {
             // /create <prompt> → free unlimited text-to-image, sent back as an image
             const prompt = cmd.slice(7).trim() || 'a beautiful creative artwork, highly detailed'
             log('cmd /create:', prompt.slice(0, 60))
@@ -1987,7 +2012,8 @@ app.get('/ttsdemo', async (req, res) => {
   try {
     const voice = String(req.query.voice || 'hi-IN-SwaraNeural')
     const text = String(req.query.text || 'Hi! This is how I will reply to your messages.')
-    const v = await synthVoice(text, voice)
+    // auto Hindi/Bangla from the text's script — so the status-voice preview matches exactly what gets posted
+    const v = await synthVoice(text, voice, ttsLangCode(text))
     if (!v || !v.buf) { res.status(502).json({ ok: false, error: 'tts failed' }); return }
     res.setHeader('Content-Type', v.mime.split(';')[0])
     res.setHeader('Cache-Control', 'no-store')
@@ -2096,6 +2122,8 @@ app.post('/settings', (req, res) => {
   if (typeof b.aiFullContext === 'boolean') settings.aiFullContext = b.aiFullContext
   if (typeof b.aiLangMode === 'string') settings.aiLangMode = b.aiLangMode
   if (typeof b.aiReplyLang === 'string') settings.aiReplyLang = b.aiReplyLang
+  if (typeof b.ayxDownloadUrl === 'string' && b.ayxDownloadUrl.trim()) settings.ayxDownloadUrl = b.ayxDownloadUrl.trim()
+  if (typeof b.ayxShareMsg === 'string' && b.ayxShareMsg.trim()) settings.ayxShareMsg = b.ayxShareMsg.trim()
   saveSettings(); applyPresence()
   res.json(settings)
 })

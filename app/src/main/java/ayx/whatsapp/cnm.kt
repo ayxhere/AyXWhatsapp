@@ -170,6 +170,7 @@ internal fun AiMemoryScreen() {
     if (confirmClearAll) {
         AlertDialog(
             onDismissRequest = { confirmClearAll = false },
+            containerColor = dialogBg(),
             title = { Text("Clear all memory?") },
             text = { Text("Saari contacts ki chat history aur saved info delete ho jayegi.") },
             confirmButton = { TextButton(onClick = { confirmClearAll = false; scope.launch { GatewayClient.clearAiMemory(""); refresh() } }) { Text("Clear all") } },
@@ -413,6 +414,7 @@ internal fun VoicePickerScreen(settings: GatewayClient.Settings, onToggle: (JSON
     if (checkResult != null) {
         AlertDialog(
             onDismissRequest = { checkResult = null },
+            containerColor = dialogBg(),
             title = { Text("Voice check") },
             text = { Text(checkResult ?: "") },
             confirmButton = { TextButton(onClick = { checkResult = null }) { Text("OK") } },

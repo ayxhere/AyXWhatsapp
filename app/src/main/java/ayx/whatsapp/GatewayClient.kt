@@ -110,6 +110,12 @@ object GatewayClient {
         "$base/ttsdemo?voice=" + java.net.URLEncoder.encode(voice, "UTF-8") +
             "&text=" + java.net.URLEncoder.encode("Hi! Main aapka assistant hoon, aise reply karunga.", "UTF-8")
 
+    /** Streamed TTS of arbitrary text in the given voice — used to PREVIEW a voice status before posting. */
+    fun ttsPreviewUrl(text: String, voice: String): String =
+        "$base/ttsdemo?voice=" + java.net.URLEncoder.encode(voice, "UTF-8") +
+            "&text=" + java.net.URLEncoder.encode(text.ifBlank { " " }, "UTF-8") +
+            "&t=" + System.currentTimeMillis()
+
     /** Check whether Groq TTS works with the current key (or needs terms acceptance). */
     suspend fun voiceCheck(voice: String): JSONObject = withContext(Dispatchers.IO) {
         try {
