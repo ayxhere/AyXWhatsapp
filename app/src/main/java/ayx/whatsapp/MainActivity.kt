@@ -1625,8 +1625,8 @@ private fun TranslateLangDialog(onDismiss: () -> Unit, onPick: (String) -> Unit)
         Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface, tonalElevation = 6.dp, shadowElevation = 12.dp,
             modifier = Modifier.fillMaxWidth().fillMaxHeight(0.82f)) {
             Column(Modifier.padding(vertical = 8.dp)) {
-                Text("Translate messages to…", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 18.dp, top = 10.dp))
-                Text("Saved as your default — change it later in Settings → General.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 18.dp, bottom = 8.dp))
+                Text("Translate messages to…", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 10.dp))
+                Text("Saved as your default — change it later in Settings → General.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 8.dp))
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                 LazyColumn(Modifier.weight(1f)) {
                     items(langs) { l ->
