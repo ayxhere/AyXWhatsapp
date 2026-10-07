@@ -100,11 +100,16 @@ object MediaTools {
                 val nextStart = lyrics.firstOrNull { it.first > lineStart }?.first ?: (lineStart + 3000L)
                 val lineDur = (nextStart - lineStart).coerceIn(700L, 6000L)
                 val elapsed = (tMs - lineStart).coerceAtLeast(0L)
-                // reveal/typewriter play out over most of the line; pop/slide/fade are quick entrances
-                val window = if (animStyle == 1 || animStyle == 4) (lineDur * 0.55f).toLong().coerceIn(700L, 2000L) else 420L
+                // Reveal (Instagram) plays across the whole line; typewriter mid-line; others quick entrances
+                val window = when (animStyle) {
+                    1 -> (lineDur * 0.82f).toLong().coerceIn(900L, 5000L)
+                    4 -> (lineDur * 0.55f).toLong().coerceIn(700L, 2000L)
+                    else -> 420L
+                }
                 val phase = if (animStyle == 0) 1f else (elapsed.toFloat() / window.toFloat()).coerceIn(0f, 1f)
-                // quantize the animation phase so we only redraw a handful of times per line
-                val pq = if (animStyle != 0 && phase < 1f) (phase * 18).toInt() else 99
+                // redraw per word for Reveal, else quantize the phase to a handful of redraws
+                val pq = if (animStyle == 1 && phase < 1f) kotlin.math.ceil(phase * lyric.trim().split(Regex("\\s+")).size).toInt()
+                         else if (animStyle != 0 && phase < 1f) (phase * 18).toInt() else 99
                 val key = "$imgIdx|$lyric|$pq"
                 if (key != lastKey) {
                     composite?.recycle()
@@ -425,46 +430,36 @@ object MediaTools {
         val y = h * yFrac.coerceIn(0.1f, 0.92f)
 
         if (animStyle == 1) {
-            // Word-by-word reveal, last word in accent, each new word pops in, with a long shadow.
-            val words = lyric.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+            // Instagram-style karaoke: words build up LEFT-aligned, wrapping + stacking downward.
+            // The newest word is grey, the rest white, UPPERCASE heavy. Works with any script.
+            val words = lyric.trim().uppercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
             if (words.isEmpty()) return bmp
             val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                textSize = baseSize; typeface = android.graphics.Typeface.DEFAULT_BOLD; textAlign = Paint.Align.LEFT
+                textSize = h * 0.056f * scale.coerceIn(0.5f, 2.0f)
+                typeface = android.graphics.Typeface.create(android.graphics.Typeface.SANS_SERIF, android.graphics.Typeface.BOLD)
+                textAlign = Paint.Align.LEFT
             }
-            // shrink to fit the full line on one row so words hold their final positions as they appear
-            val sp0 = paint.measureText(" ")
-            val w0 = words.map { paint.measureText(it) }
-            val full0 = w0.sum() + sp0 * (words.size - 1)
-            if (full0 > maxW) paint.textSize = baseSize * (maxW / full0) * 0.98f
             val spaceW = paint.measureText(" ")
-            val wWidths = words.map { paint.measureText(it) }
-            val lineW = wWidths.sum() + spaceW * (words.size - 1)
-            val startX = cx - lineW / 2f
+            val x0 = w * 0.06f
+            val maxLineW = w * 0.88f
+            val lineH = paint.textSize * 1.14f
             val shown = kotlin.math.ceil(p * words.size).toInt().coerceIn(1, words.size)
-            val step = 1f / words.size
-            var x = startX
-            for (i in words.indices) {
-                if (i < shown) {
-                    val isNewest = i == shown - 1
-                    val fracIn = if (isNewest) ((p - i * step) / step).coerceIn(0f, 1f) else 1f
-                    val e = 1f - (1f - fracIn) * (1f - fracIn)
-                    val popScale = 0.55f + 0.45f * e
-                    val a = (255 * e).toInt().coerceIn(0, 255)
-                    val col = if (i == words.size - 1) LYRIC_ACCENT else android.graphics.Color.WHITE
-                    val wcx = x + wWidths[i] / 2f
-                    canvas.save(); canvas.scale(popScale, popScale, wcx, y)
-                    // mini long-shadow (offset dark copies)
-                    paint.clearShadowLayer(); paint.color = android.graphics.Color.BLACK; paint.alpha = (a * 0.45f).toInt().coerceIn(0, 255)
-                    for (s in 1..5) canvas.drawText(words[i], x + s * 1.7f, y + s * 1.7f, paint)
-                    // main word
-                    paint.color = col; paint.alpha = a
-                    paint.setShadowLayer(8f, 0f, 2f, android.graphics.Color.argb((a * 0.7f).toInt().coerceIn(0, 255), 0, 0, 0))
-                    canvas.drawText(words[i], x, y, paint)
-                    paint.alpha = 255; paint.clearShadowLayer()
-                    canvas.restore()
-                }
-                x += wWidths[i] + spaceW
+            // greedy-wrap the shown words into rows (block grows downward as words appear)
+            val xs = FloatArray(shown); val rowOf = IntArray(shown)
+            var curX = x0; var row = 0
+            for (i in 0 until shown) {
+                val wW = paint.measureText(words[i])
+                if (curX > x0 && curX + wW > x0 + maxLineW) { row++; curX = x0 }
+                xs[i] = curX; rowOf[i] = row
+                curX += wW + spaceW
             }
+            val topY = (h * yFrac.coerceIn(0.05f, 0.9f)) + paint.textSize
+            paint.setShadowLayer(16f, 0f, 3f, android.graphics.Color.argb(185, 0, 0, 0))
+            for (i in 0 until shown) {
+                paint.color = if (i == shown - 1) android.graphics.Color.rgb(170, 170, 170) else android.graphics.Color.WHITE
+                canvas.drawText(words[i], xs[i], topY + rowOf[i] * lineH, paint)
+            }
+            paint.clearShadowLayer()
             return bmp
         }
 

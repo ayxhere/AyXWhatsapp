@@ -71,6 +71,8 @@ import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -3128,6 +3130,7 @@ private fun LinkText(text: String, color: Color) {
 }
 
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, onUpload: (String, String, List<String>, GatewayClient.Song?, Long, Long, List<Pair<Long, String>>, Float, Float, Int, Boolean) -> Unit, onCancel: () -> Unit) {
     val ctx = LocalContext.current
@@ -3140,11 +3143,19 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     var trimEnd by remember { mutableStateOf(15000L) }
     var songToTrim by remember { mutableStateOf<GatewayClient.Song?>(null) }
     var songLyrics by remember { mutableStateOf<List<Pair<Long, String>>>(emptyList()) }
-    var lyricY by remember { mutableStateOf(0.80f) }
+    var lyricY by remember { mutableStateOf(0.18f) }      // Instagram-style text sits near the top
     var lyricScale by remember { mutableStateOf(1f) }
-    var animStyle by remember { mutableStateOf(1) }       // 0=None,1=Pop,2=Slide,3=Type,4=Fade
-    var romanize by remember { mutableStateOf(false) }    // Hindi lyrics → English letters
+    var animStyle by remember { mutableStateOf(1) }       // 0=None,1=Reveal(Instagram),2=Pop,3=Slide,4=Type,5=Fade
+    var romanize by remember { mutableStateOf(false) }    // Hindi/Punjabi lyrics → English letters
     var previewPos by remember { mutableStateOf(0L) }
+    // what the preview + video actually show: romanized when the toggle is on (shown live in the preview)
+    var displayLyrics by remember { mutableStateOf<List<Pair<Long, String>>>(emptyList()) }
+    LaunchedEffect(songLyrics, romanize) {
+        displayLyrics = if (romanize && songLyrics.isNotEmpty()) {
+            val rom = runCatching { GatewayClient.translateLines(songLyrics.map { it.second }, true) }.getOrNull()
+            if (rom != null && rom.size == songLyrics.size) songLyrics.mapIndexed { i, pr -> pr.first to rom[i] } else songLyrics
+        } else songLyrics
+    }
     var musicOpen by remember { mutableStateOf(false) }
     val player = remember { MediaPlayer() }
     var playing by remember { mutableStateOf(false) }
@@ -3164,23 +3175,36 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                         val bmp = remember(uri) { runCatching { ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it)?.asImageBitmap() } }.getOrNull() }
                         if (bmp != null) Image(bmp, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) else Text("Preview unavailable", color = Color.White)
                     } else Text("Video selected", color = Color.White)
-                    if (songLyrics.isNotEmpty()) {
-                        val curLyric = songLyrics.lastOrNull { it.first <= previewPos + 300L }?.second
-                            ?: songLyrics.firstOrNull { it.first in trimStart..trimEnd }?.second ?: ""
+                    if (displayLyrics.isNotEmpty()) {
+                        val active = displayLyrics.lastOrNull { it.first <= previewPos + 200L }
+                        val line = active?.second ?: displayLyrics.firstOrNull { it.first in trimStart..trimEnd }?.second ?: ""
                         Box(Modifier.fillMaxSize().pointerInput(Unit) {
                             detectTransformGestures { _, pan, zoom, _ ->
-                                lyricY = (lyricY + pan.y / size.height.toFloat()).coerceIn(0.1f, 0.92f)
+                                lyricY = (lyricY + pan.y / size.height.toFloat()).coerceIn(0.06f, 0.9f)
                                 lyricScale = (lyricScale * zoom).coerceIn(0.5f, 2.5f)
                             }
                         }) {
-                            AnimatedContent(targetState = curLyric, transitionSpec = {
-                                (slideInVertically(tween(320)) { it / 3 } + fadeIn(tween(320)) + scaleIn(tween(320), initialScale = 0.82f)) togetherWith
-                                (slideOutVertically(tween(260)) { -it / 3 } + fadeOut(tween(200)) + scaleOut(tween(260), targetScale = 1.12f))
-                            }, label = "lyric", modifier = Modifier.align(BiasAlignment(0f, lyricY * 2f - 1f))) { lyric ->
-                                if (lyric.isNotBlank()) Text(lyric, color = Color.White, fontSize = (22f * lyricScale).sp,
-                                    fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
-                                    modifier = Modifier.padding(horizontal = 16.dp)
-                                        .background(Color.Black.copy(alpha = 0.28f), RoundedCornerShape(10.dp)).padding(horizontal = 12.dp, vertical = 5.dp))
+                            if (line.isNotBlank()) {
+                                if (animStyle == 1) {
+                                    // Instagram-style: words build left→right, newest word grey, UPPERCASE bold
+                                    val lineStart = active?.first ?: 0L
+                                    val nextStart = displayLyrics.firstOrNull { it.first > lineStart }?.first ?: (lineStart + 3000L)
+                                    val dur = (nextStart - lineStart).coerceIn(700L, 6000L)
+                                    val ph = ((previewPos - lineStart).toFloat() / (dur * 0.82f)).coerceIn(0f, 1f)
+                                    val words = line.trim().uppercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
+                                    val shown = kotlin.math.ceil(ph * words.size).toInt().coerceIn(1, words.size)
+                                    FlowRow(Modifier.align(BiasAlignment(-1f, lyricY * 2f - 1f)).fillMaxWidth(0.92f).padding(start = 16.dp, end = 8.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                                        for (i in 0 until shown) {
+                                            Text(words[i], color = if (i == shown - 1) Color(0xFFAAAAAA) else Color.White,
+                                                fontSize = (27f * lyricScale).sp, fontWeight = FontWeight.Black, lineHeight = (31f * lyricScale).sp)
+                                        }
+                                    }
+                                } else {
+                                    Text(line, color = Color.White, fontSize = (22f * lyricScale).sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
+                                        modifier = Modifier.align(BiasAlignment(0f, lyricY * 2f - 1f)).padding(horizontal = 16.dp)
+                                            .background(Color.Black.copy(alpha = 0.28f), RoundedCornerShape(10.dp)).padding(horizontal = 12.dp, vertical = 5.dp))
+                                }
                             }
                             Text("drag • pinch to resize lyrics", color = Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.labelSmall,
                                 modifier = Modifier.align(Alignment.TopCenter).padding(top = 6.dp))
@@ -3208,15 +3232,22 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                     }
                 }
                 if (songLyrics.isNotEmpty()) {
-                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("Text anim:", color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.labelMedium)
-                        listOf("None", "Reveal", "Pop", "Slide", "Type", "Fade").forEachIndexed { i, lbl ->
-                            FilterChip(selected = animStyle == i, onClick = { animStyle = i }, label = { Text(lbl) })
+                    Surface(shape = RoundedCornerShape(18.dp), color = Color.White.copy(alpha = 0.08f), modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("LYRICS STYLE", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+                            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                listOf("None", "Reveal", "Pop", "Slide", "Type", "Fade").forEachIndexed { i, lbl ->
+                                    FilterChip(selected = animStyle == i, onClick = { animStyle = i }, label = { Text(lbl) })
+                                }
+                            }
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("Hindi / Punjabi → English letters", color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                                    Text("Shows live in the preview", color = Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.labelSmall)
+                                }
+                                Switch(checked = romanize, onCheckedChange = { romanize = it })
+                            }
                         }
-                    }
-                    Row(Modifier.fillMaxWidth().padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("Hindi → English letters", color = Color.White, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                        Switch(checked = romanize, onCheckedChange = { romanize = it })
                     }
                 }
                 Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -3330,7 +3361,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
     }
     LaunchedEffect(si, ii, replyText.isBlank(), imgLoading) {
         if (replyText.isNotBlank()) return@LaunchedEffect
-        if (st.mediaType == "video") return@LaunchedEffect
+        if (st.mediaType == "video" || st.mediaType == "audio") return@LaunchedEffect   // voice/video: let it play, don't auto-advance
         if (imgLoading && bmp == null) return@LaunchedEffect   // wait for media before counting down
         progress = 0f
         val dur = 5000L; val step = 40L; var elapsed = 0L
@@ -3346,7 +3377,16 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
             Box(Modifier.fillMaxSize().pointerInput(myMine) {
                 if (myMine) { var dyAcc = 0f; detectVerticalDragGestures(onDragEnd = { if (dyAcc < -80f) showViewers = true; dyAcc = 0f }) { _, dy -> dyAcc += dy } }
             }) {
-                if (st.mediaType == "video" && st.mediaName != null) {
+                if (st.mediaType == "audio" && st.mediaName != null) {
+                    // voice status → play inline like a voice note
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
+                            Icon(Icons.Filled.GraphicEq, null, tint = Color.White, modifier = Modifier.size(56.dp))
+                            Spacer(Modifier.height(18.dp))
+                            AudioPlayer(GatewayClient.mediaUrl(st.mediaName!!), Color.White)
+                        }
+                    }
+                } else if (st.mediaType == "video" && st.mediaName != null) {
                     key(si, ii, st.mediaName) {
                         AndroidView(factory = { c -> VideoView(c).apply {
                             setVideoURI(Uri.parse(GatewayClient.mediaUrl(st.mediaName!!)))

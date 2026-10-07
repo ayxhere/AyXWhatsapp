@@ -2145,7 +2145,7 @@ app.post('/status/voice', async (req, res) => {
       fs.writeFileSync(path.join(MEDIA_DIR, mediaName), v.buf)
       const meJid = (sock && sock.user && sock.user.id) || 'me'
       statuses = statuses.filter(x => !(x.mine && x.id === id))
-      statuses.unshift({ sender: meJid, name: 'My Status', mine: true, id, text: text.slice(0, 120), ts: Date.now(), mediaName, mediaType: 'audio' })
+      statuses.unshift({ sender: meJid, name: 'My Status', mine: true, id, text: '', ts: Date.now(), mediaName, mediaType: 'audio' })
       if (statuses.length > 120) statuses.length = 120
       saveStatusesDebounced()
     } catch (_) {}
