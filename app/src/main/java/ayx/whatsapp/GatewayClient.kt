@@ -36,6 +36,7 @@ object GatewayClient {
         val aiSystemPrompt: String = "",
         val saveMedia: Boolean = false,
         val stayOffline: Boolean = false,
+        val aiPresenceFlow: Boolean = false,
         val aiExcludeJids: List<String> = emptyList(),
         val aiReplyVoice: Boolean = false,
         val aiReplyImage: Boolean = false,
@@ -141,6 +142,13 @@ object GatewayClient {
     }
     suspend fun react(jid: String, id: String, emoji: String, fromMe: Boolean) = withContext(Dispatchers.IO) {
         post("/react", JSONObject().put("jid", jid).put("id", id).put("emoji", emoji).put("fromMe", fromMe)).optBoolean("ok", false)
+    }
+    // translate (or transliterate) one message's text; returns the result text, or null on failure
+    suspend fun translate(text: String, lang: String, romanize: Boolean = false): String? = withContext(Dispatchers.IO) {
+        try {
+            val o = post("/translate", JSONObject().put("text", text).put("lang", lang).put("romanize", romanize))
+            if (o.optBoolean("ok", false)) o.optString("text").ifBlank { null } else null
+        } catch (e: Exception) { null }
     }
     data class Song(val title: String, val artist: String, val image: String?, val url: String)
     // returns synced lyrics as (timeMs, line); empty if none
@@ -412,6 +420,7 @@ object GatewayClient {
             aiSystemPrompt = o.optString("aiSystemPrompt", ""),
             saveMedia = o.optBoolean("saveMedia", false),
             stayOffline = o.optBoolean("stayOffline", false),
+            aiPresenceFlow = o.optBoolean("aiPresenceFlow", false),
             aiExcludeJids = o.optJSONArray("aiExcludeJids")?.let { a -> (0 until a.length()).map { a.optString(it) }.filter { it.isNotBlank() } } ?: emptyList(),
             aiReplyVoice = o.optBoolean("aiReplyVoice", false),
             aiReplyImage = o.optBoolean("aiReplyImage", false),

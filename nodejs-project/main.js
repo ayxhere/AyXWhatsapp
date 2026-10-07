@@ -58,6 +58,7 @@ let settings = {
   saveMedia: false,
   hideStatusRead: true,
   stayOffline: false,
+  aiPresenceFlow: false, // appear offline; for each AI reply: mark read → go online + typing → reply → go offline
   aiExcludeJids: [],   // chats where NO auto-reply / AI reply is sent ("reply nothing to this person")
   aiReplyVoice: false, // transcribe incoming voice notes (Groq Whisper) then AI-reply
   aiReplyImage: false, // "look at" incoming images (vision model) then AI-reply
@@ -956,6 +957,19 @@ function applyPresence() {
   }
 }
 
+// Human-like presence for AI replies: come online, read, "type", then go back offline after sending.
+async function presenceBefore(jid, key) {
+  if (!settings.aiPresenceFlow || !sock) return
+  try { if (key) await sock.readMessages([key]) } catch (_) {}
+  try { await sock.sendPresenceUpdate('available') } catch (_) {}
+  try { await sock.sendPresenceUpdate('composing', jid) } catch (_) {}
+}
+async function presenceAfter(jid) {
+  if (!settings.aiPresenceFlow || !sock) return
+  try { await sock.sendPresenceUpdate('paused', jid) } catch (_) {}
+  try { await sock.sendPresenceUpdate('unavailable') } catch (_) {}
+}
+
 function handleConnUpdate(u) {
   const { connection, lastDisconnect, qr } = u
   if (qr) { currentQr = qr; log('qr updated') }
@@ -1219,6 +1233,8 @@ async function handleMessages({ messages, type }) {
           touchContact(from, resolveName(msg, from), text)
           // all auto-replies are sent as a swipe-left QUOTED reply to the exact message
           const q = { quoted: msg }
+          // human-like presence: read + come online + "typing" before replying (restored to offline after)
+          await presenceBefore(from, msg.key)
 
           if (settings.aiCommandsEnabled && lc.startsWith('/create')) {
             // /create <prompt> → free unlimited text-to-image, sent back as an image
@@ -1307,6 +1323,8 @@ async function handleMessages({ messages, type }) {
               catch (e) { log('auto-reply err', e?.message) }
             }
           }
+          // done replying → go back offline (only if presence flow is on)
+          await presenceAfter(from)
         }
       }
 
@@ -1993,6 +2011,23 @@ app.post('/aimemory/clear', (req, res) => {
   saveAiMemDebounced()
   res.json({ ok: true })
 })
+// Translate one message into a target language (uses the configured text AI — Groq). If romanize is
+// set, Hindi/other-script text is rendered in English letters (transliteration) instead of translated.
+app.post('/translate', async (req, res) => {
+  try {
+    const text = String((req.body && req.body.text) || '').slice(0, 2000)
+    const lang = String((req.body && req.body.lang) || 'English')
+    const romanize = !!(req.body && req.body.romanize)
+    if (!text.trim()) return res.json({ ok: false, error: 'no text' })
+    if (!settings.aiApiUrl || !settings.aiApiKey) return res.json({ ok: false, error: 'Add a Groq key in API configuration first.' })
+    const sys = romanize
+      ? 'You are a transliteration engine. Rewrite the user message in English (Latin) letters, keeping the SAME language and words (do not translate the meaning). Output ONLY the transliterated text — no notes, keep emojis and @mentions as-is.'
+      : ('You are a translation engine. Translate the user message into ' + lang + '. Output ONLY the translation text — no quotes, no notes. Keep emojis and @mentions as-is.')
+    const out = await chatComplete(settings.aiModel || 'openai/gpt-oss-20b', [{ role: 'system', content: sys }, { role: 'user', content: text }])
+    if (out) return res.json({ ok: true, text: out })
+    return res.json({ ok: false, error: 'translation failed' })
+  } catch (e) { res.json({ ok: false, error: e && e.message ? e.message : 'error' }) }
+})
 app.post('/settings', (req, res) => {
   const b = req.body || {}
   if (typeof b.alwaysOnline === 'boolean') settings.alwaysOnline = b.alwaysOnline
@@ -2008,6 +2043,7 @@ app.post('/settings', (req, res) => {
   if (typeof b.aiSystemPrompt === 'string') settings.aiSystemPrompt = b.aiSystemPrompt
   if (typeof b.saveMedia === 'boolean') settings.saveMedia = b.saveMedia
   if (typeof b.stayOffline === 'boolean') settings.stayOffline = b.stayOffline
+  if (typeof b.aiPresenceFlow === 'boolean') settings.aiPresenceFlow = b.aiPresenceFlow
   if (Array.isArray(b.aiExcludeJids)) settings.aiExcludeJids = b.aiExcludeJids.map(x => String(x)).filter(Boolean)
   if (typeof b.aiReplyVoice === 'boolean') settings.aiReplyVoice = b.aiReplyVoice
   if (typeof b.aiReplyImage === 'boolean') settings.aiReplyImage = b.aiReplyImage

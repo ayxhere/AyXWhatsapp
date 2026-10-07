@@ -69,6 +69,8 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -125,6 +127,7 @@ import androidx.compose.material.icons.filled.PermMedia
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Memory
@@ -247,6 +250,8 @@ class MainActivity : ComponentActivity() {
         SetName.init(applicationContext)
         ThemeStore.init(applicationContext)
         ChatStyle.init(applicationContext)
+        TranslateStore.init(applicationContext)
+        FontStore.init(applicationContext)
         setContent {
             val sysDark = isSystemInDarkTheme()
             val mode = ThemeStore.mode.value
@@ -262,7 +267,8 @@ class MainActivity : ComponentActivity() {
                 surface = if (amoled) Color(0xFF0B090D) else base.surface,
                 surfaceVariant = if (amoled) Color(0xFF161318) else base.surfaceVariant,
             )
-            MaterialTheme(colorScheme = scheme) {
+            val appTypo = FontStore.typographyFor(FontStore.appFamily(LocalContext.current))
+            MaterialTheme(colorScheme = scheme, typography = appTypo) {
                 val view = LocalView.current
                 val barColor = MaterialTheme.colorScheme.surface
                 SideEffect {
@@ -341,6 +347,28 @@ object StatusFlags {
     fun toggleMuted(sender: String) { val k = keyOf(sender); if (muted[k] == true) muted.remove(k) else muted[k] = true; save() }
     fun toggleHidden(sender: String) { val k = keyOf(sender); if (hidden[k] == true) hidden.remove(k) else hidden[k] = true; save() }
     fun toggleLocked(sender: String) { val k = keyOf(sender); if (locked[k] == true) locked.remove(k) else locked[k] = true; save() }
+}
+
+// Message translation: mode (off / manual double-tap / auto-all) + target language, persisted.
+// cache holds msgId -> translated text so a translated bubble shows its translation under the original.
+object TranslateStore {
+    var mode by androidx.compose.runtime.mutableStateOf("manual")   // off | manual | auto
+    var lang by androidx.compose.runtime.mutableStateOf("English")
+    var configured by androidx.compose.runtime.mutableStateOf(false)   // user picked a language at least once
+    val cache = androidx.compose.runtime.mutableStateMapOf<String, String>()
+    private var prefs: android.content.SharedPreferences? = null
+    fun init(ctx: Context) {
+        if (prefs != null) return
+        val p = ctx.getSharedPreferences("translate", Context.MODE_PRIVATE)
+        prefs = p
+        mode = p.getString("mode", "manual") ?: "manual"
+        lang = p.getString("lang", "English") ?: "English"
+        configured = p.getBoolean("configured", false)
+    }
+    private fun save() { prefs?.edit()?.putString("mode", mode)?.putString("lang", lang)?.putBoolean("configured", configured)?.apply() }
+    fun setMode(m: String) { mode = m; save() }
+    fun setLang(l: String) { lang = l; configured = true; save() }
+    fun enabled() = mode != "off"
 }
 
 
@@ -1451,6 +1479,7 @@ private fun ChatDetail(
     wallpaper: ImageBitmap?,
 ) {
     val clipboard = LocalClipboardManager.current
+    val ctx = LocalContext.current
     var input by remember { mutableStateOf("") }
     var replyTo by remember { mutableStateOf<GatewayClient.Msg?>(null) }
     var reactMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
@@ -1462,6 +1491,31 @@ private fun ChatDetail(
     fun exitSel() { selMode = false; selIds.clear() }
     // blur the chat behind the long-press action sheet (iOS/WhatsApp context-menu style)
     val menuBlur by animateDpAsState(if (reactMsg != null) 18.dp else 0.dp, label = "msgblur")
+    // message translation (double-tap). Ask the target language once, then translate directly.
+    val transScope = rememberCoroutineScope()
+    var askTransFor by remember { mutableStateOf<GatewayClient.Msg?>(null) }
+    fun runTranslate(m: GatewayClient.Msg) {
+        val id = m.id ?: return
+        if (m.text.isBlank()) return
+        transScope.launch {
+            val romanize = TranslateStore.lang.contains("roman", true)
+            val t = GatewayClient.translate(m.text, TranslateStore.lang, romanize)
+            if (t != null) TranslateStore.cache[id] = t
+            else Toast.makeText(ctx, "Translate failed — check your Groq key", Toast.LENGTH_SHORT).show()
+        }
+    }
+    fun onTranslateMsg(m: GatewayClient.Msg) {
+        val id = m.id ?: return
+        if (TranslateStore.mode == "off" || m.text.isBlank()) return
+        if (TranslateStore.cache.containsKey(id)) { TranslateStore.cache.remove(id); return }   // toggle off
+        if (!TranslateStore.configured) { askTransFor = m; return }                               // ask once
+        runTranslate(m)
+    }
+    askTransFor?.let { m ->
+        TranslateLangDialog(onDismiss = { askTransFor = null }, onPick = { lang ->
+            TranslateStore.setLang(lang); askTransFor = null; runTranslate(m)
+        })
+    }
     reactMsg?.let { rm ->
         MessageActionSheet(
             m = rm,
@@ -1487,6 +1541,18 @@ private fun ChatDetail(
     // clear the floating header: status bar + header card height, so the top message is never hidden
     val topClear = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 78.dp
 
+    // auto-translate: when mode is Auto, translate incoming messages automatically
+    LaunchedEffect(rows.size, TranslateStore.mode, TranslateStore.lang) {
+        if (TranslateStore.mode == "auto") {
+            val romanize = TranslateStore.lang.contains("roman", true)
+            rows.filter { !it.fromMe && it.id != null && it.text.isNotBlank() && !TranslateStore.cache.containsKey(it.id) }
+                .take(30).forEach { m ->
+                    val t = GatewayClient.translate(m.text, TranslateStore.lang, romanize)
+                    if (t != null) TranslateStore.cache[m.id!!] = t
+                }
+        }
+    }
+
     Box(Modifier.fillMaxSize()) {
       Box(Modifier.fillMaxSize().blur(menuBlur)) {
         wallpaper?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
@@ -1502,6 +1568,7 @@ private fun ChatDetail(
                         onReply = { replyTo = it }, onAvatarClick = onAvatarClick,
                         selMode = selMode, selected = m.id != null && m.id in selIds,
                         onToggleSelect = { mm -> mm.id?.let { if (it in selIds) selIds.remove(it) else selIds.add(it) } },
+                        onTranslate = { onTranslateMsg(it) },
                         onLongClick = { reactMsg = it })
                 }
             }
@@ -1546,6 +1613,61 @@ private fun ChatDetail(
               }
           }
       }
+    }
+}
+
+// First-time language picker for message translation — saved as the default
+@Composable
+private fun TranslateLangDialog(onDismiss: () -> Unit, onPick: (String) -> Unit) {
+    val langs = listOf("English", "Hindi", "Roman Hindi (Hinglish)", "Bangla", "Roman Bangla", "Spanish", "French", "Arabic", "Urdu", "Tamil", "Telugu")
+    var custom by remember { mutableStateOf("") }
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface, tonalElevation = 6.dp, shadowElevation = 12.dp,
+            modifier = Modifier.fillMaxWidth().fillMaxHeight(0.82f)) {
+            Column(Modifier.padding(vertical = 8.dp)) {
+                Text("Translate messages to…", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 18.dp, top = 10.dp))
+                Text("Saved as your default — change it later in Settings → General.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 18.dp, bottom = 8.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                LazyColumn(Modifier.weight(1f)) {
+                    items(langs) { l ->
+                        Row(Modifier.fillMaxWidth().clickable { onPick(l) }.padding(horizontal = 18.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.Translate, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(16.dp))
+                            Text(l, style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(custom, { custom = it }, label = { Text("Other language") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f))
+                    Spacer(Modifier.width(8.dp))
+                    FilledTonalButton(onClick = { if (custom.isNotBlank()) onPick(custom.trim()) }, enabled = custom.isNotBlank()) { Text("Use") }
+                }
+            }
+        }
+    }
+}
+
+// App font picker — each name rendered in its own font; tap to apply app-wide
+@Composable
+private fun FontPickerDialog(ctx: Context, current: String, onDismiss: () -> Unit, onPick: (String) -> Unit) {
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface, tonalElevation = 6.dp, shadowElevation = 12.dp,
+            modifier = Modifier.fillMaxWidth().fillMaxHeight(0.8f)) {
+            Column(Modifier.padding(vertical = 8.dp)) {
+                Text("App font", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                LazyColumn(Modifier.weight(1f)) {
+                    items(FontStore.fonts.keys.toList()) { name ->
+                        val fam = FontStore.family(ctx, name)
+                        Row(Modifier.fillMaxWidth().clickable { onPick(name) }.padding(horizontal = 18.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(name, Modifier.weight(1f), fontFamily = fam, style = MaterialTheme.typography.bodyLarge)
+                            if (name == current) Icon(Icons.Filled.CheckCircle, "selected", tint = AYX_GREEN)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1806,7 +1928,7 @@ private fun styleSpec(fromMe: Boolean, dark: Boolean, recvGrey: Color, recvText:
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String, ImageBitmap?>, dpCache: MutableMap<String, ImageBitmap?>, onMedia: (GatewayClient.Msg) -> Unit, onShare: (GatewayClient.Msg) -> Unit, onDownload: (GatewayClient.Msg) -> Unit, onReply: (GatewayClient.Msg) -> Unit, onAvatarClick: (String) -> Unit, selMode: Boolean = false, selected: Boolean = false, onToggleSelect: (GatewayClient.Msg) -> Unit = {}, onLongClick: (GatewayClient.Msg) -> Unit) {
+private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String, ImageBitmap?>, dpCache: MutableMap<String, ImageBitmap?>, onMedia: (GatewayClient.Msg) -> Unit, onShare: (GatewayClient.Msg) -> Unit, onDownload: (GatewayClient.Msg) -> Unit, onReply: (GatewayClient.Msg) -> Unit, onAvatarClick: (String) -> Unit, selMode: Boolean = false, selected: Boolean = false, onToggleSelect: (GatewayClient.Msg) -> Unit = {}, onTranslate: (GatewayClient.Msg) -> Unit = {}, onLongClick: (GatewayClient.Msg) -> Unit) {
     val ctx = LocalContext.current
     val dark = isSystemInDarkTheme()
     val spec = bubbleSpec(m.fromMe, dark)
@@ -1845,7 +1967,7 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
             Spacer(Modifier.width(6.dp))
         }
         Surface(color = bubbleColor, shape = shape,
-            modifier = Modifier.widthIn(max = 290.dp).combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = { if (selMode) onToggleSelect(m) }, onLongClick = { if (!selMode) onLongClick(m) })) {
+            modifier = Modifier.widthIn(max = 290.dp).combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = { if (selMode) onToggleSelect(m) }, onDoubleClick = { if (!selMode) onTranslate(m) }, onLongClick = { if (!selMode) onLongClick(m) })) {
             Column(Modifier.padding(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 if (m.forwarded && !m.deleted && ChatStyle.showForwardTag.value) {
                     Row(Modifier.padding(start = 8.dp, end = 8.dp, top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1884,6 +2006,16 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                     }
                     if (m.text.isNotBlank()) LinkText(m.text, textColor)
                     else if (hasMedia && preview == null && m.mediaType != "audio") Text("[${m.mediaType}]", color = textColor, style = MaterialTheme.typography.bodySmall)
+                    // translated text (double-tap) shown under the original with a translate icon
+                    val tr = m.id?.let { TranslateStore.cache[it] }
+                    if (!tr.isNullOrBlank()) {
+                        Box(Modifier.padding(top = 3.dp).fillMaxWidth().height(1.dp).background((if (m.fromMe) Color.White else textColor).copy(alpha = 0.2f)))
+                        Row(Modifier.padding(top = 3.dp), verticalAlignment = Alignment.Top) {
+                            Icon(Icons.Filled.Translate, "translated", modifier = Modifier.size(13.dp).padding(top = 2.dp), tint = if (m.fromMe) Color.White.copy(alpha = 0.8f) else IOS_BLUE)
+                            Spacer(Modifier.width(4.dp))
+                            Text(tr, color = textColor.copy(alpha = 0.92f), style = MaterialTheme.typography.bodyMedium, fontStyle = FontStyle.Italic)
+                        }
+                    }
                     if (!m.reaction.isNullOrBlank()) {
                         Surface(shape = CircleShape, color = if (m.fromMe) Color.White.copy(alpha = 0.25f) else Color.Black.copy(alpha = 0.15f)) {
                             Text(m.reaction, modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp))
@@ -2070,6 +2202,7 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
     SettingsGroup("Online & Privacy") {
         SettingRow(Icons.Filled.Bolt, CAT_GENERAL, "Always online", "Keep showing online", settings.alwaysOnline) { onToggle(JSONObject().put("alwaysOnline", it)) }
         SettingRow(Icons.Filled.CloudOff, Color(0xFFFF7EB6), "Freeze last seen", "Never broadcast online (overrides Always online)", settings.stayOffline) { onToggle(JSONObject().put("stayOffline", it)) }
+        SettingRow(Icons.Filled.Bolt, Color(0xFF4DD0C4), "Human-like presence", "For each AI reply: read it, come online + type, reply, then go back offline", settings.aiPresenceFlow) { onToggle(JSONObject().put("aiPresenceFlow", it)) }
         SettingRow(Icons.Filled.RemoveRedEye, Color(0xFF82AAFF), "Hide status view", "Don't show senders you saw their status", settings.hideStatusRead) { onToggle(JSONObject().put("hideStatusRead", it)) }
     }
     SettingsGroup("Messages & Media") {
@@ -2077,6 +2210,29 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
         SettingRow(Icons.Filled.PermMedia, CAT_AUTOREPLY, "Save media", "Download incoming photos/videos (needed for view, deleted media)", settings.saveMedia) { onToggle(JSONObject().put("saveMedia", it)) }
         SettingRow(Icons.AutoMirrored.Filled.ArrowForward, CAT_AI, "Forwarded tag", "Show the \"Forwarded\" label on forwarded messages", ChatStyle.showForwardTag.value) { ChatStyle.setShowForwardTag(it) }
     }
+    var showFontPicker by remember { mutableStateOf(false) }
+    SettingsGroup("Appearance") {
+        ActionRow(Icons.Filled.TextFields, CAT_GENERAL, "App font", "Current: ${FontStore.appFont}  ·  changes the whole app") { showFontPicker = true }
+    }
+    if (showFontPicker) FontPickerDialog(ctx, current = FontStore.appFont, onDismiss = { showFontPicker = false }, onPick = { FontStore.setAppFont(it); showFontPicker = false })
+
+    SettingsGroup("Message translation") {
+        Text("Double-tap any message in a chat to translate it. Pick how it works:",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 4.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("off" to "Off", "manual" to "Double-tap", "auto" to "Auto (all)").forEach { (k, lbl) ->
+                FilterChip(selected = TranslateStore.mode == k, onClick = { TranslateStore.setMode(k) }, label = { Text(lbl) })
+            }
+        }
+        var tlang by remember { mutableStateOf(TranslateStore.lang) }
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(tlang, { tlang = it }, label = { Text("Translate to") }, singleLine = true,
+            placeholder = { Text("e.g. English, Hindi, Roman Hindi, Bangla") }, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            FilledTonalButton(onClick = { TranslateStore.setLang(tlang.trim().ifBlank { "English" }); Toast.makeText(ctx, "Translate language saved", Toast.LENGTH_SHORT).show() }) { Text("Save") }
+        }
+    }
+
     SettingsGroup("Background & battery") {
         SettingRow(Icons.Filled.CloudOff, CAT_AI, "Run in background", "Keeps a silent notification so messages arrive when the app is closed. Turn OFF to remove the notification (messages then arrive only while the app is open).", ChatStyle.runBackground.value) { ChatStyle.setRunBackground(it) }
         ActionRow(Icons.Filled.Bolt, WARN_AMBER, "Allow battery (no optimization)", "Keep the gateway alive in the background") {
