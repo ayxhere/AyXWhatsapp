@@ -6,6 +6,9 @@ const path = require('path')
 const crypto = require('crypto')
 let CryptoJS = null
 try { CryptoJS = require('crypto-js') } catch (e) {}
+// WAV → OGG/Opus encoder (real WhatsApp voice notes). Safe to miss — caller falls back to audio file.
+let _opus = null
+try { _opus = require('./opus') } catch (e) {}
 const https = require('https')
 const express = require('express')
 const pino = require('pino')
@@ -854,16 +857,27 @@ function audioKind(buf) {
   return { mime: 'audio/mpeg', ptt: false }
 }
 function mkAudio(buf) { if (!buf || !buf.length) return null; const k = audioKind(buf); return { buf, mime: k.mime, ptt: k.ptt } }
-// Prefer OPUS (WhatsApp's native voice codec → a real voice note that plays directly). If Sarvam's
-// opus isn't OGG-wrapped on this account, remember that and fall back to MP3 (sent as normal audio).
-async function sarvamTtsSmart(text, speaker, lang) {
-  if (_sarvamOpusOk !== false) {
-    const o = await sarvamTts(text, speaker, lang, 'opus')
-    if (o && o.length > 4 && o.toString('latin1', 0, 4) === 'OggS') { _sarvamOpusOk = true; return mkAudio(o) }
-    if (o) _sarvamOpusOk = false   // got bytes but not OGG → opus unusable as a voice note here
+// Turn any TTS output into the best WhatsApp payload. A WAV is re-encoded to real OGG/Opus so it
+// sends as a true "recording" voice note (ptt) that plays directly — exactly what WhatsApp uses.
+// If opus encoding isn't possible, it goes as a normal (still playable) audio message.
+function finalizeVoice(buf) {
+  if (!buf || !buf.length) return null
+  const h = buf.toString('latin1', 0, 4)
+  if (h === 'OggS') return { buf, mime: 'audio/ogg; codecs=opus', ptt: true }   // already a voice note
+  if (h === 'RIFF' && _opus && _opus.opusAvailable && _opus.opusAvailable()) {
+    try {
+      const ogg = _opus.wavToOggOpus(buf)
+      if (ogg && ogg.length > 40 && ogg.toString('latin1', 0, 4) === 'OggS') {
+        return { buf: ogg, mime: 'audio/ogg; codecs=opus', ptt: true }   // real recording voice note
+      }
+    } catch (e) { log('opus encode err', e?.message) }
   }
-  const m = await sarvamTts(text, speaker, lang, 'mp3')
-  if (m) return mkAudio(m)
+  return mkAudio(buf)   // fallback: plain audio message (plays, just not a voice-note bubble)
+}
+// Sarvam → ask for WAV (clean PCM) and encode to OGG/Opus ourselves → a real voice note.
+async function sarvamTtsSmart(text, speaker, lang) {
+  const w = await sarvamTts(text, speaker, lang, 'wav')
+  if (w) return finalizeVoice(w)
   return null
 }
 // TTS language code from any text's native script. '' if romanized/unknown (can't tell hi vs bn).
@@ -885,17 +899,17 @@ function pollyFallback(voice) {
   return 'Joanna'
 }
 
-// Produce speech → { buf, mime, ptt } or null (caller sends TEXT). mime + ptt always come from the
-// ACTUAL bytes (mkAudio), so a real voice note only goes out as true OGG/Opus — never a broken ptt.
-// Sarvam (OGG/Opus) is the only engine that plays reliably on this network (Edge/StreamElements are
-// blocked, Groq is WAV which WhatsApp won't play as a voice note), so prefer it whenever a key exists.
-// langOverride ('hi-IN'/'bn-IN') forces the spoken language (auto Hindi↔Bangla switch).
+// Produce speech → { buf, mime, ptt } or null (caller sends TEXT). Every provider's audio goes
+// through finalizeVoice, which re-encodes WAV → real OGG/Opus so the reply sends as a proper
+// "recording" voice note that plays directly on the recipient's WhatsApp.
+// Sarvam is preferred whenever a key exists (clean Hindi/Bangla WAV → opus). Groq (WAV) also becomes
+// a real voice note via the encoder. langOverride ('hi-IN'/'bn-IN') forces the spoken language.
 async function synthVoice(text, voice, langOverride) {
   if (!text) return null
   const v = voice || 'Arista-PlayAI'
   // target language: explicit override → native script of the text → default Hindi (this user base)
   const lang = langOverride || ttsLangCode(text) || 'hi-IN'
-  // Sarvam first (real WhatsApp-native voice note that plays directly)
+  // Sarvam first (clean WAV → encoded to a real WhatsApp-native opus voice note)
   if (settings.aiSarvamKey) {
     const speaker = v.startsWith('sarvam:') ? (v.split(':')[2] || 'priya') : 'priya'
     const r = await sarvamTtsSmart(text, speaker, lang)
@@ -904,15 +918,15 @@ async function synthVoice(text, voice, langOverride) {
     // else: fall through to other engines
   }
   if (/-PlayAI$/i.test(v) || /^(troy|hannah|austin)$/i.test(v)) {
-    const g = await groqTts(text, v); if (g) return mkAudio(g)
+    const g = await groqTts(text, v); if (g) return finalizeVoice(g)   // Groq WAV → opus voice note
   } else if (/Neural/i.test(v)) {
-    const ogg = await edgeTtsOgg(text, v); if (ogg && ogg.length > 500) return mkAudio(ogg)
-    const se = await streamElementsTts(text, pollyFallback(v)); if (se) return mkAudio(se)
+    const ogg = await edgeTtsOgg(text, v); if (ogg && ogg.length > 500) return finalizeVoice(ogg)
+    const se = await streamElementsTts(text, pollyFallback(v)); if (se) return finalizeVoice(se)
   } else if (!v.startsWith('sarvam:')) {
-    const se = await streamElementsTts(text, v); if (se) return mkAudio(se)
+    const se = await streamElementsTts(text, v); if (se) return finalizeVoice(se)
   }
   // last resort: Groq human voice (NOT Google). If this also fails, caller falls back to a text reply.
-  const g2 = await groqTts(text, /-PlayAI$/i.test(v) ? v : 'Arista-PlayAI'); if (g2) return mkAudio(g2)
+  const g2 = await groqTts(text, /-PlayAI$/i.test(v) ? v : 'Arista-PlayAI'); if (g2) return finalizeVoice(g2)
   return null
 }
 
@@ -1923,22 +1937,31 @@ app.get('/visiontest', async (req, res) => {
 app.get('/voicecheck', async (req, res) => {
   try {
     const voice = String(req.query.voice || settings.aiTtsVoice || 'Arista-PlayAI')
+    const opusEnc = !!(_opus && _opus.opusAvailable && _opus.opusAvailable())
+    // run the REAL pipeline so we can tell the user if a true voice note will be produced
+    const v = await synthVoice('Namaste, ye ek chhota voice test hai. Hello, this is a test.', voice)
+    if (v && v.buf) {
+      const isVN = v.ptt === true && /ogg/i.test(v.mime || '')
+      return res.json({
+        ok: true, provider: voice.startsWith('sarvam:') ? 'sarvam' : 'groq', voice,
+        opusEncoder: opusEnc, voiceNote: isVN, mime: v.mime, bytes: v.buf.length,
+        message: isVN
+          ? '✅ Asli voice note banega (OGG/Opus) — recipient ke WhatsApp pe seedha play hoga. Is voice ko select kar le.'
+          : ('⚠️ Awaaz toh banegi par normal audio file ke roop me (voice-note recording nahi). ' + (opusEnc ? 'Provider ne WAV nahi diya.' : 'Opus encoder load nahi hua.')),
+      })
+    }
+    // failed → report the provider error
     if (voice.startsWith('sarvam:')) {
-      const parts = voice.split(':'); const lang = parts[1] || 'hi-IN'; const speaker = parts[2] || 'Anushka'
-      const sb = await sarvamTts('Namaste, ye ek voice test hai.', speaker, lang)
-      if (sb) return res.json({ ok: true, provider: 'sarvam', voice })
       const se = String(_sarvamErr || '')
       if (se === 'no key') return res.json({ ok: false, reason: 'nokey', message: 'Voice page me Sarvam key daal ke Save kar (free: sarvam.ai).' })
       return res.json({ ok: false, reason: 'err', message: 'Sarvam TTS error:\n' + se.slice(0, 200) })
     }
-    const buf = await groqTts('Hi, this is a voice test.', voice)
-    if (buf) return res.json({ ok: true, provider: 'groq', voice })
     const e = String(_groqTtsErr || '')
     if (e === 'no key') return res.json({ ok: false, reason: 'nokey', message: 'API configuration me Groq key daal ke Save kar.' })
     if (/terms|accept|playground\?model|has not been accepted|model_terms/i.test(e)) {
       return res.json({ ok: false, reason: 'terms', message: 'Ek baar terms accept karni hai:\nconsole.groq.com/playground?model=playai-tts\nus page pe "Accept"/"Agree" dabao, phir dubara Check karo.' })
     }
-    return res.json({ ok: false, reason: 'err', message: 'Groq TTS error:\n' + e.slice(0, 200) })
+    return res.json({ ok: false, reason: 'err', message: 'Voice TTS error:\n' + (e || _sarvamErr || 'unknown').slice(0, 200) })
   } catch (e) { res.json({ ok: false, reason: 'err', message: e?.message || 'error' }) }
 })
 // Voice demo: synthesize a short sample in the chosen voice so the user can hear it before saving

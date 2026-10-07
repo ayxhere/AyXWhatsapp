@@ -365,8 +365,10 @@ internal fun VoicePickerScreen(settings: GatewayClient.Settings, onToggle: (JSON
             checking = true
             scope.launch {
                 val r = GatewayClient.voiceCheck(selected)
-                checkResult = if (r.optBoolean("ok", false)) "✅ Voice chal rahi hai (" + r.optString("provider") + ")! Ab is voice ko select kar le."
-                else (r.optString("message").ifBlank { "Voice abhi nahi chali." })
+                checkResult = r.optString("message").ifBlank {
+                    if (r.optBoolean("ok", false)) "✅ Voice chal rahi hai (" + r.optString("provider") + ")! Ab is voice ko select kar le."
+                    else "Voice abhi nahi chali."
+                }
                 checking = false
             }
         }, enabled = !checking, modifier = Modifier.fillMaxWidth()) {
