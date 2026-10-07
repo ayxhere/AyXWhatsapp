@@ -58,6 +58,7 @@ object StatusData {
                     ts = ts,
                     mine = o.optBoolean("mine", false),
                     id = o.optString("id").ifEmpty { null },
+                    bg = o.optString("bg").ifEmpty { null },
                 )
             }
         } catch (e: Exception) { emptyList() }
@@ -100,6 +101,7 @@ object StatusData {
                     put("ts", s.ts)
                     put("mine", s.mine)
                     put("id", s.id ?: "")
+                    put("bg", s.bg ?: "")
                 })
             }
             prefs?.edit()?.putString("items", arr.toString())?.apply()

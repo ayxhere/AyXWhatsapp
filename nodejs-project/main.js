@@ -997,9 +997,13 @@ async function presenceBefore(jid, key) {
   try { await sock.sendPresenceUpdate('composing', jid) } catch (_) {}
 }
 async function presenceAfter(jid) {
-  if (!settings.aiPresenceFlow || !sock) return
+  // Go offline after an AI reply (the "reply → online → back to offline" behaviour), regardless of the
+  // presence-flow toggle. Only an explicit alwaysOnline keeps the account online.
+  if (!sock || settings.alwaysOnline) return
   try { await sock.sendPresenceUpdate('paused', jid) } catch (_) {}
   try { await sock.sendPresenceUpdate('unavailable') } catch (_) {}
+  // sending a message can flip the account back to "online" for a moment — re-assert offline shortly after
+  setTimeout(() => { try { sock.sendPresenceUpdate('unavailable') } catch (_) {} }, 1600)
 }
 
 function handleConnUpdate(u) {
@@ -1497,6 +1501,13 @@ async function startSocket() {
       if (e) { e.reaction = r.reaction?.text || ''; saveMessagesDebounced() }
     }
   })
+  // deletions that arrive as messages.delete (incl. a status deleted on the real WhatsApp app) → prune locally
+  sock.ev.on('messages.delete', (item) => {
+    try {
+      if (item && Array.isArray(item.keys)) { for (const k of item.keys) captureDelete(k && k.id) }
+      else if (item && item.all && item.jid === 'status@broadcast') { statuses = []; saveStatusesDebounced(); log('all statuses cleared on primary') }
+    } catch (_) {}
+  })
   const addContacts = (list) => { for (const c of list || []) { if (c.id) { const nm = c.name || c.notify || ''; contacts.set(c.id, { name: nm, notify: c.notify || '' }); rememberName(c.id, nm) } } }
   sock.ev.on('contacts.upsert', addContacts)
   sock.ev.on('contacts.update', addContacts)
@@ -1902,6 +1913,38 @@ app.post('/status/post', async (req, res) => {
   }
 })
 
+// TEXT status — coloured background text status (like WhatsApp's text status)
+app.post('/status/text', async (req, res) => {
+  try {
+    if (!sock) return res.status(409).json({ ok: false, error: 'not connected' })
+    if (status.connection !== 'open') { const ok = await waitForOpen(); if (!ok) return res.status(409).json({ ok: false, error: 'connection reconnecting — try again in a moment' }) }
+    const text = String(req.body?.text || '').trim()
+    if (!text) return res.status(400).json({ ok: false, error: 'no text' })
+    const bg = String(req.body?.bg || '#128C7E')
+    const font = Number(req.body?.font || 3)
+    const audience = String(req.body?.audience || 'all')
+    const selJids = Array.isArray(req.body?.jids) ? req.body.jids : []
+    const set = new Set()
+    for (const j of contacts.keys()) if (j.endsWith('@s.whatsapp.net')) set.add(j)
+    for (const m of msgLog) if (m.chat && m.chat.endsWith('@s.whatsapp.net')) set.add(m.chat)
+    const all = Array.from(set)
+    let jids
+    if (audience === 'only') jids = selJids
+    else if (audience === 'except') jids = all.filter(j => !selJids.includes(j))
+    else jids = Array.from(new Set([...all, ...selJids]))
+    try { const meJid = sock?.user?.id?.split(':')[0] + '@s.whatsapp.net'; if (meJid && !jids.includes(meJid)) jids.push(meJid) } catch (_) {}
+    const r = await sock.sendMessage('status@broadcast', { text }, { statusJidList: jids, broadcast: true, backgroundColor: bg, font })
+    const id = (r && r.key && r.key.id) || null
+    if (id) { try { rawStore.set(id, { key: r.key, message: r.message }) } catch (_) {} }
+    const meJid = (sock && sock.user && sock.user.id) || 'me'
+    statuses = statuses.filter(x => !(x.mine && x.id === id))
+    statuses.unshift({ sender: meJid, name: 'My Status', mine: true, id, text, ts: Date.now(), bg })
+    if (statuses.length > 120) statuses.length = 120
+    saveStatusesDebounced()
+    res.json({ ok: !!id, id, recipients: jids.length })
+  } catch (e) { res.status(500).json({ ok: false, error: (e && e.message) || 'failed' }) }
+})
+
 app.post('/sendreply', async (req, res) => {
   try {
     const jid = String(req.body?.jid || '')
@@ -2079,33 +2122,77 @@ app.post('/translate', async (req, res) => {
 })
 // Translate / transliterate many lines at once, preserving order & count (numbered-line protocol).
 // Used for status lyrics (e.g. Hindi lyrics → Hindi in English letters).
+// Deterministic Devanagari (Hindi) → Latin transliteration. Phonetic, keeps English/Latin words and
+// punctuation exactly as-is. This makes "Hindi lyrics in English letters" ALWAYS work (no AI needed).
+function devanagariToLatin(s) {
+  const C = {0x0915:'k',0x0916:'kh',0x0917:'g',0x0918:'gh',0x0919:'ng',0x091A:'ch',0x091B:'chh',0x091C:'j',0x091D:'jh',0x091E:'ny',0x091F:'t',0x0920:'th',0x0921:'d',0x0922:'dh',0x0923:'n',0x0924:'t',0x0925:'th',0x0926:'d',0x0927:'dh',0x0928:'n',0x0929:'n',0x092A:'p',0x092B:'ph',0x092C:'b',0x092D:'bh',0x092E:'m',0x092F:'y',0x0930:'r',0x0931:'r',0x0932:'l',0x0933:'l',0x0934:'l',0x0935:'v',0x0936:'sh',0x0937:'sh',0x0938:'s',0x0939:'h',0x095F:'y'}
+  const CN = {0x0915:'q',0x0916:'kh',0x0917:'g',0x091C:'z',0x0921:'r',0x0922:'rh',0x092B:'f',0x092F:'y'} // base + nukta
+  const V = {0x0905:'a',0x0906:'aa',0x0907:'i',0x0908:'ee',0x0909:'u',0x090A:'oo',0x090B:'ri',0x090F:'e',0x0910:'ai',0x0913:'o',0x0914:'au',0x0911:'o',0x090D:'e',0x0912:'o',0x090E:'e'}
+  const M = {0x093E:'aa',0x093F:'i',0x0940:'ee',0x0941:'u',0x0942:'oo',0x0943:'ri',0x0947:'e',0x0948:'ai',0x094B:'o',0x094C:'au',0x0949:'o',0x094A:'o',0x0945:'e',0x0946:'e'}
+  const SIGN = {0x0902:'n',0x0901:'n',0x0903:'h'}
+  const DIG = {0x0966:'0',0x0967:'1',0x0968:'2',0x0969:'3',0x096A:'4',0x096B:'5',0x096C:'6',0x096D:'7',0x096E:'8',0x096F:'9'}
+  const HALANT = 0x094D, NUKTA = 0x093C
+  const cp = Array.from(s).map(c => c.codePointAt(0))
+  let out = ''
+  for (let i = 0; i < cp.length; i++) {
+    const c = cp[i]
+    if (C[c] !== undefined) {
+      let cons = C[c]
+      if (cp[i + 1] === NUKTA) { if (CN[c] !== undefined) cons = CN[c]; i++ }
+      out += cons
+      const nx = cp[i + 1]
+      if (nx === HALANT) { i++ }                       // conjunct → drop inherent vowel
+      else if (M[nx] !== undefined) { out += M[nx]; i++ }
+      else if (nx !== undefined && nx >= 0x0900 && nx <= 0x0963) { out += 'a' }   // mid-word → keep inherent 'a'
+      // else: word-final consonant → delete the schwa (tum, pyaar, chaand — not "tuma/pyaara/chaanda")
+    } else if (V[c] !== undefined) out += V[c]
+    else if (M[c] !== undefined) out += M[c]
+    else if (SIGN[c] !== undefined) out += SIGN[c]
+    else if (DIG[c] !== undefined) out += DIG[c]
+    else if (c === 0x0964 || c === 0x0965) out += ' '  // danda
+    else if (c === NUKTA || c === HALANT || c === 0x093D) { /* stray mark → skip */ }
+    else out += String.fromCodePoint(c)                // English / spaces / punctuation / emoji kept as-is
+  }
+  return out
+}
 app.post('/translatelines', async (req, res) => {
   try {
     const lines = Array.isArray(req.body && req.body.lines) ? req.body.lines.map(x => String(x)) : []
     const romanize = !!(req.body && req.body.romanize)
     const lang = String((req.body && req.body.lang) || 'English')
     if (!lines.length) return res.json({ ok: false, error: 'no lines' })
+    const NATIVE = /[ऀ-ൿ]/        // any native Indic script
+    const DEVA = /[ऀ-ॿ]/ // Devanagari (Hindi/Marathi)
+
+    if (romanize) {
+      // 1) Hindi (Devanagari) → Latin deterministically — ALWAYS works, no AI key required
+      let work = lines.map(l => DEVA.test(l) ? devanagariToLatin(l) : l)
+      // 2) any line still in a NON-Devanagari native script (Bengali/Gurmukhi/Tamil…) → AI if we have a key
+      const remain = []
+      work.forEach((l, i) => { if (NATIVE.test(l)) remain.push(i) })
+      if (remain.length && settings.aiApiUrl && settings.aiApiKey) {
+        const sys = 'You transliterate song lyrics into English (Latin) letters, keeping the SAME language and words — do NOT translate the meaning. Any word already in English/Latin letters MUST stay EXACTLY as-is. Input is numbered lines "N| text". Return EXACTLY one line per input as "N| <result>" — same numbers, order and count, no commentary.'
+        const numbered = remain.map(i => (i + 1) + '| ' + work[i]).join('\n')
+        let out = await chatComplete(settings.aiModel || 'openai/gpt-oss-20b', [{ role: 'system', content: sys }, { role: 'user', content: numbered }])
+        if (out) {
+          out = out.replace(/```[a-z]*\n?/gi, '').trim()
+          const map = {}
+          out.split('\n').forEach(line => { const m = line.match(/^\s*(\d+)\s*[|.)\:\-]\s*(.*)$/); if (m && m[2] != null) map[parseInt(m[1], 10) - 1] = m[2].trim() })
+          work = work.map((l, i) => (map[i] != null && String(map[i]).trim() ? map[i] : l))
+        }
+      }
+      return res.json({ ok: true, lines: work })
+    }
+
+    // translate (meaning) → needs the AI
     if (!settings.aiApiUrl || !settings.aiApiKey) return res.json({ ok: false, error: 'no AI key' })
-    // native Indic scripts (Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada, Malayalam)
-    const NATIVE = /[ऀ-ൿ]/
-    // For romanize: only send lines that actually contain native script. Pure-English lines stay untouched,
-    // and English words inside mixed lines must be preserved (handled by the prompt).
-    const needIdx = []
-    lines.forEach((l, i) => { if (!romanize || NATIVE.test(l)) needIdx.push(i) })
-    if (needIdx.length === 0) return res.json({ ok: true, lines })   // nothing needs changing (all English)
-    const sys = romanize
-      ? 'You transliterate song lyrics into English (Latin) letters, keeping the SAME language and words — do NOT translate the meaning. CRITICAL: any word that is ALREADY in English/Latin letters MUST be kept EXACTLY as it is (unchanged). Only convert the Hindi/Punjabi/Bengali (native-script) words into Latin letters. Input is numbered lines "N| text". Return EXACTLY one line per input as "N| <result>" — same numbers, same order, same count, no extra lines, no commentary.'
-      : ('You translate song lyrics into ' + lang + '. Input is numbered lines "N| text". Return EXACTLY one line per input as "N| <translation>" — same numbers, same order, same count, no extra lines, no commentary.')
-    const numbered = needIdx.map(i => (i + 1) + '| ' + lines[i]).join('\n')
+    const sys = 'You translate song lyrics into ' + lang + '. Input is numbered lines "N| text". Return EXACTLY one line per input as "N| <translation>" — same numbers, same order, same count, no extra lines, no commentary.'
+    const numbered = lines.map((l, i) => (i + 1) + '| ' + l).join('\n')
     let out = await chatComplete(settings.aiModel || 'openai/gpt-oss-20b', [{ role: 'system', content: sys }, { role: 'user', content: numbered }])
     if (!out) return res.json({ ok: false, error: 'failed' })
-    out = out.replace(/```[a-z]*\n?/gi, '').trim()   // strip any code fences
+    out = out.replace(/```[a-z]*\n?/gi, '').trim()
     const map = {}
-    out.split('\n').forEach(line => {
-      // accept "N| x", "N. x", "N) x", "N: x", "N - x"
-      const m = line.match(/^\s*(\d+)\s*[|.)\:\-]\s*(.*)$/)
-      if (m && m[2] != null) map[parseInt(m[1], 10) - 1] = m[2].trim()
-    })
+    out.split('\n').forEach(line => { const m = line.match(/^\s*(\d+)\s*[|.)\:\-]\s*(.*)$/); if (m && m[2] != null) map[parseInt(m[1], 10) - 1] = m[2].trim() })
     const result = lines.map((l, i) => (map[i] != null && String(map[i]).trim() ? map[i] : l))
     return res.json({ ok: true, lines: result })
   } catch (e) { res.json({ ok: false, error: e && e.message ? e.message : 'error' }) }
@@ -2227,11 +2314,12 @@ app.post('/status/delete', async (req, res) => {
     if (!sock) return res.status(409).json({ error: 'not connected' })
     const id = String(req.body?.id || '')
     if (!id) return res.status(400).json({ error: 'id required' })
-    // Own-status revoke: key is just { status@broadcast, fromMe, id }. Adding a `participant`
-    // makes it look like a group message and the revoke silently no-ops, so we DON'T set it.
-    const key = { remoteJid: 'status@broadcast', id, fromMe: true }
+    // Prefer the EXACT key we stored when the status was posted/received — a reconstructed key often
+    // doesn't match what WhatsApp has, so the revoke silently no-ops. Fall back to a minimal own key.
+    const raw = rawStore.get(id)
+    const key = (raw && raw.key) ? raw.key : { remoteJid: 'status@broadcast', id, fromMe: true }
     let ok = false, err = ''
-    try { await sock.sendMessage('status@broadcast', { delete: key }); ok = true; log('status delete sent → WhatsApp:', id) }
+    try { await sock.sendMessage('status@broadcast', { delete: key }); ok = true; log('status delete sent → WhatsApp:', id, raw ? '(stored key)' : '(built key)') }
     catch (e) { err = (e && e.message) || 'delete failed'; log('status delete err:', err) }
     statuses = statuses.filter(x => x.id !== id); saveStatusesDebounced()
     res.json({ ok, error: err })
@@ -2260,6 +2348,7 @@ app.get('/statuses', (req, res) => {
     const th = s.thumb || (s.media && s.media.thumb) || ''
     const out = { sender: s.sender, name: s.name || '', text: s.text || '', ts: s.ts, mine: !!s.mine, id: s.id || '' }
     if (mn) out.media = { name: mn, type: mt, thumb: th }
+    if (s.bg) out.bg = s.bg   // coloured text status background
     return out
   })
   res.json({ items })

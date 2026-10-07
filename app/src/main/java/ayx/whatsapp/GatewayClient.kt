@@ -232,6 +232,22 @@ object GatewayClient {
         } catch (e: Exception) { false to (e.message ?: "connection error") }
     }
 
+    // Coloured text status (like WhatsApp's text status)
+    suspend fun postTextStatus(text: String, bg: String, audience: String, jids: List<String>): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        try {
+            val arr = org.json.JSONArray(); jids.forEach { arr.put(it) }
+            val body = JSONObject().put("text", text).put("bg", bg).put("audience", audience).put("jids", arr).toString()
+            val c = (URL("$base/status/text").openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"; doOutput = true; connectTimeout = 4000; readTimeout = 60000
+                setRequestProperty("Content-Type", "application/json")
+            }
+            c.outputStream.use { it.write(body.toByteArray()) }
+            val txt = (if (c.responseCode in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: "{}"
+            val o = JSONObject(txt)
+            o.optBoolean("ok", false) to (if (o.optBoolean("ok", false)) ("status posted to " + o.optInt("recipients") + " contacts") else o.optString("error"))
+        } catch (e: Exception) { false to (e.message ?: "connection error") }
+    }
+
     suspend fun onWhatsApp(numbers: List<String>): Map<String, String?> = withContext(Dispatchers.IO) {
         try {
             val arr = org.json.JSONArray(); numbers.forEach { arr.put(it) }
@@ -366,7 +382,7 @@ object GatewayClient {
     }
 
     data class StatusItem(val sender: String, val name: String, val text: String,
-        val mediaName: String? = null, val mediaType: String? = null, val thumb: String? = null, val ts: Long = 0L, val mine: Boolean = false, val id: String? = null)
+        val mediaName: String? = null, val mediaType: String? = null, val thumb: String? = null, val ts: Long = 0L, val mine: Boolean = false, val id: String? = null, val bg: String? = null)
     suspend fun deleteStatus(id: String): Boolean = withContext(Dispatchers.IO) {
         post("/status/delete", JSONObject().put("id", id)).optBoolean("ok", false)
     }
@@ -398,6 +414,7 @@ object GatewayClient {
                     ts = o.optLong("ts", 0L),
                     mine = o.optBoolean("mine", false),
                     id = o.optString("id").ifEmpty { null },
+                    bg = o.optString("bg").ifEmpty { null },
                 )
             }
         } catch (e: Exception) { emptyList() }

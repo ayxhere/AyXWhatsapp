@@ -48,6 +48,12 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -582,7 +588,7 @@ fun GatewayApp() {
     }
     var pendingStatus by remember { mutableStateOf<Pair<Uri, String>?>(null) }
     var statusFabMenu by remember { mutableStateOf(false) }
-    var voiceStatusDlg by remember { mutableStateOf(false) }
+    var textStatusDlg by remember { mutableStateOf(false) }
     val statusPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
         if (uri != null) {
             val mime = ctx.contentResolver.getType(uri) ?: ""
@@ -847,55 +853,48 @@ fun GatewayApp() {
         }, onCancel = { pendingStatus = null })
     }
 
-    if (voiceStatusDlg) {
+    if (textStatusDlg) {
         var vtext by remember { mutableStateOf("") }
-        var previewUrl by remember { mutableStateOf<String?>(null) }   // set when the mic is tapped → AI voice preview
+        val bgColors = remember { listOf(0xFF128C7E, 0xFF075E54, 0xFF1F7AEC, 0xFF7E57C2, 0xFFEF5350, 0xFFFF7043, 0xFF5C6BC0, 0xFF26A69A, 0xFF8D6E63, 0xFF000000) }
+        var bgIdx by remember { mutableStateOf(0) }
+        fun hex(c: Long): String = "#" + (c and 0xFFFFFFL).toString(16).padStart(6, '0').uppercase()
         AlertDialog(
-            onDismissRequest = { voiceStatusDlg = false },
+            onDismissRequest = { textStatusDlg = false },
             containerColor = dialogBg(),
             shape = RoundedCornerShape(24.dp),
-            icon = { Icon(Icons.Filled.Mic, null, tint = AYX_GREEN) },
-            title = { Text("AI voice status") },
+            icon = { Icon(Icons.Filled.TextFields, null, tint = AYX_GREEN) },
+            title = { Text("Text status") },
             text = {
                 Column {
-                    Text("Type a message, tap the mic 🎙 to hear it in the AI voice, then post it as a voice-note status.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    // live preview on the chosen background colour
+                    Box(Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(16.dp)).background(Color(bgColors[bgIdx])), contentAlignment = Alignment.Center) {
+                        Text(vtext.ifBlank { "Type your status…" }, color = Color.White, textAlign = TextAlign.Center, fontWeight = FontWeight.SemiBold,
+                            style = MaterialTheme.typography.titleMedium, maxLines = 6, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(18.dp))
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(vtext, { vtext = it }, placeholder = { Text("Type your status…") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), maxLines = 4)
                     Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(
-                        vtext, { vtext = it },
-                        placeholder = { Text("Type your status…") },
-                        modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), maxLines = 4,
-                        trailingIcon = {
-                            // mic → generate & preview the AI voice for this text (does NOT post)
-                            IconButton(enabled = vtext.isNotBlank(), onClick = { previewUrl = GatewayClient.ttsPreviewUrl(vtext.trim(), settings.aiTtsVoice) }) {
-                                Box(Modifier.size(38.dp).background((if (vtext.isNotBlank()) AYX_GREEN else MaterialTheme.colorScheme.onSurface).copy(alpha = 0.16f), CircleShape), contentAlignment = Alignment.Center) {
-                                    Icon(Icons.Filled.Mic, "record", tint = if (vtext.isNotBlank()) AYX_GREEN else MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
-                        })
-                    if (previewUrl != null) {
-                        Spacer(Modifier.height(12.dp))
-                        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f), modifier = Modifier.fillMaxWidth()) {
-                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text("PREVIEW", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
-                                AudioPlayer(previewUrl!!, AYX_GREEN)
-                                Text("Tap ▶ to hear the AI voice before posting. Edit the text and tap 🎙 again to re-record.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        bgColors.forEachIndexed { i, c ->
+                            Box(Modifier.size(34.dp).clip(CircleShape).background(Color(c))
+                                .border(if (i == bgIdx) 3.dp else 1.dp, if (i == bgIdx) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.35f), CircleShape)
+                                .clickable { bgIdx = i })
                         }
                     }
                 }
             },
             confirmButton = {
                 TextButton(enabled = vtext.isNotBlank(), onClick = {
-                    val t = vtext.trim(); voiceStatusDlg = false
+                    val t = vtext.trim(); textStatusDlg = false
                     if (t.isNotEmpty()) scope.launch {
-                        notify("Creating voice status…")
-                        val res = GatewayClient.postVoiceStatus(t, "all", emptyList())
+                        notify("Posting text status…")
+                        val res = GatewayClient.postTextStatus(t, hex(bgColors[bgIdx]), "all", emptyList())
                         notify((if (res.first) "✅ " else "❌ ") + res.second)
                         if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) }
                     }
                 }) { Text("Post", color = AYX_GREEN) }
             },
-            dismissButton = { TextButton(onClick = { voiceStatusDlg = false }) { Text("Cancel") } }
+            dismissButton = { TextButton(onClick = { textStatusDlg = false }) { Text("Cancel") } }
         )
     }
 
@@ -1026,7 +1025,22 @@ fun GatewayApp() {
         }
     }
 
+    // Header hides as you scroll the chats/status list (slides up), shows again on scroll up.
+    var headerVisible by remember { mutableStateOf(true) }
+    LaunchedEffect(screen, openChat, searchMode) { headerVisible = true }   // always visible when (re)entering a screen or searching
+    val homeScrollConn = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (available.y < -5f) headerVisible = false        // finger up / content scrolls down → hide
+                else if (available.y > 5f) headerVisible = true     // finger down / content scrolls up → show
+                return Offset.Zero
+            }
+        }
+    }
+    val homeActive = openChat == null && screen == "chats"
+
     Scaffold(
+        modifier = if (homeActive) Modifier.nestedScroll(homeScrollConn) else Modifier,
         floatingActionButton = {
             if (status.registered && openChat == null && screen == "chats") {
                 if (chatsPage == 1) Box {
@@ -1034,8 +1048,8 @@ fun GatewayApp() {
                     DropdownMenu(expanded = statusFabMenu, onDismissRequest = { statusFabMenu = false }) {
                         DropdownMenuItem(text = { Text("Photo / Video") }, leadingIcon = { Icon(Icons.Filled.PhotoCamera, null) },
                             onClick = { statusFabMenu = false; ensureContacts(); statusPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) })
-                        DropdownMenuItem(text = { Text("Voice status (AI)") }, leadingIcon = { Icon(Icons.Filled.GraphicEq, null) },
-                            onClick = { statusFabMenu = false; ensureContacts(); voiceStatusDlg = true })
+                        DropdownMenuItem(text = { Text("Text status") }, leadingIcon = { Icon(Icons.Filled.TextFields, null) },
+                            onClick = { statusFabMenu = false; ensureContacts(); textStatusDlg = true })
                     }
                 }
                 else FloatingActionButton(onClick = { screen = "newchat"; ensureContacts() }) { Icon(Icons.Filled.Add, "new chat") }
@@ -1044,8 +1058,11 @@ fun GatewayApp() {
         topBar = {
             // Chat screen renders edge-to-edge with its own floating glass header, so the shared app bar is drawn only off-chat.
             if (openChat == null) {
-            Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 8.dp, tonalElevation = 2.dp,
-                shape = RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp), modifier = Modifier.fillMaxWidth()) {
+            AnimatedVisibility(visible = headerVisible,
+                enter = slideInVertically { -it } + expandVertically(),
+                exit = slideOutVertically { -it } + shrinkVertically()) {
+            Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f), shadowElevation = 8.dp, tonalElevation = 2.dp,
+                shape = RoundedCornerShape(bottomStart = 26.dp, bottomEnd = 26.dp), modifier = Modifier.fillMaxWidth()) {
             CenterAlignedTopAppBar(
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
                 title = {
@@ -1121,6 +1138,7 @@ fun GatewayApp() {
                     }
                 }
             )
+            }
             }
             }
         }
@@ -3497,7 +3515,12 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                         }
                     }
                 } else {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(st.text.ifBlank { "…" }, color = Color.White, modifier = Modifier.padding(24.dp)) }
+                    // text status → centred on its chosen background colour (WhatsApp-style)
+                    val tbg = st.bg?.let { runCatching { Color(android.graphics.Color.parseColor(it)) }.getOrNull() } ?: Color(0xFF128C7E)
+                    Box(Modifier.fillMaxSize().background(tbg), contentAlignment = Alignment.Center) {
+                        Text(st.text.ifBlank { "…" }, color = Color.White, textAlign = TextAlign.Center, fontWeight = FontWeight.SemiBold,
+                            style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(28.dp))
+                    }
                 }
                 if (st.text.isNotBlank() && st.mediaType != null) {
                     Text(st.text, color = Color.White, modifier = Modifier.align(Alignment.BottomCenter).padding(28.dp))
