@@ -358,7 +358,7 @@ internal fun VoicePickerScreen(settings: GatewayClient.Settings, onToggle: (JSON
             }
         }
 
-        Text("Voice chuno — ▶ se demo suno, phir tap karke select. AI voice-note isi awaaz me reply dega.",
+        Text("Voice chuno — ▶ se demo suno, phir tap karke select. Reply ek real recording voice-note me jata hai. Koi Bangla bole to apne-aap Bangla awaaz me switch ho jayega.",
             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 2.dp))
 
         FilledTonalButton(onClick = {

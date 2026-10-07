@@ -2118,7 +2118,7 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
 
     // Custom commands
     SettingsGroup("Commands") {
-        SettingRow(Icons.Filled.Terminal, Color(0xFFB69DF8), "Enable /create & /prompt", "/create <text> makes an image (free) · /prompt on an image gives its prompt", settings.aiCommandsEnabled) { onToggle(JSONObject().put("aiCommandsEnabled", it)) }
+        SettingRow(Icons.Filled.Terminal, Color(0xFFB69DF8), "Enable /create, /prompt & /voice", "/create <text> → image · /prompt on an image → its prompt · /voice <text> → voice note", settings.aiCommandsEnabled) { onToggle(JSONObject().put("aiCommandsEnabled", it)) }
     }
 
     // Reply language — pick ONE language so the AI stops mixing Hindi/Bangla
