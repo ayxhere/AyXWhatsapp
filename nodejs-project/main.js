@@ -839,16 +839,31 @@ async function sarvamTts(text, speaker, lang, codec) {
     return Buffer.from(b64, 'base64')
   } catch (e) { clearTimeout(to); _sarvamErr = e?.message || 'err'; log('sarvam err', e?.message); return null }
 }
-// Prefer OPUS (WhatsApp's native voice codec → a real "recording" voice note). If Sarvam's opus
-// isn't OGG-wrapped on this account, remember that and fall back to MP3. Returns { buf, mime, ptt }.
+// Decide the WhatsApp mime + ptt from the ACTUAL audio bytes (never trust the requested codec).
+// OGG/Opus = WhatsApp's own voice codec → real voice note (ptt:true, plays directly). Everything
+// else goes as a normal audio message (ptt:false) — sending non-opus as ptt makes WhatsApp say
+// "this audio is not available / something is wrong with the audio file".
+function audioKind(buf) {
+  if (!buf || buf.length < 4) return { mime: 'audio/mpeg', ptt: false }
+  const h = buf.toString('latin1', 0, 4)
+  if (h === 'OggS') return { mime: 'audio/ogg; codecs=opus', ptt: true }   // real voice note
+  if (h === 'RIFF') return { mime: 'audio/wav', ptt: false }
+  if (h.slice(0, 3) === 'ID3') return { mime: 'audio/mpeg', ptt: false }
+  if (buf[0] === 0xFF && (buf[1] & 0xE0) === 0xE0) return { mime: 'audio/mpeg', ptt: false }   // mp3 frame sync
+  if (buf.length > 11 && buf.toString('latin1', 4, 8) === 'ftyp') return { mime: 'audio/mp4', ptt: false }
+  return { mime: 'audio/mpeg', ptt: false }
+}
+function mkAudio(buf) { if (!buf || !buf.length) return null; const k = audioKind(buf); return { buf, mime: k.mime, ptt: k.ptt } }
+// Prefer OPUS (WhatsApp's native voice codec → a real voice note that plays directly). If Sarvam's
+// opus isn't OGG-wrapped on this account, remember that and fall back to MP3 (sent as normal audio).
 async function sarvamTtsSmart(text, speaker, lang) {
   if (_sarvamOpusOk !== false) {
     const o = await sarvamTts(text, speaker, lang, 'opus')
-    if (o && o.length > 4 && o.toString('latin1', 0, 4) === 'OggS') { _sarvamOpusOk = true; return { buf: o, mime: 'audio/ogg; codecs=opus', ptt: true } }
+    if (o && o.length > 4 && o.toString('latin1', 0, 4) === 'OggS') { _sarvamOpusOk = true; return mkAudio(o) }
     if (o) _sarvamOpusOk = false   // got bytes but not OGG → opus unusable as a voice note here
   }
   const m = await sarvamTts(text, speaker, lang, 'mp3')
-  if (m) return { buf: m, mime: 'audio/mpeg', ptt: true }
+  if (m) return mkAudio(m)
   return null
 }
 // TTS language code from any text's native script. '' if romanized/unknown (can't tell hi vs bn).
@@ -870,35 +885,34 @@ function pollyFallback(voice) {
   return 'Joanna'
 }
 
-// Produce speech. Returns { buf, mime } or null. HUMAN voices only — NO Google robot.
-// PlayAI/Orpheus → Groq (existing key, best). Neural → Edge. Polly → StreamElements.
-// If nothing human works, return null (caller sends TEXT instead — never the robot voice).
-// langOverride ('hi-IN'/'bn-IN') forces the spoken language regardless of the selected voice —
-// used for auto Hindi↔Bangla switch. Returns { buf, mime, ptt } or null (caller sends text).
+// Produce speech → { buf, mime, ptt } or null (caller sends TEXT). mime + ptt always come from the
+// ACTUAL bytes (mkAudio), so a real voice note only goes out as true OGG/Opus — never a broken ptt.
+// Sarvam (OGG/Opus) is the only engine that plays reliably on this network (Edge/StreamElements are
+// blocked, Groq is WAV which WhatsApp won't play as a voice note), so prefer it whenever a key exists.
+// langOverride ('hi-IN'/'bn-IN') forces the spoken language (auto Hindi↔Bangla switch).
 async function synthVoice(text, voice, langOverride) {
   if (!text) return null
   const v = voice || 'Arista-PlayAI'
-  const indic = langOverride && (langOverride.startsWith('bn') || langOverride.startsWith('hi'))
-  // Sarvam path: a sarvam voice is selected, OR we need Hindi/Bangla and have a key (auto-switch)
-  if (v.startsWith('sarvam:') || (indic && settings.aiSarvamKey)) {
-    const parts = v.split(':')
-    const lang = langOverride || parts[1] || 'hi-IN'
-    const speaker = (v.startsWith('sarvam:') ? parts[2] : '') || 'priya'
+  // target language: explicit override → native script of the text → default Hindi (this user base)
+  const lang = langOverride || ttsLangCode(text) || 'hi-IN'
+  // Sarvam first (real WhatsApp-native voice note that plays directly)
+  if (settings.aiSarvamKey) {
+    const speaker = v.startsWith('sarvam:') ? (v.split(':')[2] || 'priya') : 'priya'
     const r = await sarvamTtsSmart(text, speaker, lang)
     if (r) return r
-    if (v.startsWith('sarvam:')) return null   // sarvam chosen but failed → text reply (no robot)
-    // else: English voice but Indic needed and Sarvam failed → fall through to English providers
+    if (v.startsWith('sarvam:')) return null   // sarvam voice chosen but failed → text reply (no robot)
+    // else: fall through to other engines
   }
   if (/-PlayAI$/i.test(v) || /^(troy|hannah|austin)$/i.test(v)) {
-    const g = await groqTts(text, v); if (g) return { buf: g, mime: 'audio/wav', ptt: true }
+    const g = await groqTts(text, v); if (g) return mkAudio(g)
   } else if (/Neural/i.test(v)) {
-    const ogg = await edgeTtsOgg(text, v); if (ogg && ogg.length > 500) return { buf: ogg, mime: 'audio/ogg; codecs=opus', ptt: true }
-    const se = await streamElementsTts(text, pollyFallback(v)); if (se) return { buf: se, mime: 'audio/mpeg', ptt: true }
-  } else {
-    const se = await streamElementsTts(text, v); if (se) return { buf: se, mime: 'audio/mpeg', ptt: true }
+    const ogg = await edgeTtsOgg(text, v); if (ogg && ogg.length > 500) return mkAudio(ogg)
+    const se = await streamElementsTts(text, pollyFallback(v)); if (se) return mkAudio(se)
+  } else if (!v.startsWith('sarvam:')) {
+    const se = await streamElementsTts(text, v); if (se) return mkAudio(se)
   }
   // last resort: Groq human voice (NOT Google). If this also fails, caller falls back to a text reply.
-  const g2 = await groqTts(text, /-PlayAI$/i.test(v) ? v : 'Arista-PlayAI'); if (g2) return { buf: g2, mime: 'audio/wav', ptt: true }
+  const g2 = await groqTts(text, /-PlayAI$/i.test(v) ? v : 'Arista-PlayAI'); if (g2) return mkAudio(g2)
   return null
 }
 
