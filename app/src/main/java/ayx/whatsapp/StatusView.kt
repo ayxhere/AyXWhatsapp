@@ -50,7 +50,7 @@ fun StatusViewersSheet(statusIds: List<String>, onClose: () -> Unit) {
         loading = false
     }
     Dialog(onDismissRequest = onClose) {
-        Surface(shape = RoundedCornerShape(18.dp), color = Color(0xFF15211D)) {
+        Surface(shape = RoundedCornerShape(18.dp), color = Color(0xFF0A0A0A)) {
             Column(Modifier.padding(18.dp).fillMaxWidth().heightIn(max = 480.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Filled.Visibility, null, tint = Color.White)

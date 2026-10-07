@@ -55,6 +55,8 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.ui.input.pointer.pointerInput
@@ -203,12 +205,12 @@ private val IOS_BLUE = Color(0xFF0A84FF)
 private val AYX_GREEN = Color(0xFF25D366)
 private val AYX_RED = Color(0xFFFF5A5A)
 
-// One shared background for ALL dialogs/sheets app-wide — a distinct, brand-tinted surface
-// (deep teal-green in dark / amoled, soft mint in light) so dialogs read apart from plain cards.
+// One shared background for ALL dialogs/sheets app-wide. Follows the active theme:
+// black in dark / amoled, white in light. (A hair off pure values so there's a faint edge.)
 @Composable
 internal fun dialogBg(): Color {
     val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
-    return if (dark) Color(0xFF15211D) else Color(0xFFEDF5F0)
+    return if (dark) Color(0xFF0A0A0A) else Color(0xFFFFFFFF)
 }
 
 private const val PRIVACY_TEXT = """WA Gateway runs entirely on your device. It does not collect, sell, or send your chats, contacts, or personal data to us or any third party.
@@ -537,7 +539,6 @@ fun GatewayApp() {
     var viewVideoUrl by remember { mutableStateOf<String?>(null) }
     var dpView by remember { mutableStateOf<String?>(null) }   // jid whose profile photo is previewed full-screen
     var toast by remember { mutableStateOf<String?>(null) }
-    var statusResult by remember { mutableStateOf<String?>(null) }
     val optimistic = remember { mutableStateListOf<OptMsg>() }
     val dpCache = remember { mutableStateMapOf<String, ImageBitmap?>() }
     val previewCache = remember { mutableStateMapOf<String, ImageBitmap?>() }
@@ -559,7 +560,6 @@ fun GatewayApp() {
     var pendingMedia by remember { mutableStateOf<Pair<Uri, String>?>(null) }
     var chatsPage by remember { mutableStateOf(0) }
     var storyView by remember { mutableStateOf<String?>(null) }
-    var processing by remember { mutableStateOf<String?>(null) }
     var myJid by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(status.registered) { if (status.registered) { val j = GatewayClient.getMe(); if (j.isNotBlank()) myJid = j } }
     var pendingLockOpen by remember { mutableStateOf<String?>(null) }
@@ -773,17 +773,6 @@ fun GatewayApp() {
         }
     }
 
-    processing?.let { msg ->
-        Dialog(onDismissRequest = {}) {
-            Surface(shape = RoundedCornerShape(16.dp), color = dialogBg()) {
-                Column(Modifier.padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator()
-                    Spacer(Modifier.height(14.dp))
-                    Text(msg)
-                }
-            }
-        }
-    }
 
     storyView?.let { sender ->
         StatusViewer(statuses, sender, dpCache,
@@ -811,9 +800,9 @@ fun GatewayApp() {
                 try {
                     if (song == null) {
                         val bytes = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(u)?.use { it.readBytes() } }
-                        if (bytes != null) { notify("uploading status…"); val res = GatewayClient.postStatus(t, Base64.encodeToString(bytes, Base64.NO_WRAP), caption, audience, recipients); statusResult = (if (res.first) "✅ " else "❌ ") + res.second; if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) } }
+                        if (bytes != null) { notify("uploading status…"); val res = GatewayClient.postStatus(t, Base64.encodeToString(bytes, Base64.NO_WRAP), caption, audience, recipients); notify((if (res.first) "✅ " else "❌ ") + res.second); if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) } }
                     } else {
-                        processing = "Creating video…"
+                        notify("Creating status video…")
                         val finalMp4 = withContext(Dispatchers.IO) {
                             val dir = ctx.cacheDir
                             val stamp = System.currentTimeMillis()
@@ -831,11 +820,11 @@ fun GatewayApp() {
                             val vOk = if (t == "image") MediaTools.photosToVideo(ctx, listOf(u), vFile, durMs, adjusted, lyricY, lyricScale, animStyle) { }
                                       else runCatching { ctx.contentResolver.openInputStream(u)?.use { inp -> FileOutputStream(vFile).use { inp.copyTo(it) } }; true }.getOrDefault(false)
                             if (!vOk) return@withContext null
-                            processing = "Preparing audio…"
+                            notify("Preparing audio…")
                             // song audio; if it fails, fall back to a silent AAC track so the MP4 always has audio (WhatsApp needs it)
                             val haveSong = song != null && MediaTools.downloadAndTrimAudio(song.url, aFile, tStart, tEnd) && aFile.length() > 0
                             val audioSrc = if (haveSong) aFile else File(dir, "sil_$stamp.m4a").also { MediaTools.makeSilentAac(durMs, it) }
-                            processing = "Finalizing video…"
+                            notify("Finalizing video…")
                             val muxTmp = File(dir, "mux_$stamp.mp4")
                             if (!MediaTools.muxVideoAudio(vFile, audioSrc, muxTmp)) return@withContext null
                             // move moov atom to front (faststart) so WhatsApp can play it; fall back to raw mux if it fails
@@ -845,16 +834,15 @@ fun GatewayApp() {
                             outFile
                         }
                         if (finalMp4 != null && finalMp4.exists()) {
-                            processing = "Uploading…"
+                            notify("Uploading…")
                             val bytes = withContext(Dispatchers.IO) { finalMp4.readBytes() }
                             val res = GatewayClient.postStatus("video", Base64.encodeToString(bytes, Base64.NO_WRAP), caption, audience, recipients)
-                            statusResult = (if (res.first) "✅ " else "❌ ") + res.second
+                            notify((if (res.first) "✅ " else "❌ ") + res.second)
                             runCatching { finalMp4.delete() }
                             if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) }
                         } else notify("video processing failed")
-                        processing = null
                     }
-                } catch (e: Exception) { processing = null; notify("failed: " + e.message) }
+                } catch (e: Exception) { notify("failed: " + e.message) }
             }
         }, onCancel = { pendingStatus = null })
     }
@@ -900,10 +888,9 @@ fun GatewayApp() {
                 TextButton(enabled = vtext.isNotBlank(), onClick = {
                     val t = vtext.trim(); voiceStatusDlg = false
                     if (t.isNotEmpty()) scope.launch {
-                        processing = "Creating voice status…"
+                        notify("Creating voice status…")
                         val res = GatewayClient.postVoiceStatus(t, "all", emptyList())
-                        processing = null
-                        statusResult = (if (res.first) "✅ " else "❌ ") + res.second
+                        notify((if (res.first) "✅ " else "❌ ") + res.second)
                         if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) }
                     }
                 }) { Text("Post", color = AYX_GREEN) }
@@ -1057,8 +1044,10 @@ fun GatewayApp() {
         topBar = {
             // Chat screen renders edge-to-edge with its own floating glass header, so the shared app bar is drawn only off-chat.
             if (openChat == null) {
+            Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 8.dp, tonalElevation = 2.dp,
+                shape = RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp), modifier = Modifier.fillMaxWidth()) {
             CenterAlignedTopAppBar(
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
+                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
                 title = {
                     if (searchMode && openChat == null && screen == "chats") {
                         OutlinedTextField(searchQuery, { searchQuery = it }, placeholder = { Text("Search chats") },
@@ -1132,6 +1121,7 @@ fun GatewayApp() {
                     }
                 }
             )
+            }
             }
         }
     ) { pad ->
@@ -1246,15 +1236,6 @@ fun GatewayApp() {
                     modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 90.dp)) {
                     Text(it, Modifier.padding(12.dp, 8.dp), color = MaterialTheme.colorScheme.inverseOnSurface)
                 }
-            }
-            statusResult?.let { msg ->
-                AlertDialog(
-                    onDismissRequest = { statusResult = null },
-                    containerColor = dialogBg(),
-                    confirmButton = { TextButton(onClick = { statusResult = null }) { Text("OK") } },
-                    title = { Text("Status upload") },
-                    text = { Text(msg, style = MaterialTheme.typography.bodyMedium) }
-                )
             }
             if (showSetName && openChat != null) {
                 val jidForName = openChat!!
@@ -3060,9 +3041,22 @@ private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, statuses: List<Ga
         while (pager.currentPage == 1) { onLoadStatuses(); delay(5000) }
     }
     Column(Modifier.fillMaxSize()) {
-        TabRow(selectedTabIndex = pager.currentPage, containerColor = MaterialTheme.colorScheme.surface, divider = {}) {
-            Tab(selected = pager.currentPage == 0, onClick = { cs.launch { pager.animateScrollToPage(0) } }, text = { Text("Chats") })
-            Tab(selected = pager.currentPage == 1, onClick = { cs.launch { pager.animateScrollToPage(1) } }, text = { Text("Status") })
+        // Custom tab bar — short rounded indicator that FOLLOWS the swipe (feels responsive, no lag).
+        Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
+            Row(Modifier.fillMaxWidth().height(44.dp)) {
+                listOf("Chats", "Status").forEachIndexed { i, label ->
+                    val sel = pager.currentPage == i
+                    Box(Modifier.weight(1f).fillMaxHeight().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { cs.launch { pager.animateScrollToPage(i) } }, contentAlignment = Alignment.Center) {
+                        Text(label, color = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal)
+                    }
+                }
+            }
+            BoxWithConstraints(Modifier.fillMaxWidth().height(3.dp)) {
+                val tabW = maxWidth / 2
+                val indW = 26.dp
+                val frac = (pager.currentPage + pager.currentPageOffsetFraction).coerceIn(0f, 1f)
+                Box(Modifier.offset(x = tabW * frac + (tabW - indW) / 2).width(indW).height(3.dp).clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.primary))
+            }
         }
         HorizontalPager(state = pager, modifier = Modifier.weight(1f).fillMaxWidth()) { page ->
             if (page == 0) ChatList(messages, dpCache, query, onDelete, onOpen)
@@ -3210,6 +3204,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
         lyricBusy = false
     }
     var musicOpen by remember { mutableStateOf(false) }
+    val editorBlur by animateDpAsState(if (musicOpen) 18.dp else 0.dp, label = "editorblur")   // blur editor behind the music sheet
     val player = remember { MediaPlayer() }
     var playing by remember { mutableStateOf(false) }
     DisposableEffect(Unit) { onDispose { runCatching { player.release() } } }
@@ -3225,7 +3220,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     val audLabel = when (audience) { "except" -> "Except " + selected.size; "only" -> "Only " + selected.size; else -> "My contacts" }
     Dialog(onDismissRequest = onCancel, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize(), color = Color.Black) {
-            Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding().padding(12.dp)) {
+            Column(Modifier.fillMaxSize().blur(editorBlur).statusBarsPadding().navigationBarsPadding().imePadding().padding(12.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onCancel) { Icon(Icons.Filled.Close, "close", tint = Color.White) }
                     Text("New status", color = Color.White, fontWeight = FontWeight.Bold)
@@ -3316,10 +3311,10 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                 }
                 // Caption — rounded frosted (light-blur) box, sitting ABOVE the send box
                 Box(Modifier.fillMaxWidth().padding(top = 8.dp).clip(RoundedCornerShape(24.dp))) {
-                    Box(Modifier.matchParentSize().background(Color.White.copy(alpha = 0.08f)))
-                    // soft blurred sheen → frosted-glass feel
-                    Box(Modifier.matchParentSize().blur(22.dp).background(
-                        Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.16f), Color.White.copy(alpha = 0.03f)))))
+                    Box(Modifier.matchParentSize().background(Color.White.copy(alpha = 0.07f)))
+                    // very soft sheen → subtle frosted-glass feel
+                    Box(Modifier.matchParentSize().blur(6.dp).background(
+                        Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.08f), Color.White.copy(alpha = 0.02f)))))
                     OutlinedTextField(caption, { caption = it }, placeholder = { Text("Add a caption…", color = Color.White.copy(alpha = 0.6f)) }, maxLines = 3, shape = RoundedCornerShape(24.dp),
                         colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.White.copy(alpha = 0.22f), unfocusedBorderColor = Color.White.copy(alpha = 0.10f),
                             focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
@@ -3600,10 +3595,13 @@ private fun MusicSearchSheet(onSelect: (GatewayClient.Song) -> Unit, onClose: ()
     var previewUrl by remember { mutableStateOf<String?>(null) }
     val player = remember { MediaPlayer() }
     val lyricsAvail = remember { mutableStateMapOf<String, Boolean>() }
+    // a reliable popular artist so the suggested list is never empty on open ("default songs")
+    val defaultQ = remember { listOf("arijit singh", "pritam", "atif aslam", "neha kakkar", "honey singh", "shreya ghoshal").random() }
     DisposableEffect(Unit) { onDispose { runCatching { player.release() } } }
     LaunchedEffect(q) {
-        if (q.trim().length >= 2) { loading = true; delay(450); val r = GatewayClient.searchMusic(q.trim()); results = r.first; error = r.second; loading = false }
-        else { results = emptyList(); error = "" }
+        val query = q.trim()
+        if (query.length >= 2) { loading = true; delay(450); val r = GatewayClient.searchMusic(query); results = r.first; error = r.second; loading = false }
+        else { loading = true; val r = GatewayClient.searchMusic(defaultQ); results = r.first; error = r.second; loading = false }   // default/suggested songs
     }
     // check lyrics availability for the visible songs (cached, throttled)
     LaunchedEffect(results) {
@@ -3615,20 +3613,39 @@ private fun MusicSearchSheet(onSelect: (GatewayClient.Song) -> Unit, onClose: ()
             }
         }
     }
-    Dialog(onDismissRequest = { runCatching { player.stop() }; onClose() }) {
-        Surface(shape = RoundedCornerShape(16.dp), color = dialogBg()) {
-            Column(Modifier.padding(12.dp).heightIn(max = 540.dp)) {
-                Text("Add music", fontWeight = FontWeight.Bold)
-                Text("tap ▶ to preview, tap song to use", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(q, { q = it }, placeholder = { Text("Search songs…") }, leadingIcon = { Icon(Icons.Filled.Search, null) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
-                if (!loading && results.isEmpty() && q.trim().length >= 2) {
-                    Text(if (error.isNotBlank()) "No songs (" + error.take(120) + ")" else "No results", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 8.dp))
-                }
-                Spacer(Modifier.height(6.dp))
-                LazyColumn(Modifier.fillMaxWidth()) {
-                    itemsIndexed(results) { _, sg ->
+    // Full-screen bottom sheet. Back dismisses (Dialog). Swipe DOWN on the handle dismisses → reveals the editor.
+    Dialog(onDismissRequest = { runCatching { player.stop() }; onClose() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+            Surface(shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp), color = dialogBg(),
+                tonalElevation = 3.dp, shadowElevation = 16.dp,
+                modifier = Modifier.fillMaxWidth().fillMaxHeight(0.92f)) {
+                Column(Modifier.fillMaxSize().navigationBarsPadding().padding(horizontal = 14.dp)) {
+                    // drag handle + title — swipe DOWN here to close
+                    Column(Modifier.fillMaxWidth().pointerInput(Unit) {
+                        var acc = 0f
+                        detectVerticalDragGestures(onDragEnd = { if (acc > 120f) { runCatching { player.stop() }; onClose() }; acc = 0f }) { _, dy -> acc += dy }
+                    }) {
+                        Box(Modifier.fillMaxWidth().padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
+                            Box(Modifier.size(width = 42.dp, height = 5.dp).clip(RoundedCornerShape(3.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f)))
+                        }
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Add music", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                                Text("tap ▶ to preview, tap song to use", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            IconButton(onClick = { runCatching { player.stop() }; onClose() }) { Icon(Icons.Filled.Close, "close") }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(q, { q = it }, placeholder = { Text("Search songs…") }, leadingIcon = { Icon(Icons.Filled.Search, null) }, singleLine = true, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth())
+                        if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
+                        if (!loading && results.isEmpty() && q.trim().length >= 2) {
+                            Text(if (error.isNotBlank()) "No songs (" + error.take(120) + ")" else "No results", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 8.dp))
+                        }
+                        if (q.trim().length < 2) Text("Suggested", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp, start = 2.dp))
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    LazyColumn(Modifier.fillMaxSize()) {
+                        itemsIndexed(results) { _, sg ->
                         Row(Modifier.fillMaxWidth().clickable { runCatching { player.stop() }; onSelect(sg) }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                             IconButton(onClick = {
                                 if (previewUrl == sg.url) { runCatching { player.pause() }; previewUrl = null }
@@ -3654,6 +3671,7 @@ private fun MusicSearchSheet(onSelect: (GatewayClient.Song) -> Unit, onClose: ()
                 }
             }
         }
+    }
     }
 }
 

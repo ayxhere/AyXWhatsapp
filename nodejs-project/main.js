@@ -891,10 +891,26 @@ function finalizeVoice(buf) {
   }
   return mkAudio(buf)   // fallback: plain audio message (plays, just not a voice-note bubble)
 }
-// Sarvam → ask for WAV (clean PCM) and encode to OGG/Opus ourselves → a real voice note.
+// Sarvam → get a REAL WhatsApp voice note as reliably as possible.
+// 1) ask Sarvam for opus directly: it returns OGG/Opus (WhatsApp's own codec) → a true voice note
+//    with NO on-device encoder needed (opusscript's WASM can fail inside nodejs-mobile — this avoids it).
+// 2) else WAV → encode locally to OGG/Opus (needs opusscript).
+// 3) else mp3 → plays as a normal audio message.
 async function sarvamTtsSmart(text, speaker, lang) {
+  if (_sarvamOpusOk !== false) {
+    const o = await sarvamTts(text, speaker, lang, 'opus')
+    if (o && o.length > 40) {
+      if (o.toString('latin1', 0, 4) === 'OggS') { _sarvamOpusOk = true; return { buf: o, mime: 'audio/ogg; codecs=opus', ptt: true } }
+      // not OGG-wrapped (raw/opus or other) — try to finalize, else remember and drop to WAV
+      const fin = finalizeVoice(o)
+      if (fin && fin.ptt) return fin
+      _sarvamOpusOk = false
+    } else if (o === null) { /* request failed; keep trying opus next time */ }
+  }
   const w = await sarvamTts(text, speaker, lang, 'wav')
   if (w) return finalizeVoice(w)
+  const m = await sarvamTts(text, speaker, lang, 'mp3')
+  if (m) return mkAudio(m)
   return null
 }
 // TTS language code from any text's native script. '' if romanized/unknown (can't tell hi vs bn).
@@ -1046,6 +1062,13 @@ function captureDelete(delId) {
     orig.deleted = true // same object lives in msgLog too -> marked in place, no duplicate
     saveMessagesDebounced()
     log('marked deleted:', JSON.stringify(orig.text))
+  }
+  // a REVOKE can also be for a STATUS — drop it from the status list so a status deleted
+  // on the real WhatsApp app (or elsewhere) also disappears from AyX.
+  if (delId) {
+    const before = statuses.length
+    statuses = statuses.filter(x => x.id !== delId)
+    if (statuses.length !== before) { saveStatusesDebounced(); log('status revoked → removed from AyX:', delId) }
   }
 }
 
@@ -2204,13 +2227,12 @@ app.post('/status/delete', async (req, res) => {
     if (!sock) return res.status(409).json({ error: 'not connected' })
     const id = String(req.body?.id || '')
     if (!id) return res.status(400).json({ error: 'id required' })
-    let meJid
-    try { meJid = sock?.user?.id ? sock.user.id.split(':')[0] + '@s.whatsapp.net' : undefined } catch (_) {}
+    // Own-status revoke: key is just { status@broadcast, fromMe, id }. Adding a `participant`
+    // makes it look like a group message and the revoke silently no-ops, so we DON'T set it.
     const key = { remoteJid: 'status@broadcast', id, fromMe: true }
-    if (meJid) key.participant = meJid
     let ok = false, err = ''
-    try { await sock.sendMessage('status@broadcast', { delete: key }); ok = true }
-    catch (e) { err = (e && e.message) || 'delete failed' }
+    try { await sock.sendMessage('status@broadcast', { delete: key }); ok = true; log('status delete sent → WhatsApp:', id) }
+    catch (e) { err = (e && e.message) || 'delete failed'; log('status delete err:', err) }
     statuses = statuses.filter(x => x.id !== id); saveStatusesDebounced()
     res.json({ ok, error: err })
   } catch (e) { res.status(500).json({ error: e && e.message }) }
