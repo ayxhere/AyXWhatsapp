@@ -102,6 +102,12 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.Checklist
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.DoneAll
@@ -139,6 +145,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.blur
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.FilterQuality
@@ -281,11 +289,33 @@ private fun fmt(ts: Long) = if (ts > 0) timeFmt.format(Date(ts)).lowercase(Local
 object ChatFlags {
     val hidden = androidx.compose.runtime.mutableStateMapOf<String, Boolean>()
     val locked = androidx.compose.runtime.mutableStateMapOf<String, Boolean>()
+    // chat jid -> epoch millis until which the chat is muted (Long.MAX_VALUE = permanently)
+    val muteUntil = androidx.compose.runtime.mutableStateMapOf<String, Long>()
+    const val MUTE_FOREVER = Long.MAX_VALUE
     var reveal by androidx.compose.runtime.mutableStateOf(false)
     var prefs: android.content.SharedPreferences? = null
-    private fun save() { prefs?.edit()?.putStringSet("hidden", hidden.keys.toSet())?.putStringSet("locked", locked.keys.toSet())?.apply() }
+    private fun save() {
+        prefs?.edit()
+            ?.putStringSet("hidden", hidden.keys.toSet())
+            ?.putStringSet("locked", locked.keys.toSet())
+            ?.putStringSet("mute", muteUntil.entries.map { it.key + "|" + it.value }.toSet())
+            ?.apply()
+    }
+    fun loadMutes() { prefs?.getStringSet("mute", emptySet())?.forEach { val i = it.lastIndexOf('|'); if (i > 0) muteUntil[it.substring(0, i)] = it.substring(i + 1).toLongOrNull() ?: 0L } }
+    // load from prefs on demand (e.g. the background service checking mute before posting a notification)
+    fun ensure(ctx: android.content.Context) {
+        if (prefs != null) return
+        val p = ctx.getSharedPreferences("wagw", android.content.Context.MODE_PRIVATE)
+        prefs = p
+        p.getStringSet("hidden", emptySet())?.forEach { hidden[it] = true }
+        p.getStringSet("locked", emptySet())?.forEach { locked[it] = true }
+        loadMutes()
+    }
     fun toggleHidden(jid: String) { if (hidden[jid] == true) hidden.remove(jid) else hidden[jid] = true; save() }
     fun toggleLocked(jid: String) { if (locked[jid] == true) locked.remove(jid) else locked[jid] = true; save() }
+    fun muteFor(jid: String, millis: Long) { muteUntil[jid] = if (millis >= MUTE_FOREVER) MUTE_FOREVER else System.currentTimeMillis() + millis; save() }
+    fun unmute(jid: String) { muteUntil.remove(jid); save() }
+    fun isMuted(jid: String): Boolean { val u = muteUntil[jid] ?: return false; if (u == MUTE_FOREVER) return true; if (u > System.currentTimeMillis()) return true; muteUntil.remove(jid); return false }
 }
 
 // per-status-sender flags — same idea as ChatFlags but for the Status tab (long-press = mute / hide / lock)
@@ -629,6 +659,7 @@ fun GatewayApp() {
         StatusFlags.reveal = false
         blkPrefs.getStringSet("hidden", emptySet())!!.forEach { ChatFlags.hidden[it] = true }
         blkPrefs.getStringSet("locked", emptySet())!!.forEach { ChatFlags.locked[it] = true }
+        ChatFlags.loadMutes()
     }
     var blockedJids by remember { mutableStateOf(blkPrefs.getStringSet("blocked", emptySet())!!.toSet()) }
     LaunchedEffect(openChat) { loadChatWp(openChat); NodeService.currentOpenChat = openChat; openChat?.let { NotificationHelper.cancel(ctx, it) } }
@@ -1297,20 +1328,26 @@ private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<Stri
         }
         return
     }
-    LazyColumn(Modifier.fillMaxSize()) {
+    // long-press a chat → blur the list behind + a floating action sheet (iOS/WhatsApp style)
+    var menuChat by remember { mutableStateOf<String?>(null) }
+    var mutePick by remember { mutableStateOf<String?>(null) }
+    val blurDp by animateDpAsState(if (menuChat != null || mutePick != null) 18.dp else 0.dp, label = "homeblur")
+
+    LazyColumn(Modifier.fillMaxSize().blur(blurDp)) {
         itemsIndexed(groups, key = { _, e -> e.key }) { _, entry ->
             val msgs = entry.value
             val last = msgs.maxByOrNull { it.ts }!!
             val name = chatTitle(msgs)
-          Box {
-            var menu by remember { mutableStateOf(false) }
-            Row(Modifier.fillMaxWidth().combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = { onOpen(entry.key) }, onLongClick = { menu = true }).padding(horizontal = 14.dp, vertical = 12.dp),
+            Row(Modifier.fillMaxWidth().combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = { onOpen(entry.key) }, onLongClick = { menuChat = entry.key }).padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 Avatar(entry.key, name, dpCache, 50.dp)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                            Text(name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, false))
+                            if (ChatFlags.isMuted(entry.key)) { Spacer(Modifier.width(5.dp)); Icon(Icons.Filled.NotificationsOff, "muted", modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        }
                         Text(fmt(last.ts), style = MaterialTheme.typography.labelSmall)
                     }
                     val preview = when { last.deleted -> "deleted"; last.text.isNotBlank() -> last.text; last.mediaType != null -> "[${last.mediaType}]"; else -> "" }
@@ -1318,13 +1355,74 @@ private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<Stri
                         maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(text = { Text(if (ChatFlags.hidden[entry.key] == true) "Unhide chat" else "Hide chat") }, onClick = { menu = false; ChatFlags.toggleHidden(entry.key) })
-                DropdownMenuItem(text = { Text(if (ChatFlags.locked[entry.key] == true) "Unlock chat" else "Lock chat") }, onClick = { menu = false; ChatFlags.toggleLocked(entry.key) })
-                DropdownMenuItem(text = { Text("Delete chat") }, onClick = { menu = false; onDelete(entry.key) })
-            }
-          }
             HorizontalDivider()
+        }
+    }
+
+    menuChat?.let { jid ->
+        ChatActionSheet(
+            muted = ChatFlags.isMuted(jid),
+            hidden = ChatFlags.hidden[jid] == true,
+            locked = ChatFlags.locked[jid] == true,
+            onDismiss = { menuChat = null },
+            onMute = { menuChat = null; mutePick = jid },
+            onUnmute = { ChatFlags.unmute(jid); menuChat = null },
+            onHide = { ChatFlags.toggleHidden(jid); menuChat = null },
+            onLock = { ChatFlags.toggleLocked(jid); menuChat = null },
+            onDelete = { menuChat = null; onDelete(jid) },
+        )
+    }
+    mutePick?.let { jid ->
+        MuteTimerDialog(onDismiss = { mutePick = null }, onPick = { ms -> ChatFlags.muteFor(jid, ms); mutePick = null })
+    }
+}
+
+// Chat long-press action sheet (home screen) — mute (timed), hide, lock, delete
+@Composable
+private fun ChatActionSheet(muted: Boolean, hidden: Boolean, locked: Boolean, onDismiss: () -> Unit,
+    onMute: () -> Unit, onUnmute: () -> Unit, onHide: () -> Unit, onLock: () -> Unit, onDelete: () -> Unit) {
+    val onSurf = MaterialTheme.colorScheme.onSurface
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
+            tonalElevation = 6.dp, shadowElevation = 12.dp,
+            modifier = Modifier.fillMaxWidth().border(1.dp, onSurf.copy(alpha = 0.10f), RoundedCornerShape(24.dp))) {
+            Column(Modifier.padding(vertical = 8.dp)) {
+                if (muted) ActionSheetItem(Icons.Filled.Notifications, "Unmute chat", AYX_GREEN, onUnmute)
+                else ActionSheetItem(Icons.Filled.NotificationsOff, "Mute chat", AYX_GREEN, onMute)
+                ActionSheetItem(if (hidden) Icons.Filled.Visibility else Icons.Filled.VisibilityOff, if (hidden) "Unhide chat" else "Hide chat", AYX_GREEN, onHide)
+                ActionSheetItem(if (locked) Icons.Filled.LockOpen else Icons.Filled.Lock, if (locked) "Unlock chat" else "Lock chat", AYX_GREEN, onLock)
+                HorizontalDivider(color = onSurf.copy(alpha = 0.08f))
+                ActionSheetItem(Icons.Filled.Delete, "Delete chat", AYX_RED, onDelete, destructive = true)
+            }
+        }
+    }
+}
+
+// Mute duration picker — 5m / 10m / 30m / 1h / 2h / 3h / permanently
+@Composable
+private fun MuteTimerDialog(onDismiss: () -> Unit, onPick: (Long) -> Unit) {
+    val onSurf = MaterialTheme.colorScheme.onSurface
+    val opts = listOf(
+        "5 minutes" to 5 * 60_000L, "10 minutes" to 10 * 60_000L, "30 minutes" to 30 * 60_000L,
+        "1 hour" to 60 * 60_000L, "2 hours" to 2 * 60 * 60_000L, "3 hours" to 3 * 60 * 60_000L,
+        "Permanently" to ChatFlags.MUTE_FOREVER,
+    )
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
+            tonalElevation = 6.dp, shadowElevation = 12.dp,
+            modifier = Modifier.fillMaxWidth().border(1.dp, onSurf.copy(alpha = 0.10f), RoundedCornerShape(24.dp))) {
+            Column(Modifier.padding(vertical = 8.dp)) {
+                Text("Mute for…", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
+                HorizontalDivider(color = onSurf.copy(alpha = 0.08f))
+                opts.forEach { (label, ms) ->
+                    Row(Modifier.fillMaxWidth().clickable { onPick(ms) }.padding(horizontal = 18.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(if (ms >= ChatFlags.MUTE_FOREVER) Icons.Filled.NotificationsOff else Icons.Filled.Schedule, null, tint = AYX_GREEN, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(16.dp))
+                        Text(label, style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+            }
         }
     }
 }
@@ -1358,6 +1456,12 @@ private fun ChatDetail(
     var reactMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
     var editMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
     var infoMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
+    // multi-select state: long-press → "Select" enters a mode where tapping bubbles toggles them
+    var selMode by remember { mutableStateOf(false) }
+    val selIds = remember { mutableStateListOf<String>() }
+    fun exitSel() { selMode = false; selIds.clear() }
+    // blur the chat behind the long-press action sheet (iOS/WhatsApp context-menu style)
+    val menuBlur by animateDpAsState(if (reactMsg != null) 18.dp else 0.dp, label = "msgblur")
     reactMsg?.let { rm ->
         MessageActionSheet(
             m = rm,
@@ -1368,6 +1472,7 @@ private fun ChatDetail(
             onReply = { replyTo = rm; reactMsg = null },
             onForward = { onForward(rm); reactMsg = null },
             onCopy = { clipboard.setText(AnnotatedString(rm.text)); reactMsg = null },
+            onSelect = { selMode = true; rm.id?.let { if (it !in selIds) selIds.add(it) }; reactMsg = null },
             onDeleteEveryone = { onDeleteMsg(rm, true); reactMsg = null },
             onDeleteMe = { onDeleteMsg(rm, false); reactMsg = null },
         )
@@ -1383,6 +1488,7 @@ private fun ChatDetail(
     val topClear = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 78.dp
 
     Box(Modifier.fillMaxSize()) {
+      Box(Modifier.fillMaxSize().blur(menuBlur)) {
         wallpaper?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
         // full-bleed column; only bottom (nav bar + keyboard) is inset, top stays under the floating header
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))) {
@@ -1390,7 +1496,15 @@ private fun ChatDetail(
             contentPadding = PaddingValues(top = topClear, bottom = 4.dp),
             verticalArrangement = Arrangement.spacedBy(3.dp)) {
             item { Spacer(Modifier.height(6.dp)) }
-            itemsIndexed(rows, key = { i, m -> "${m.ts}-$i" }) { _, m -> Box(Modifier.fillMaxWidth().animateItem()) { MessageBubble(m, previewCache, dpCache, onMedia, onShare, onDownload, onReply = { replyTo = it }, onAvatarClick = onAvatarClick) { reactMsg = it } } }
+            itemsIndexed(rows, key = { i, m -> "${m.ts}-$i" }) { _, m ->
+                Box(Modifier.fillMaxWidth().animateItem()) {
+                    MessageBubble(m, previewCache, dpCache, onMedia, onShare, onDownload,
+                        onReply = { replyTo = it }, onAvatarClick = onAvatarClick,
+                        selMode = selMode, selected = m.id != null && m.id in selIds,
+                        onToggleSelect = { mm -> mm.id?.let { if (it in selIds) selIds.remove(it) else selIds.add(it) } },
+                        onLongClick = { reactMsg = it })
+                }
+            }
         }
         replyTo?.let { rt ->
             Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 6.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1418,6 +1532,20 @@ private fun ChatDetail(
             }, enabled = input.isNotBlank() && canSend) { Icon(Icons.AutoMirrored.Filled.Send, "send") }
         }
         }
+      }
+      // multi-select top bar — appears while selecting messages (tap bubbles to pick), then delete
+      if (selMode) {
+          val selMsgs = rows.filter { it.id != null && it.id in selIds }
+          Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 3.dp, shadowElevation = 6.dp,
+              modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)) {
+              Row(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = 4.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                  IconButton(onClick = { exitSel() }) { Icon(Icons.Filled.Close, "cancel") }
+                  Text("${selIds.size} selected", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                  IconButton(onClick = { selIds.clear(); rows.forEach { it.id?.let { id -> selIds.add(id) } } }) { Icon(Icons.Filled.Checklist, "select all") }
+                  IconButton(onClick = { selMsgs.forEach { onDeleteMsg(it, it.fromMe) }; exitSel() }, enabled = selIds.isNotEmpty()) { Icon(Icons.Filled.Delete, "delete selected", tint = AYX_RED) }
+              }
+          }
+      }
     }
 }
 
@@ -1432,6 +1560,7 @@ private fun MessageActionSheet(
     onReply: () -> Unit,
     onForward: () -> Unit,
     onCopy: () -> Unit,
+    onSelect: () -> Unit,
     onDeleteEveryone: () -> Unit,
     onDeleteMe: () -> Unit,
 ) {
@@ -1458,6 +1587,7 @@ private fun MessageActionSheet(
                 if (!m.deleted) ActionSheetItem(Icons.AutoMirrored.Filled.Reply, "Reply", AYX_GREEN, onReply)
                 if (!m.deleted) ActionSheetItem(Icons.AutoMirrored.Filled.ArrowForward, "Forward", AYX_GREEN, onForward)
                 if (canCopy) ActionSheetItem(Icons.Filled.ContentCopy, "Copy", AYX_GREEN, onCopy)
+                ActionSheetItem(Icons.Filled.Checklist, "Select", AYX_GREEN, onSelect)
                 HorizontalDivider(color = onSurf.copy(alpha = 0.08f))
                 if (m.fromMe && !m.deleted) ActionSheetItem(Icons.Filled.Delete, "Delete for everyone", AYX_RED, onDeleteEveryone, destructive = true)
                 ActionSheetItem(Icons.Filled.DeleteOutline, "Delete for me", AYX_RED, onDeleteMe, destructive = true)
@@ -1676,7 +1806,7 @@ private fun styleSpec(fromMe: Boolean, dark: Boolean, recvGrey: Color, recvText:
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String, ImageBitmap?>, dpCache: MutableMap<String, ImageBitmap?>, onMedia: (GatewayClient.Msg) -> Unit, onShare: (GatewayClient.Msg) -> Unit, onDownload: (GatewayClient.Msg) -> Unit, onReply: (GatewayClient.Msg) -> Unit, onAvatarClick: (String) -> Unit, onLongClick: (GatewayClient.Msg) -> Unit) {
+private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String, ImageBitmap?>, dpCache: MutableMap<String, ImageBitmap?>, onMedia: (GatewayClient.Msg) -> Unit, onShare: (GatewayClient.Msg) -> Unit, onDownload: (GatewayClient.Msg) -> Unit, onReply: (GatewayClient.Msg) -> Unit, onAvatarClick: (String) -> Unit, selMode: Boolean = false, selected: Boolean = false, onToggleSelect: (GatewayClient.Msg) -> Unit = {}, onLongClick: (GatewayClient.Msg) -> Unit) {
     val ctx = LocalContext.current
     val dark = isSystemInDarkTheme()
     val spec = bubbleSpec(m.fromMe, dark)
@@ -1691,23 +1821,31 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
     val preview = (name?.let { previewCache[it] }) ?: remember(m.thumb) { decodeThumb(m.thumb) }
 
     var swipeX by remember(m.id) { mutableStateOf(0f) }
-    Row(Modifier.fillMaxWidth().padding(vertical = 1.dp)
-        .pointerInput(m.id) {
-            detectHorizontalDragGestures(
+    Row(Modifier.fillMaxWidth()
+        .background(if (selMode && selected) AYX_GREEN.copy(alpha = 0.14f) else Color.Transparent)
+        .then(if (selMode) Modifier.clickable { onToggleSelect(m) } else Modifier)
+        .padding(vertical = 1.dp)
+        .pointerInput(m.id, selMode) {
+            if (!selMode) detectHorizontalDragGestures(
                 onDragEnd = { if (swipeX > 55f) onReply(m); swipeX = 0f },
                 onDragCancel = { swipeX = 0f },
                 onHorizontalDrag = { _, amt -> swipeX = (swipeX + amt).coerceIn(0f, 130f) }
             )
         }
         .offset { IntOffset(swipeX.roundToInt(), 0) },
-        verticalAlignment = Alignment.Bottom,
+        verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = if (m.fromMe) Arrangement.End else Arrangement.Start) {
+        if (selMode) {
+            Icon(if (selected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked, null,
+                tint = if (selected) AYX_GREEN else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                modifier = Modifier.padding(start = 4.dp, end = 6.dp).size(22.dp))
+        }
         if (!m.fromMe && m.chat.endsWith("@g.us") && !m.sender.isNullOrBlank()) {
             Box(Modifier.clip(CircleShape).clickable { onAvatarClick(m.sender!!) }) { Avatar(m.sender!!, m.name.ifBlank { "?" }, dpCache, 30.dp) }
             Spacer(Modifier.width(6.dp))
         }
         Surface(color = bubbleColor, shape = shape,
-            modifier = Modifier.widthIn(max = 290.dp).combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {}, onLongClick = { onLongClick(m) })) {
+            modifier = Modifier.widthIn(max = 290.dp).combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = { if (selMode) onToggleSelect(m) }, onLongClick = { if (!selMode) onLongClick(m) })) {
             Column(Modifier.padding(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 if (m.forwarded && !m.deleted && ChatStyle.showForwardTag.value) {
                     Row(Modifier.padding(start = 8.dp, end = 8.dp, top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -2103,7 +2241,7 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
         SettingRow(Icons.Filled.AutoAwesome, CAT_AI, "AI reply (text)", "AI replies to every personal text chat (when no keyword rule matches)", settings.aiReplyEnabled) { onToggle(JSONObject().put("aiReplyEnabled", it)) }
         SettingRow(Icons.Filled.Image, Color(0xFFFFB26B), "Image reply", "AI looks at incoming images (vision) then swipe-replies", settings.aiReplyImage) { onToggle(JSONObject().put("aiReplyImage", it)) }
         SettingRow(Icons.Filled.QuestionAnswer, Color(0xFFB69DF8), "Group AI reply", "Answer greetings/questions in groups (max 10/day); /ai works anytime", settings.groupAiEnabled) { onToggle(JSONObject().put("groupAiEnabled", it)) }
-        Text("Image replies come as a swipe-left quote on the exact message. Voice note reply ab \"AI Voice\" settings me hai.",
+        Text("Image replies come as a swipe-left quote on the exact message. Voice note reply is now in \"AI Voice\" settings.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 2.dp, top = 2.dp, bottom = 6.dp))
     }
 
@@ -2123,7 +2261,7 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
 
     // Reply language — pick ONE language so the AI stops mixing Hindi/Bangla
     SettingsGroup("Reply language") {
-        Text("Ek language chuno — AI sirf usi me reply karega (Hindi/Bangla mix band ho jayega). \"Auto\" sender ki language mirror karta hai.",
+        Text("Pick one language — the AI replies only in it (stops Hindi/Bangla mixing). \"Auto\" mirrors the sender's language.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 4.dp))
         LanguageSelector(settings.aiLangMode) {
             onToggle(JSONObject().put("aiLangMode", it))
@@ -2238,10 +2376,10 @@ private fun ImageAiSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
                 Text("Image AI", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                 FilledTonalButton(onClick = { saveVision() }) { Text("Save") }
             }
-            Text("Images ab bina kisi API key ke chalti hain (free). Neeche apni Gemini/OpenRouter key dalo to wo pehle use hogi, warna free wala apne aap chalega.",
+            Text("Images now work without any API key (free). Add your Gemini/OpenRouter key below to use it first; otherwise the free one is used automatically.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-            SettingRow(Icons.Filled.Image, Color(0xFF4DD07A), "Free image AI (no key)", "Bina API key ke images samajhta hai — default ON", settings.aiImageFree) { onToggle(JSONObject().put("aiImageFree", it)) }
+            SettingRow(Icons.Filled.Image, Color(0xFF4DD07A), "Free image AI (no key)", "Understands images without an API key — default ON", settings.aiImageFree) { onToggle(JSONObject().put("aiImageFree", it)) }
 
             // Self-test: tap to see if the AI can actually SEE an image (and the exact error if not)
             Button(onClick = {
@@ -2250,7 +2388,7 @@ private fun ImageAiSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
             }, enabled = !testing, modifier = Modifier.fillMaxWidth()) {
                 Text(if (testing) "Testing… (thoda ruk)" else "Test Image AI")
             }
-            Text("Pehle Save dabao, phir Test. Isse pata chalega AI image dekh pa raha ya nahi (aur error kya hai).",
+            Text("Tap Save first, then Test. This shows whether the AI can see the image (and what the error is).",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
             Text("PROVIDER 1", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
@@ -2258,7 +2396,7 @@ private fun ImageAiSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
             FilledTonalButton(onClick = {
                 visionUrl = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
                 vision = "gemini-flash-latest, gemini-3-flash, gemini-2.5-flash, gemini-2.0-flash"
-                Toast.makeText(ctx, "Gemini filled — key paste karke Save", Toast.LENGTH_LONG).show()
+                Toast.makeText(ctx, "Gemini filled — paste your key and Save", Toast.LENGTH_LONG).show()
             }) { Text("Use Gemini (free)") }
             OutlinedTextField(vision, { vision = it }, label = { Text("Vision model(s) — comma se multiple") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
             OutlinedTextField(visionUrl, { visionUrl = it }, label = { Text("Vision API URL") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
@@ -2273,7 +2411,7 @@ private fun ImageAiSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
             FilledTonalButton(onClick = {
                 vision2Url = "https://openrouter.ai/api/v1/chat/completions"
                 vision2 = "google/gemini-2.0-flash-exp:free, qwen/qwen2.5-vl-72b-instruct:free, meta-llama/llama-3.2-11b-vision-instruct:free"
-                Toast.makeText(ctx, "OpenRouter filled — key paste karke Save", Toast.LENGTH_LONG).show()
+                Toast.makeText(ctx, "OpenRouter filled — paste your key and Save", Toast.LENGTH_LONG).show()
             }) { Text("Use OpenRouter (free)") }
             OutlinedTextField(vision2, { vision2 = it }, label = { Text("Fallback model(s) — comma se multiple") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
             OutlinedTextField(vision2Url, { vision2Url = it }, label = { Text("Fallback API URL") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())

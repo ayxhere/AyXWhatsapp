@@ -34,6 +34,8 @@ object NotificationHelper {
     }
 
     fun notifyMessage(ctx: Context, jid: String, name: String, text: String, dp: Bitmap?) {
+        ChatFlags.ensure(ctx)
+        if (ChatFlags.isMuted(jid)) return   // chat muted (timed or permanent) → no notification
         ensureChannel(ctx)
         val id = jid.hashCode()
         val remoteInput = RemoteInput.Builder(KEY_REPLY).setLabel("Reply").build()

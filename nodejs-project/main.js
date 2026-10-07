@@ -1227,7 +1227,7 @@ async function handleMessages({ messages, type }) {
             const img = await generateImage(prompt)
             try {
               if (img) await sock.sendMessage(from, { image: img, caption: prompt.slice(0, 200) }, q)
-              else await sock.sendMessage(from, { text: 'Image nahi ban paayi abhi, thodi der baad try kar 🙏' }, q)
+              else await sock.sendMessage(from, { text: "Couldn't make the image right now, try again in a bit 🙏" }, q)
             } catch (e) { log('create send err', e?.message) }
 
           } else if (settings.aiCommandsEnabled && lc.startsWith('/prompt')) {
@@ -1235,16 +1235,16 @@ async function handleMessages({ messages, type }) {
             if (mtype === 'image') {
               log('cmd /prompt')
               const pr = await describeAsPrompt(entry.media.name)
-              try { await sock.sendMessage(from, { text: pr || 'Image samajh nahi aayi, dobara bhej.' }, q) } catch (e) { log('prompt send err', e?.message) }
+              try { await sock.sendMessage(from, { text: pr || "Couldn't read the image, send it again." }, q) } catch (e) { log('prompt send err', e?.message) }
             } else {
-              try { await sock.sendMessage(from, { text: 'Kisi image ke saath caption me /prompt likh ke bhej — main uska detailed prompt bana dunga.' }, q) } catch (e) {}
+              try { await sock.sendMessage(from, { text: 'Send an image with /prompt in the caption — I will generate its detailed prompt.' }, q) } catch (e) {}
             }
 
           } else if (settings.aiCommandsEnabled && lc.startsWith('/voice')) {
             // /voice <text> → read the text aloud and send it back as a recording voice note
             const say = cmd.slice(6).trim()
             if (!say) {
-              try { await sock.sendMessage(from, { text: 'Use: /voice <text> — main usse awaaz (voice note) bana ke bhej dunga.' }, q) } catch (e) {}
+              try { await sock.sendMessage(from, { text: 'Use: /voice <text> — I will turn it into a voice note and send it.' }, q) } catch (e) {}
             } else {
               log('cmd /voice:', say.slice(0, 60))
               const v = await synthVoice(say, settings.aiTtsVoice, ttsLangCode(say))   // auto Hindi/Bangla from the text's script
@@ -1252,7 +1252,7 @@ async function handleMessages({ messages, type }) {
                 try { await sock.sendMessage(from, { audio: v.buf, ptt: v.ptt !== false, mimetype: v.mime, seconds: estSeconds(say) }, q) }
                 catch (e) { log('voice cmd send err', e?.message) }
               } else {
-                try { await sock.sendMessage(from, { text: 'Voice nahi ban paayi — AI Voice settings me Sarvam/Groq key check kar.' }, q) } catch (e) {}
+                try { await sock.sendMessage(from, { text: "Couldn't make the voice — check your Sarvam/Groq key in AI Voice settings." }, q) } catch (e) {}
               }
             }
 
@@ -1939,27 +1939,27 @@ app.get('/voicecheck', async (req, res) => {
     const voice = String(req.query.voice || settings.aiTtsVoice || 'Arista-PlayAI')
     const opusEnc = !!(_opus && _opus.opusAvailable && _opus.opusAvailable())
     // run the REAL pipeline so we can tell the user if a true voice note will be produced
-    const v = await synthVoice('Namaste, ye ek chhota voice test hai. Hello, this is a test.', voice)
+    const v = await synthVoice('Hello, this is a short voice test.', voice)
     if (v && v.buf) {
       const isVN = v.ptt === true && /ogg/i.test(v.mime || '')
       return res.json({
         ok: true, provider: voice.startsWith('sarvam:') ? 'sarvam' : 'groq', voice,
         opusEncoder: opusEnc, voiceNote: isVN, mime: v.mime, bytes: v.buf.length,
         message: isVN
-          ? '✅ Asli voice note banega (OGG/Opus) — recipient ke WhatsApp pe seedha play hoga. Is voice ko select kar le.'
-          : ('⚠️ Awaaz toh banegi par normal audio file ke roop me (voice-note recording nahi). ' + (opusEnc ? 'Provider ne WAV nahi diya.' : 'Opus encoder load nahi hua.')),
+          ? '✅ A real voice note will be made (OGG/Opus) — it plays directly on the recipient\'s WhatsApp. You can select this voice.'
+          : ('⚠️ Audio will be made, but as a normal audio file (not a voice-note recording). ' + (opusEnc ? "The provider didn't return WAV." : "The Opus encoder didn't load.")),
       })
     }
     // failed → report the provider error
     if (voice.startsWith('sarvam:')) {
       const se = String(_sarvamErr || '')
-      if (se === 'no key') return res.json({ ok: false, reason: 'nokey', message: 'Voice page me Sarvam key daal ke Save kar (free: sarvam.ai).' })
+      if (se === 'no key') return res.json({ ok: false, reason: 'nokey', message: 'Add a Sarvam key on the Voice page and Save (free: sarvam.ai).' })
       return res.json({ ok: false, reason: 'err', message: 'Sarvam TTS error:\n' + se.slice(0, 200) })
     }
     const e = String(_groqTtsErr || '')
-    if (e === 'no key') return res.json({ ok: false, reason: 'nokey', message: 'API configuration me Groq key daal ke Save kar.' })
+    if (e === 'no key') return res.json({ ok: false, reason: 'nokey', message: 'Add a Groq key in API configuration and Save.' })
     if (/terms|accept|playground\?model|has not been accepted|model_terms/i.test(e)) {
-      return res.json({ ok: false, reason: 'terms', message: 'Ek baar terms accept karni hai:\nconsole.groq.com/playground?model=playai-tts\nus page pe "Accept"/"Agree" dabao, phir dubara Check karo.' })
+      return res.json({ ok: false, reason: 'terms', message: 'You need to accept the terms once:\nconsole.groq.com/playground?model=playai-tts\nTap "Accept"/"Agree" on that page, then Check again.' })
     }
     return res.json({ ok: false, reason: 'err', message: 'Voice TTS error:\n' + (e || _sarvamErr || 'unknown').slice(0, 200) })
   } catch (e) { res.json({ ok: false, reason: 'err', message: e?.message || 'error' }) }
@@ -1968,7 +1968,7 @@ app.get('/voicecheck', async (req, res) => {
 app.get('/ttsdemo', async (req, res) => {
   try {
     const voice = String(req.query.voice || 'hi-IN-SwaraNeural')
-    const text = String(req.query.text || 'Hi! Main aapka assistant hoon, aise reply karunga.')
+    const text = String(req.query.text || 'Hi! This is how I will reply to your messages.')
     const v = await synthVoice(text, voice)
     if (!v || !v.buf) { res.status(502).json({ ok: false, error: 'tts failed' }); return }
     res.setHeader('Content-Type', v.mime.split(';')[0])

@@ -30,7 +30,7 @@ internal fun ChatForwardSettings(settings: GatewayClient.Settings, onToggle: (JS
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("Forward full chat to AI", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-                        Text("Har reply se pehle us chat ki poori recent baat-cheet AI ko bhejta hai, taaki reply context ke saath aaye (generic nahi).",
+                        Text("Sends the chat's full recent conversation to the AI before every reply, so replies come with context (not generic).",
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(checked = settings.aiFullContext, onCheckedChange = { onToggle(JSONObject().put("aiFullContext", it)) })

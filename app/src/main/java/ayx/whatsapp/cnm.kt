@@ -151,7 +151,7 @@ internal fun AiMemoryScreen() {
         }
 
         if (!loading && items.isEmpty()) {
-            Text("Abhi koi memory nahi. Jaise log message karenge, yahan unka naam, number/lid, language aur poori chat history save hoti rahegi — aur AI wahi dekh ke reply karega.",
+            Text("No memory yet. As people message you, their name, number/lid, language and full chat history are saved here — and the AI uses exactly that to reply.",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp))
         }
 
@@ -315,7 +315,7 @@ internal fun VoicePickerScreen(settings: GatewayClient.Settings, onToggle: (JSON
             player.setDataSource(GatewayClient.ttsDemoUrl(v))
             player.setOnPreparedListener { loading = null; playing = v; it.start() }
             player.setOnCompletionListener { playing = null }
-            player.setOnErrorListener { _, _, _ -> loading = null; playing = null; Toast.makeText(ctx, "Demo nahi chala, dobara try kar", Toast.LENGTH_SHORT).show(); true }
+            player.setOnErrorListener { _, _, _ -> loading = null; playing = null; Toast.makeText(ctx, "Demo didn't play, try again", Toast.LENGTH_SHORT).show(); true }
             player.prepareAsync()
         }.onFailure { loading = null; Toast.makeText(ctx, "Demo failed", Toast.LENGTH_SHORT).show() }
     }
@@ -344,21 +344,21 @@ internal fun VoicePickerScreen(settings: GatewayClient.Settings, onToggle: (JSON
         Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
             Column {
                 VoiceToggle(
-                    "Voice note suno + reply",
-                    "Incoming voice note transcribe karke AI reply dega",
+                    "Hear voice notes + reply",
+                    "Transcribes incoming voice notes, then the AI replies",
                     replyVoice,
                 ) { replyVoice = it; onToggle(JSONObject().put("aiReplyVoice", it)) }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                 VoiceToggle(
-                    "Awaaz me reply bhejo",
-                    "Text ke bajaye asli voice note (TTS) me reply dega — upar wala ON hona chahiye",
+                    "Reply with a voice note",
+                    "Replies with a real voice note (TTS) instead of text — the toggle above must be ON",
                     voiceNote,
                     enabled = replyVoice,
                 ) { voiceNote = it; onToggle(JSONObject().put("aiVoiceNoteReply", it)) }
             }
         }
 
-        Text("Voice chuno — ▶ se demo suno, phir tap karke select. Reply ek real recording voice-note me jata hai. Koi Bangla bole to apne-aap Bangla awaaz me switch ho jayega.",
+        Text("Pick a voice — tap ▶ for a demo, then tap to select. Replies go as a real recording voice note. If someone speaks Bangla, it auto-switches to a Bangla voice.",
             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 2.dp))
 
         FilledTonalButton(onClick = {
@@ -366,8 +366,8 @@ internal fun VoicePickerScreen(settings: GatewayClient.Settings, onToggle: (JSON
             scope.launch {
                 val r = GatewayClient.voiceCheck(selected)
                 checkResult = r.optString("message").ifBlank {
-                    if (r.optBoolean("ok", false)) "✅ Voice chal rahi hai (" + r.optString("provider") + ")! Ab is voice ko select kar le."
-                    else "Voice abhi nahi chali."
+                    if (r.optBoolean("ok", false)) "✅ Voice is working (" + r.optString("provider") + ")! You can select this voice now."
+                    else "Voice didn't work yet."
                 }
                 checking = false
             }
@@ -378,8 +378,8 @@ internal fun VoicePickerScreen(settings: GatewayClient.Settings, onToggle: (JSON
         // SARVAM — real Hindi/Bangla human voices (needs a free Sarvam key)
         Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("HINDI / BANGLA — asli human (Sarvam)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                Text("Hindi/Bangla human voice ke liye ek free Sarvam key chahiye. sarvam.ai pe sign-up karke key copy kar, yahan paste karke Save kar.",
+                Text("HINDI / BANGLA — real human (Sarvam)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text("A free Sarvam key is needed for Hindi/Bangla human voices. Sign up at sarvam.ai, copy the key, paste it here and Save.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 FilledTonalButton(onClick = { runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://dashboard.sarvam.ai")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }) { Text("Get free Sarvam key") }
                 OutlinedTextField(sarvamKey, { sarvamKey = it }, label = { Text("Sarvam API key") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
