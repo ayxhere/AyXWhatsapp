@@ -2021,7 +2021,7 @@ app.post('/translate', async (req, res) => {
     if (!text.trim()) return res.json({ ok: false, error: 'no text' })
     if (!settings.aiApiUrl || !settings.aiApiKey) return res.json({ ok: false, error: 'Add a Groq key in API configuration first.' })
     const sys = romanize
-      ? 'You are a transliteration engine. Rewrite the user message in English (Latin) letters, keeping the SAME language and words (do not translate the meaning). Output ONLY the transliterated text — no notes, keep emojis and @mentions as-is.'
+      ? 'You are a transliteration engine. Rewrite the user message in English (Latin) letters, keeping the SAME language and words (do not translate the meaning). Keep any word that is already in English/Latin letters EXACTLY as-is. Output ONLY the transliterated text — no notes, keep emojis and @mentions as-is.'
       : ('You are a translation engine. Translate the user message into ' + lang + '. Output ONLY the translation text — no quotes, no notes. Keep emojis and @mentions as-is.')
     const out = await chatComplete(settings.aiModel || 'openai/gpt-oss-20b', [{ role: 'system', content: sys }, { role: 'user', content: text }])
     if (out) return res.json({ ok: true, text: out })
@@ -2037,10 +2037,17 @@ app.post('/translatelines', async (req, res) => {
     const lang = String((req.body && req.body.lang) || 'English')
     if (!lines.length) return res.json({ ok: false, error: 'no lines' })
     if (!settings.aiApiUrl || !settings.aiApiKey) return res.json({ ok: false, error: 'no AI key' })
+    // native Indic scripts (Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada, Malayalam)
+    const NATIVE = /[ऀ-ൿ]/
+    // For romanize: only send lines that actually contain native script. Pure-English lines stay untouched,
+    // and English words inside mixed lines must be preserved (handled by the prompt).
+    const needIdx = []
+    lines.forEach((l, i) => { if (!romanize || NATIVE.test(l)) needIdx.push(i) })
+    if (needIdx.length === 0) return res.json({ ok: true, lines })   // nothing needs changing (all English)
     const sys = romanize
-      ? 'You transliterate song lyrics into English (Latin) letters, keeping the SAME language and words (do NOT translate the meaning). Input is numbered lines "N| text". Return EXACTLY one line per input as "N| <transliterated>" — same numbers, same order, same count, no extra lines, no commentary.'
+      ? 'You transliterate song lyrics into English (Latin) letters, keeping the SAME language and words — do NOT translate the meaning. CRITICAL: any word that is ALREADY in English/Latin letters MUST be kept EXACTLY as it is (unchanged). Only convert the Hindi/Punjabi/Bengali (native-script) words into Latin letters. Input is numbered lines "N| text". Return EXACTLY one line per input as "N| <result>" — same numbers, same order, same count, no extra lines, no commentary.'
       : ('You translate song lyrics into ' + lang + '. Input is numbered lines "N| text". Return EXACTLY one line per input as "N| <translation>" — same numbers, same order, same count, no extra lines, no commentary.')
-    const numbered = lines.map((l, i) => (i + 1) + '| ' + l).join('\n')
+    const numbered = needIdx.map(i => (i + 1) + '| ' + lines[i]).join('\n')
     let out = await chatComplete(settings.aiModel || 'openai/gpt-oss-20b', [{ role: 'system', content: sys }, { role: 'user', content: numbered }])
     if (!out) return res.json({ ok: false, error: 'failed' })
     out = out.replace(/```[a-z]*\n?/gi, '').trim()   // strip any code fences

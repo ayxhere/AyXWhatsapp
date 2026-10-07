@@ -1899,13 +1899,20 @@ private fun AudioPlayer(url: String, tint: Color) {
     var playing by remember(url) { mutableStateOf(false) }
     var progress by remember(url) { mutableStateOf(0f) }
     var ready by remember(url) { mutableStateOf(false) }
+    var wantPlay by remember(url) { mutableStateOf(false) }   // tapped before prepare finished → auto-start
+    var retried by remember(url) { mutableStateOf(false) }
     val player = remember(url) { MediaPlayer() }
     DisposableEffect(url) {
         runCatching {
             player.setAudioAttributes(android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_MEDIA).build())
             player.setDataSource(url)
-            player.setOnPreparedListener { ready = true }
+            player.setOnPreparedListener { ready = true; if (wantPlay) { runCatching { player.start(); playing = true } } }
             player.setOnCompletionListener { playing = false; progress = 0f }
+            player.setOnErrorListener { mp, _, _ ->
+                ready = false; playing = false
+                if (!retried) { retried = true; runCatching { mp.reset(); mp.setDataSource(url); mp.prepareAsync() } }
+                true
+            }
             player.prepareAsync()
         }
         onDispose { runCatching { if (player.isPlaying) player.stop() }; runCatching { player.release() } }
@@ -1917,11 +1924,13 @@ private fun AudioPlayer(url: String, tint: Color) {
         }
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.widthIn(min = 200.dp)) {
-        Box(Modifier.size(38.dp).background(tint.copy(alpha = 0.22f), CircleShape).clickable(enabled = ready) {
+        Box(Modifier.size(38.dp).background(tint.copy(alpha = 0.22f), CircleShape).clickable {
             if (playing) { runCatching { player.pause() }; playing = false }
-            else { runCatching { player.start(); playing = true } }
+            else if (ready) { runCatching { player.start(); playing = true } }
+            else { wantPlay = true }   // not prepared yet → start automatically once ready
         }, contentAlignment = Alignment.Center) {
-            Icon(if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "play", tint = tint, modifier = Modifier.size(24.dp))
+            if (!ready && wantPlay) CircularProgressIndicator(Modifier.size(20.dp), color = tint, strokeWidth = 2.dp)
+            else Icon(if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "play", tint = tint, modifier = Modifier.size(24.dp))
         }
         LinearProgressIndicator(progress = { progress }, modifier = Modifier.weight(1f).height(4.dp), color = tint, trackColor = tint.copy(alpha = 0.3f))
     }
@@ -2777,29 +2786,20 @@ private fun openUrl(ctx: Context, url: String) {
 
 // Light string hiding for developer identity + links: decoded at runtime, so a decompile/`strings`
 // pass on the APK does not reveal them in plaintext. Not encryption — just keeps casual re-mods away.
-private object Obf {
-    private val KEY = "Ax7pQ2z9kR".toByteArray(Charsets.UTF_8)
-    fun d(s: String): String {
-        val b = android.util.Base64.decode(s, android.util.Base64.NO_WRAP)
-        val out = ByteArray(b.size)
-        for (i in b.indices) out[i] = (b[i].toInt() xor KEY[i % KEY.size].toInt()).toByte()
-        return String(out, Charsets.UTF_8)
-    }
-}
-
-// ===== Support Development: UPI (India) + crypto (other countries). All addresses/links are obfuscated
+// ===== Support Development: UPI (India) + crypto (other countries). All addresses/links are AES-encrypted
+// (see AyxHere) and QR codes are generated at runtime, so nothing is plainly visible in a decompile/re-mod.
 // and QR codes are generated at runtime, so nothing is plainly visible in a decompile/re-mod. =====
 @Composable
 private fun SupportSettings(ctx: Context) {
     val clip = LocalClipboardManager.current
     fun copy(v: String) { clip.setText(AnnotatedString(v)); Toast.makeText(ctx, "Copied", Toast.LENGTH_SHORT).show() }
 
-    val upiUrl = Obf.d("NAheSn4dClgSbTEZChk8UwNBKzsuGhEAPw8oeCEbA10FQBN7KW4qAQ==")
-    val upiId  = Obf.d("KBVWCSlyE1YJ")
-    val bep20  = Obf.d("cQBSQ2MLSQsKZSMaAUZgAh8AWWB2G1FDaAFJWlk3c0sOR2kBHwBeMHlL")
-    val trc20  = Obf.d("FTVQAht2GGBTNA1NVTsnUzdXLj0AIkAJaF8ddywwNC8DBQ==")
-    val erc20  = Obf.d("cQBSQ2MLSQsKZSMaAUZgAh8AWWB2G1FDaAFJWlk3c0sOR2kBHwBeMHlL")
-    val binUrl = Obf.d("KQxDACIIVRYKIjFWVRk/UxRaDnwiF1pfJFwTFBogbjVeFAldTVAl")
+    val upiUrl = AyxHere.upiUrl
+    val upiId  = AyxHere.upiId
+    val bep20  = AyxHere.bep20
+    val trc20  = AyxHere.trc20
+    val erc20  = AyxHere.erc20
+    val binUrl = AyxHere.binanceUrl
 
     Text("Your support keeps AyX free and updated ❤️", style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp))
@@ -2825,8 +2825,23 @@ private fun SupportSettings(ctx: Context) {
         }
     }
 
+    Spacer(Modifier.height(10.dp))
+    // Get / share AyX WhatsApp (download link stays AES-encrypted in the app)
+    Text("GET AYX WHATSAPP", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
+    Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(AyxHere.howTo, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalButton(onClick = { openUrl(ctx, AyxHere.githubReleases) }, modifier = Modifier.weight(1f)) { Text("Get latest APK") }
+                FilledTonalButton(onClick = {
+                    runCatching { ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, AyxHere.shareMsg + "\n" + AyxHere.githubReleases), "Share AyX WhatsApp")) }
+                }, modifier = Modifier.weight(1f)) { Text("Share") }
+            }
+        }
+    }
+
     Spacer(Modifier.height(8.dp))
-    Text(Obf.d("AAFvUAZaG00YEzEIF7LmEhhMAj41WFUJcVsXWBIqYbqAUJeUtKIBBw=="),
+    Text(AyxHere.builtBy,
         style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
         textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp))
 }
@@ -2895,20 +2910,34 @@ private fun AboutSettings(ctx: Context, onLogout: () -> Unit) {
 
     Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(Obf.d("CR1OXHF7XVRLEzggFxIoEryfpckrLQ=="), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text(AyxHere.aboutHey, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Text("If you love my project, please give me a ⭐ on my GitHub project.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Button(onClick = { openUrl(ctx, Obf.d("KQxDACIIVRYMOzUQQhJ/URVURDsnGU8JfnMDYTw6IAxEESFC")) }, modifier = Modifier.fillMaxWidth()) {
+            Button(onClick = { openUrl(ctx, AyxHere.githubRepo) }, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Filled.Star, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Star on GitHub")
             }
         }
     }
 
+    // How to download / share AyX WhatsApp (link stays AES-encrypted)
+    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("How to download AyX WhatsApp", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text(AyxHere.howTo, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalButton(onClick = { openUrl(ctx, AyxHere.githubReleases) }, modifier = Modifier.weight(1f)) { Text("Get latest APK") }
+                FilledTonalButton(onClick = {
+                    runCatching { ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, AyxHere.shareMsg + "\n" + AyxHere.githubReleases), "Share AyX WhatsApp")) }
+                }, modifier = Modifier.weight(1f)) { Text("Share") }
+            }
+        }
+    }
+
     Text("CONNECT", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
-    LinkRow(Icons.Filled.PhotoCamera, Color(0xFFFF7EB6), Obf.d("KBVWCSkD"), "Instagram") { openUrl(ctx, Obf.d("KQxDACIIVRYcJTZWXh4iRhteGTMsVlQfPB0TVAorOUkIAyVZFAQmCiZMbScIRRhUB2ckP1MICFVHBA==")) }
-    LinkRow(Icons.AutoMirrored.Filled.Send, CAT_AI, Obf.d("AAFvUDlXCFw="), "Telegram") { openUrl(ctx, Obf.d("KQxDACIIVRYffCwdGBEoShJcGTc=")) }
+    LinkRow(Icons.Filled.PhotoCamera, Color(0xFFFF7EB6), AyxHere.igLabel, "Instagram") { openUrl(ctx, AyxHere.igUrl) }
+    LinkRow(Icons.AutoMirrored.Filled.Send, CAT_AI, AyxHere.tgLabel, "Telegram") { openUrl(ctx, AyxHere.tgUrl) }
 
     Text("If I'm available everywhere, kindly contact me here.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp, top = 2.dp))
-    LinkRow(Icons.Filled.Language, CAT_WALLPAPER, "Website", "Personal site") { openUrl(ctx, Obf.d("KQxDACIIVRYCPyABT144XFU=")) }
+    LinkRow(Icons.Filled.Language, CAT_WALLPAPER, "Website", "Personal site") { openUrl(ctx, AyxHere.webUrl) }
 
     Text("ACCOUNT", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
     OutlinedButton(onClick = { confirm = true }, modifier = Modifier.fillMaxWidth(),
