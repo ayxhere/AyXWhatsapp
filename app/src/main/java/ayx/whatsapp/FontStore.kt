@@ -48,7 +48,7 @@ object FontStore {
         appFont = p.getString("app", "Default") ?: "Default"
     }
 
-    fun setAppFont(name: String) { appFont = name; prefs?.edit()?.putString("app", name)?.apply() }
+    fun chooseFont(name: String) { appFont = name; prefs?.edit()?.putString("app", name)?.apply() }
 
     // FontFamily for a name (null = system default). Cached; failures fall back to null (system).
     fun family(ctx: Context, name: String): FontFamily? {

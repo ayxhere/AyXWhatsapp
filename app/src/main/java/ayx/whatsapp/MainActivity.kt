@@ -366,8 +366,8 @@ object TranslateStore {
         configured = p.getBoolean("configured", false)
     }
     private fun save() { prefs?.edit()?.putString("mode", mode)?.putString("lang", lang)?.putBoolean("configured", configured)?.apply() }
-    fun setMode(m: String) { mode = m; save() }
-    fun setLang(l: String) { lang = l; configured = true; save() }
+    fun chooseMode(m: String) { mode = m; save() }
+    fun chooseLang(l: String) { lang = l; configured = true; save() }
     fun enabled() = mode != "off"
 }
 
@@ -1513,7 +1513,7 @@ private fun ChatDetail(
     }
     askTransFor?.let { m ->
         TranslateLangDialog(onDismiss = { askTransFor = null }, onPick = { lang ->
-            TranslateStore.setLang(lang); askTransFor = null; runTranslate(m)
+            TranslateStore.chooseLang(lang); askTransFor = null; runTranslate(m)
         })
     }
     reactMsg?.let { rm ->
@@ -2214,14 +2214,14 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
     SettingsGroup("Appearance") {
         ActionRow(Icons.Filled.TextFields, CAT_GENERAL, "App font", "Current: ${FontStore.appFont}  ·  changes the whole app") { showFontPicker = true }
     }
-    if (showFontPicker) FontPickerDialog(ctx, current = FontStore.appFont, onDismiss = { showFontPicker = false }, onPick = { FontStore.setAppFont(it); showFontPicker = false })
+    if (showFontPicker) FontPickerDialog(ctx, current = FontStore.appFont, onDismiss = { showFontPicker = false }, onPick = { FontStore.chooseFont(it); showFontPicker = false })
 
     SettingsGroup("Message translation") {
         Text("Double-tap any message in a chat to translate it. Pick how it works:",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 4.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("off" to "Off", "manual" to "Double-tap", "auto" to "Auto (all)").forEach { (k, lbl) ->
-                FilterChip(selected = TranslateStore.mode == k, onClick = { TranslateStore.setMode(k) }, label = { Text(lbl) })
+                FilterChip(selected = TranslateStore.mode == k, onClick = { TranslateStore.chooseMode(k) }, label = { Text(lbl) })
             }
         }
         var tlang by remember { mutableStateOf(TranslateStore.lang) }
@@ -2229,7 +2229,7 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
         OutlinedTextField(tlang, { tlang = it }, label = { Text("Translate to") }, singleLine = true,
             placeholder = { Text("e.g. English, Hindi, Roman Hindi, Bangla") }, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            FilledTonalButton(onClick = { TranslateStore.setLang(tlang.trim().ifBlank { "English" }); Toast.makeText(ctx, "Translate language saved", Toast.LENGTH_SHORT).show() }) { Text("Save") }
+            FilledTonalButton(onClick = { TranslateStore.chooseLang(tlang.trim().ifBlank { "English" }); Toast.makeText(ctx, "Translate language saved", Toast.LENGTH_SHORT).show() }) { Text("Save") }
         }
     }
 
