@@ -32,7 +32,8 @@ import java.nio.FloatBuffer
 object MediaTools {
 
     // ---------- public: PHOTO(S) -> silent MP4 ----------
-    fun photosToVideo(ctx: Context, uris: List<Uri>, out: File, durationMs: Long, lyrics: List<Pair<Long, String>>, lyricY: Float = 0.80f, lyricScale: Float = 1f, onProgress: (Float) -> Unit): Boolean {
+    // animStyle: 0=None, 1=Pop (scale+fade), 2=Slide up, 3=Typewriter, 4=Fade
+    fun photosToVideo(ctx: Context, uris: List<Uri>, out: File, durationMs: Long, lyrics: List<Pair<Long, String>>, lyricY: Float = 0.80f, lyricScale: Float = 1f, animStyle: Int = 0, onProgress: (Float) -> Unit): Boolean {
         val W = 720; val H = 1280; val FPS = 30; val BITRATE = 6_000_000
         val bmps = uris.mapNotNull { runCatching { loadScaledCropped(ctx, it, W, H) }.getOrNull() }
         if (bmps.isEmpty()) return false
@@ -93,11 +94,18 @@ object MediaTools {
                 drain(false)
                 val tMs = frame.toLong() * 1000L / FPS
                 val imgIdx = (frame / perImage).coerceIn(0, bmps.size - 1)
-                val lyric = lyrics.lastOrNull { it.first <= tMs }?.second ?: ""
-                val key = imgIdx.toString() + "|" + lyric
+                val active = lyrics.lastOrNull { it.first <= tMs }
+                val lyric = active?.second ?: ""
+                val lineStart = active?.first ?: 0L
+                val elapsed = (tMs - lineStart).coerceAtLeast(0L)
+                val animDurMs = if (animStyle == 3) 900L else 420L
+                val phase = if (animStyle == 0) 1f else (elapsed.toFloat() / animDurMs).coerceIn(0f, 1f)
+                // quantize the animation phase so we only redraw a handful of times per line
+                val pq = if (animStyle != 0 && phase < 1f) (phase * 14).toInt() else 99
+                val key = "$imgIdx|$lyric|$pq"
                 if (key != lastKey) {
                     composite?.recycle()
-                    composite = drawComposite(bmps[imgIdx], lyric, W, H, lyricY, lyricScale)
+                    composite = drawComposite(bmps[imgIdx], lyric, W, H, lyricY, lyricScale, animStyle, phase)
                     quad!!.uploadBitmap(composite!!)
                     lastKey = key
                 }
@@ -400,20 +408,34 @@ object MediaTools {
         return target
     }
 
-    private fun drawComposite(base: Bitmap, lyric: String, w: Int, h: Int, yFrac: Float, scale: Float): Bitmap {
+    private fun drawComposite(base: Bitmap, lyric: String, w: Int, h: Int, yFrac: Float, scale: Float, animStyle: Int = 0, phase: Float = 1f): Bitmap {
         val bmp = base.copy(Bitmap.Config.ARGB_8888, true)
         if (lyric.isNotBlank()) {
             val canvas = Canvas(bmp)
+            val baseSize = h * 0.048f * scale.coerceIn(0.5f, 2.5f)
+            val p = phase.coerceIn(0f, 1f)
+            val ease = 1f - (1f - p) * (1f - p)   // ease-out
+            var alpha = 1f; var sc = 1f; var dy = 0f; var charFrac = 1f
+            when (animStyle) {
+                1 -> { alpha = ease; sc = 0.72f + 0.28f * ease }           // Pop
+                2 -> { alpha = ease; dy = (1f - ease) * baseSize * 1.1f }  // Slide up
+                3 -> { charFrac = p }                                      // Typewriter
+                4 -> { alpha = ease }                                      // Fade
+            }
             val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = android.graphics.Color.WHITE
-                textSize = h * 0.048f * scale.coerceIn(0.5f, 2.5f)
+                textSize = baseSize * sc
                 textAlign = Paint.Align.CENTER
                 typeface = android.graphics.Typeface.DEFAULT_BOLD
-                setShadowLayer(10f, 0f, 3f, android.graphics.Color.argb(200, 0, 0, 0))
+                setShadowLayer(10f, 0f, 3f, android.graphics.Color.argb((200 * alpha).toInt().coerceIn(0, 255), 0, 0, 0))
+                this.alpha = (255 * alpha).toInt().coerceIn(0, 255)
             }
-            val lines = wrapText(lyric, paint, w * 0.9f)
-            var y = (h * yFrac.coerceIn(0.1f, 0.92f))
-            for (line in lines.takeLast(3)) { canvas.drawText(line, w / 2f, y, paint); y += paint.textSize * 1.3f }
+            val shown = if (animStyle == 3) lyric.take((lyric.length * charFrac).toInt().coerceIn(0, lyric.length)) else lyric
+            if (shown.isNotBlank()) {
+                val lines = wrapText(shown, paint, w * 0.9f)
+                var y = (h * yFrac.coerceIn(0.1f, 0.92f)) + dy
+                for (line in lines.takeLast(3)) { canvas.drawText(line, w / 2f, y, paint); y += paint.textSize * 1.3f }
+            }
         }
         return bmp
     }

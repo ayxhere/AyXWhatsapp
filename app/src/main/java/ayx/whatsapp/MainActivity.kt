@@ -784,7 +784,7 @@ fun GatewayApp() {
     }
 
     pendingStatus?.let { ps ->
-        StatusEditor(ps.first, ps.second, deviceContacts, onUpload = { caption, audience, jids, song, tStart, tEnd, lyrics, lyricY, lyricScale ->
+        StatusEditor(ps.first, ps.second, deviceContacts, onUpload = { caption, audience, jids, song, tStart, tEnd, lyrics, lyricY, lyricScale, animStyle, romanize ->
             val u = ps.first; val t = ps.second
             pendingStatus = null
             // 'all' audience: send to every WhatsApp contact on the device so distribution never depends on
@@ -805,8 +805,13 @@ fun GatewayApp() {
                             val outFile = File(dir, "final_$stamp.mp4")
                             val durMs = (tEnd - tStart).coerceAtLeast(3000L)
                             val ly = if (lyrics.isNotEmpty()) lyrics else runCatching { GatewayClient.getLyrics(song.title, song.artist) }.getOrDefault(emptyList())
-                            val adjusted = ly.filter { it.first in tStart..tEnd }.map { ((it.first - tStart - 300L).coerceAtLeast(0L)) to it.second }
-                            val vOk = if (t == "image") MediaTools.photosToVideo(ctx, listOf(u), vFile, durMs, adjusted, lyricY, lyricScale) { }
+                            val adjusted0 = ly.filter { it.first in tStart..tEnd }.map { ((it.first - tStart - 300L).coerceAtLeast(0L)) to it.second }
+                            // Hindi (or any) lyrics → English letters when requested
+                            val adjusted = if (romanize && adjusted0.isNotEmpty()) {
+                                val rom = runCatching { GatewayClient.translateLines(adjusted0.map { it.second }, true) }.getOrDefault(adjusted0.map { it.second })
+                                adjusted0.mapIndexed { i, pr -> pr.first to (rom.getOrNull(i)?.ifBlank { pr.second } ?: pr.second) }
+                            } else adjusted0
+                            val vOk = if (t == "image") MediaTools.photosToVideo(ctx, listOf(u), vFile, durMs, adjusted, lyricY, lyricScale, animStyle) { }
                                       else runCatching { ctx.contentResolver.openInputStream(u)?.use { inp -> FileOutputStream(vFile).use { inp.copyTo(it) } }; true }.getOrDefault(false)
                             if (!vOk) return@withContext null
                             processing = "Preparing audio…"
@@ -3084,7 +3089,7 @@ private fun LinkText(text: String, color: Color) {
 
 
 @Composable
-private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, onUpload: (String, String, List<String>, GatewayClient.Song?, Long, Long, List<Pair<Long, String>>, Float, Float) -> Unit, onCancel: () -> Unit) {
+private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, onUpload: (String, String, List<String>, GatewayClient.Song?, Long, Long, List<Pair<Long, String>>, Float, Float, Int, Boolean) -> Unit, onCancel: () -> Unit) {
     val ctx = LocalContext.current
     var caption by remember { mutableStateOf("") }
     var audience by remember { mutableStateOf("all") }
@@ -3097,6 +3102,8 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     var songLyrics by remember { mutableStateOf<List<Pair<Long, String>>>(emptyList()) }
     var lyricY by remember { mutableStateOf(0.80f) }
     var lyricScale by remember { mutableStateOf(1f) }
+    var animStyle by remember { mutableStateOf(1) }       // 0=None,1=Pop,2=Slide,3=Type,4=Fade
+    var romanize by remember { mutableStateOf(false) }    // Hindi lyrics → English letters
     var previewPos by remember { mutableStateOf(0L) }
     var musicOpen by remember { mutableStateOf(false) }
     val player = remember { MediaPlayer() }
@@ -3160,6 +3167,18 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                         IconButton(onClick = { runCatching { player.reset() }; playing = false; song = null }) { Icon(Icons.Filled.Close, "remove", tint = Color.White) }
                     }
                 }
+                if (songLyrics.isNotEmpty()) {
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Text anim:", color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.labelMedium)
+                        listOf("None", "Pop", "Slide", "Type", "Fade").forEachIndexed { i, lbl ->
+                            FilterChip(selected = animStyle == i, onClick = { animStyle = i }, label = { Text(lbl) })
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth().padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Hindi → English letters", color = Color.White, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                        Switch(checked = romanize, onCheckedChange = { romanize = it })
+                    }
+                }
                 Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(caption, { caption = it }, placeholder = { Text("Add a caption…", color = Color.White.copy(alpha = 0.6f)) }, singleLine = true, shape = RoundedCornerShape(26.dp),
                         colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent,
@@ -3167,7 +3186,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                             focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White),
                         modifier = Modifier.weight(1f))
                     Spacer(Modifier.width(8.dp))
-                    FilledIconButton(onClick = { onUpload(caption.trim(), audience, selected.toList(), song, trimStart, trimEnd, songLyrics, lyricY, lyricScale) }) { Icon(Icons.AutoMirrored.Filled.Send, "upload") }
+                    FilledIconButton(onClick = { onUpload(caption.trim(), audience, selected.toList(), song, trimStart, trimEnd, songLyrics, lyricY, lyricScale, animStyle, romanize) }) { Icon(Icons.AutoMirrored.Filled.Send, "upload") }
                 }
             }
         }

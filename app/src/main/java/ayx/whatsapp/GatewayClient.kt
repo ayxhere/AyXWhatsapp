@@ -150,6 +150,17 @@ object GatewayClient {
             if (o.optBoolean("ok", false)) o.optString("text").ifBlank { null } else null
         } catch (e: Exception) { null }
     }
+    // translate/transliterate many lines, preserving count/order (status lyrics). Falls back to input on failure.
+    suspend fun translateLines(lines: List<String>, romanize: Boolean, lang: String = "English"): List<String> = withContext(Dispatchers.IO) {
+        try {
+            val arr = JSONArray(); lines.forEach { arr.put(it) }
+            val o = post("/translatelines", JSONObject().put("lines", arr).put("romanize", romanize).put("lang", lang))
+            if (o.optBoolean("ok", false)) {
+                val out = o.optJSONArray("lines") ?: return@withContext lines
+                (0 until out.length()).map { out.optString(it) }
+            } else lines
+        } catch (e: Exception) { lines }
+    }
     data class Song(val title: String, val artist: String, val image: String?, val url: String)
     // returns synced lyrics as (timeMs, line); empty if none
     suspend fun getLyrics(title: String, artist: String): List<Pair<Long, String>> = withContext(Dispatchers.IO) {

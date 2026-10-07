@@ -2028,6 +2028,27 @@ app.post('/translate', async (req, res) => {
     return res.json({ ok: false, error: 'translation failed' })
   } catch (e) { res.json({ ok: false, error: e && e.message ? e.message : 'error' }) }
 })
+// Translate / transliterate many lines at once, preserving order & count (numbered-line protocol).
+// Used for status lyrics (e.g. Hindi lyrics → Hindi in English letters).
+app.post('/translatelines', async (req, res) => {
+  try {
+    const lines = Array.isArray(req.body && req.body.lines) ? req.body.lines.map(x => String(x)) : []
+    const romanize = !!(req.body && req.body.romanize)
+    const lang = String((req.body && req.body.lang) || 'English')
+    if (!lines.length) return res.json({ ok: false, error: 'no lines' })
+    if (!settings.aiApiUrl || !settings.aiApiKey) return res.json({ ok: false, error: 'no AI key' })
+    const sys = romanize
+      ? 'You transliterate song lyrics into English (Latin) letters, keeping the SAME language and words (do NOT translate the meaning). Input is numbered lines "N| text". Return EXACTLY one line per input as "N| <transliterated>" — same numbers, same order, same count, no extra lines, no commentary.'
+      : ('You translate song lyrics into ' + lang + '. Input is numbered lines "N| text". Return EXACTLY one line per input as "N| <translation>" — same numbers, same order, same count, no extra lines, no commentary.')
+    const numbered = lines.map((l, i) => (i + 1) + '| ' + l).join('\n')
+    const out = await chatComplete(settings.aiModel || 'openai/gpt-oss-20b', [{ role: 'system', content: sys }, { role: 'user', content: numbered }])
+    if (!out) return res.json({ ok: false, error: 'failed' })
+    const map = {}
+    out.split('\n').forEach(line => { const m = line.match(/^\s*(\d+)\s*\|\s?(.*)$/); if (m) map[parseInt(m[1], 10) - 1] = m[2] })
+    const result = lines.map((l, i) => (map[i] != null && String(map[i]).trim() ? map[i] : l))
+    return res.json({ ok: true, lines: result })
+  } catch (e) { res.json({ ok: false, error: e && e.message ? e.message : 'error' }) }
+})
 app.post('/settings', (req, res) => {
   const b = req.body || {}
   if (typeof b.alwaysOnline === 'boolean') settings.alwaysOnline = b.alwaysOnline
