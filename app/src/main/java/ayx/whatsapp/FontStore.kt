@@ -2,18 +2,23 @@ package ayx.whatsapp
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.compose.material3.Typography
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import java.io.File
 
-// App + status-lyrics fonts, bundled under assets/fonts/. Used by the app-wide font picker
-// (Settings → General → App font) and by the status lyrics font picker.
+// App + status-lyrics fonts: bundled ones under assets/fonts/, plus any .ttf/.otf the user uploads
+// (kept in filesDir/userfonts). Used by the app-wide font picker (Settings → General → Font & Emoji)
+// and the status lyrics font picker.
 object FontStore {
     // display name -> asset path under assets/fonts ("" = system default)
-    val fonts: LinkedHashMap<String, String> = linkedMapOf(
+    val bundled: LinkedHashMap<String, String> = linkedMapOf(
         "Default" to "",
         "Lobster" to "fonts/Lobster-Regular.otf",
         "Cabin" to "fonts/Cabin-Regular.otf",
@@ -37,6 +42,12 @@ object FontStore {
         "Yaelah" to "fonts/yaelah.ttf",
     )
 
+    // user-uploaded fonts: display name -> absolute file path. Observable so the picker updates live.
+    private val custom = mutableStateMapOf<String, String>()
+
+    // bundled + custom, in that order
+    val fonts: LinkedHashMap<String, String> get() = LinkedHashMap(bundled).apply { putAll(custom) }
+
     var appFont by mutableStateOf("Default")
     private var prefs: SharedPreferences? = null
     private val cache = HashMap<String, FontFamily?>()
@@ -46,15 +57,44 @@ object FontStore {
         val p = ctx.getSharedPreferences("fonts", Context.MODE_PRIVATE)
         prefs = p
         appFont = p.getString("app", "Default") ?: "Default"
+        val names = p.getStringSet("custom", emptySet()) ?: emptySet()
+        for (n in names) { val f = File(userDir(ctx), sanitize(n) + ".ttf"); if (f.exists()) custom[n] = f.absolutePath }
     }
 
     fun chooseFont(name: String) { appFont = name; prefs?.edit()?.putString("app", name)?.apply() }
+
+    private fun userDir(ctx: Context) = File(ctx.filesDir, "userfonts").apply { mkdirs() }
+    private fun sanitize(n: String) = n.replace(Regex("[^A-Za-z0-9_ -]"), "_").trim().ifBlank { "font" }
+
+    private fun queryName(ctx: Context, uri: Uri): String? = runCatching {
+        ctx.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        }
+    }.getOrNull()
+
+    // Copy a picked .ttf/.otf into app storage and register it. Returns the display name (to select it), or null.
+    fun addCustomFont(ctx: Context, uri: Uri): String? = runCatching {
+        val raw = queryName(ctx, uri)?.substringBeforeLast('.')?.trim().orEmpty()
+        val disp = (if (raw.isNotBlank()) raw else "Custom ${custom.size + 1}")
+        val file = File(userDir(ctx), sanitize(disp) + ".ttf")
+        ctx.contentResolver.openInputStream(uri)?.use { input -> file.outputStream().use { input.copyTo(it) } } ?: return null
+        if (file.length() == 0L) return null
+        custom[disp] = file.absolutePath
+        val cur = prefs?.getStringSet("custom", emptySet())?.toMutableSet() ?: mutableSetOf()
+        cur.add(disp); prefs?.edit()?.putStringSet("custom", cur)?.apply()
+        cache.remove(disp)
+        disp
+    }.getOrNull()
 
     // FontFamily for a name (null = system default). Cached; failures fall back to null (system).
     fun family(ctx: Context, name: String): FontFamily? {
         val path = fonts[name] ?: return null
         if (path.isBlank()) return null
-        return cache.getOrPut(name) { runCatching { FontFamily(Font(path, ctx.assets)) }.getOrNull() }
+        return cache.getOrPut(name) {
+            runCatching {
+                if (path.startsWith("/")) FontFamily(Font(File(path))) else FontFamily(Font(path, ctx.assets))
+            }.getOrNull()
+        }
     }
 
     fun appFamily(ctx: Context): FontFamily? = family(ctx, appFont)

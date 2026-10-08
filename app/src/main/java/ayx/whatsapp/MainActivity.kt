@@ -70,7 +70,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.unit.IntOffset
@@ -192,7 +191,6 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.buildAnnotatedString
@@ -282,6 +280,8 @@ class MainActivity : ComponentActivity() {
         ChatStyle.init(applicationContext)
         TranslateStore.init(applicationContext)
         FontStore.init(applicationContext)
+        EmojiStore.init(applicationContext)
+        EmojiStore.initEmojiCompat(applicationContext)   // apply chosen emoji font (one-shot per process)
         setContent {
             val sysDark = isSystemInDarkTheme()
             val mode = ThemeStore.mode.value
@@ -546,38 +546,39 @@ fun PrivacyGate(onAgree: () -> Unit) {
     }
 }
 
-// Smooth launch splash: gradient logo scales + fades in behind a sweeping ring, then the whole screen fades out.
+// Smooth launch splash: gradient logo scales in over a soft breathing glow, name + three-dot pulse, then fades out.
 @Composable
 private fun SplashScreen(dark: Boolean, onDone: () -> Unit) {
     var start by remember { mutableStateOf(false) }
     var gone by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(if (start) 1f else 0.62f, animationSpec = tween(680, easing = FastOutSlowInEasing), label = "splashScale")
-    val appear by animateFloatAsState(if (start) 1f else 0f, animationSpec = tween(560), label = "splashAppear")
+    val scale by animateFloatAsState(if (start) 1f else 0.70f, animationSpec = tween(620, easing = FastOutSlowInEasing), label = "splashScale")
+    val appear by animateFloatAsState(if (start) 1f else 0f, animationSpec = tween(520), label = "splashAppear")
     val out by animateFloatAsState(if (gone) 0f else 1f, animationSpec = tween(440), label = "splashOut")
-    val inf = rememberInfiniteTransition(label = "splashRing")
-    val sweep by inf.animateFloat(0f, 360f, infiniteRepeatable(tween(1300, easing = LinearEasing)), label = "splashSweep")
-    LaunchedEffect(Unit) { start = true; delay(1500); gone = true; delay(450); onDone() }
+    val inf = rememberInfiniteTransition(label = "splashGlow")
+    val glow by inf.animateFloat(0.30f, 0.85f, infiniteRepeatable(tween(1100, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "splashGlowV")
+    LaunchedEffect(Unit) { start = true; delay(1450); gone = true; delay(450); onDone() }
     val bg = if (dark) Color(0xFF000000) else Color(0xFFFFFFFF)
     Box(Modifier.fillMaxSize().graphicsLayer { alpha = out }.background(bg), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Box(contentAlignment = Alignment.Center) {
-                Canvas(Modifier.size(118.dp).graphicsLayer { alpha = appear }) {
-                    val d = size.minDimension
-                    val inset = d * 0.07f
-                    drawArc(brush = Brush.sweepGradient(listOf(AYX_GREEN, IOS_BLUE, AYX_GREEN)),
-                        startAngle = sweep, sweepAngle = 300f, useCenter = false,
-                        topLeft = Offset(inset, inset), size = Size(d - 2f * inset, d - 2f * inset),
-                        style = Stroke(width = d * 0.045f, cap = StrokeCap.Round))
-                }
-                Box(Modifier.size(84.dp).graphicsLayer { scaleX = scale; scaleY = scale; alpha = appear }
-                    .clip(RoundedCornerShape(26.dp)).background(Brush.linearGradient(listOf(AYX_GREEN, IOS_BLUE))),
+                Box(Modifier.size(154.dp).graphicsLayer { alpha = glow * appear }
+                    .background(Brush.radialGradient(listOf(AYX_GREEN.copy(alpha = 0.55f), Color.Transparent)), CircleShape))
+                Box(Modifier.size(92.dp).graphicsLayer { scaleX = scale; scaleY = scale; alpha = appear }
+                    .clip(RoundedCornerShape(28.dp)).background(Brush.linearGradient(listOf(AYX_GREEN, IOS_BLUE))),
                     contentAlignment = Alignment.Center) {
-                    Text("Ay", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.headlineMedium)
+                    Text("Ay", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.displaySmall)
                 }
             }
-            Spacer(Modifier.height(22.dp))
+            Spacer(Modifier.height(24.dp))
             Text(APP_NAME, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
                 color = if (dark) Color.White else Color(0xFF111111), modifier = Modifier.graphicsLayer { alpha = appear })
+            Spacer(Modifier.height(18.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.graphicsLayer { alpha = appear }) {
+                repeat(3) { i ->
+                    val d by inf.animateFloat(0.25f, 1f, infiniteRepeatable(tween(600, delayMillis = i * 150, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "splashDot$i")
+                    Box(Modifier.size(8.dp).graphicsLayer { alpha = d }.clip(CircleShape).background(AYX_GREEN))
+                }
+            }
         }
     }
 }
@@ -807,14 +808,30 @@ fun GatewayApp() {
         }
     }
     LaunchedEffect(Unit) {
+        var triedRestore = false
+        var didBackup = false
         while (true) {
             status = GatewayClient.status()
             if (!status.registered) {
                 settingsLoaded = false; openChat = null
-                val b = GatewayClient.qrBytes()
-                if (b != null) {
-                    val h = b.contentHashCode()
-                    if (h != lastQrHash) BitmapFactory.decodeByteArray(b, 0, b.size)?.let { qr = it.asImageBitmap(); lastQrHash = h }
+                // One-shot: restore a saved login from Download/WhatsAyX/session (survives reinstall / reset).
+                if (status.reachable && !triedRestore) {
+                    triedRestore = true
+                    runCatching {
+                        if (SessionBackup.exists(ctx)) {
+                            SessionBackup.load(ctx)?.let { js ->
+                                notify("restoring login…")
+                                if (GatewayClient.importSession(JSONObject(js))) { status = GatewayClient.status(); notify("login restored") }
+                            }
+                        }
+                    }
+                }
+                if (!status.registered) {
+                    val b = GatewayClient.qrBytes()
+                    if (b != null) {
+                        val h = b.contentHashCode()
+                        if (h != lastQrHash) BitmapFactory.decodeByteArray(b, 0, b.size)?.let { qr = it.asImageBitmap(); lastQrHash = h }
+                    }
                 }
             } else {
                 qr = null; lastQrHash = 0
@@ -822,6 +839,11 @@ fun GatewayApp() {
                     settings = GatewayClient.getSettings(); settingsLoaded = true
                     // keep the download-link auto-reply fed from the encrypted AyxHere store (single source of truth)
                     runCatching { GatewayClient.patchSettings(JSONObject().put("ayxDownloadUrl", AyxHere.githubReleases).put("ayxShareMsg", AyxHere.shareMsg)) }
+                }
+                // Back up the login once per session so a later reset / reinstall keeps it.
+                if (!didBackup) {
+                    didBackup = true
+                    runCatching { GatewayClient.exportSession()?.let { SessionBackup.save(ctx, it.toString()) } }
                 }
                 messages = GatewayClient.getMessages()
                 optimistic.removeAll { opt -> messages.any { it.fromMe && it.chat == opt.chat && it.text == opt.text && it.ts >= opt.ts - 8000 } }
@@ -1256,11 +1278,11 @@ fun GatewayApp() {
             when {
                 !status.registered -> Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode,
                     onPair = { n -> scope.launch { try { notify("code: " + GatewayClient.pair(n)) } catch (e: Exception) { notify("pair error: ${e.message}") } } },
-                    onReset = { scope.launch { GatewayClient.logout(); notify("reset") } }) }
+                    onReset = { scope.launch { GatewayClient.logout(); SessionBackup.delete(ctx); notify("reset") } }) }
                 screen == "settings" -> Box(Modifier.padding(pad)) { SettingsScreen(status, settings, page = settingsPage, onPage = { settingsPage = it }, wallpaperVersion = wallpaperVersion,
                     onToggle = { patch -> scope.launch { settings = GatewayClient.patchSettings(patch) } },
                     onRules = { r -> scope.launch { settings = GatewayClient.setRules(r) } },
-                    onLogout = { scope.launch { GatewayClient.logout(); notify("logged out") } }, ctx = ctx,
+                    onLogout = { scope.launch { GatewayClient.logout(); SessionBackup.delete(ctx); notify("logged out") } }, ctx = ctx,
                     onPickWallpaper = { wallpaperPicker.launch("image/*") },
                     onRemoveWallpaper = { File(ctx.filesDir, "wallpaper.jpg").delete(); loadWallpaper(); wallpaperVersion++; notify("wallpaper removed") },
                     onPickPhoto = { profilePicPicker.launch("image/*") },
@@ -2416,13 +2438,21 @@ private fun SettingRow(icon: androidx.compose.ui.graphics.vector.ImageVector, ti
     }
 }
 
-// Dedicated Font & Emoji page (opened from General) — tap a font to apply it app-wide.
+// Dedicated Font & Emoji page (opened from General) — tap a font to apply it app-wide; upload custom fonts; pick an emoji style.
 @Composable
 private fun FontSettings(ctx: Context) {
     var current by remember { mutableStateOf(FontStore.appFont) }
+    val scope = rememberCoroutineScope()
+    val fontPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            val name = FontStore.addCustomFont(ctx, uri)
+            if (name != null) { FontStore.chooseFont(name); current = name; Toast.makeText(ctx, "Font added: $name", Toast.LENGTH_SHORT).show() }
+            else Toast.makeText(ctx, "Couldn't load that font", Toast.LENGTH_SHORT).show()
+        }
+    }
     SettingsGroup("Preview") {
         Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-            Text("The quick brown fox 123", fontFamily = FontStore.family(ctx, current), style = MaterialTheme.typography.titleLarge)
+            Text("The quick brown fox 123 😀🎉❤️", fontFamily = FontStore.family(ctx, current), style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(4.dp))
             Text("Tap any font below — it applies across the whole app instantly.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -2435,11 +2465,60 @@ private fun FontSettings(ctx: Context) {
                 if (name == current) Icon(Icons.Filled.CheckCircle, "selected", tint = AYX_GREEN)
             }
         }
+        Spacer(Modifier.height(6.dp))
+        OutlinedButton(onClick = { fontPicker.launch("*/*") }, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Filled.Add, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Upload custom font (.ttf / .otf)")
+        }
     }
-    SettingsGroup("Emoji") {
-        Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("😀 😂 ❤️ 👍 🙏 🎉 🔥 ✨ 😎 🥳", style = MaterialTheme.typography.headlineSmall)
-            Text("Colour emoji are enabled and kept consistent across devices (downloaded on demand — no extra app size).", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    SettingsGroup("Emoji style") {
+        EmojiStylePicker(ctx, scope)
+    }
+}
+
+@Composable
+private fun EmojiStylePicker(ctx: Context, scope: CoroutineScope) {
+    var selected by remember { mutableStateOf(EmojiStore.selected) }
+    var downloading by remember { mutableStateOf<String?>(null) }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text("😀 😂 ❤️ 👍 🙏 🎉 🔥 ✨ 😎 🥳", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(vertical = 6.dp))
+        EmojiStyleRow("System default", "Your phone's built-in emoji", selected == EmojiStore.SYSTEM, true, false) {
+            EmojiStore.choose(EmojiStore.SYSTEM); selected = EmojiStore.SYSTEM
+            Toast.makeText(ctx, "System emoji set — restart app to apply", Toast.LENGTH_SHORT).show()
+        }
+        EmojiStore.styles.forEach { st ->
+            val have = EmojiStore.isDownloaded(ctx, st.key)
+            EmojiStyleRow(st.name, if (have) "Downloaded · tap to apply" else "Tap to download & apply", selected == st.name, have, downloading == st.name) {
+                if (downloading != null) return@EmojiStyleRow
+                if (have) {
+                    EmojiStore.choose(st.name); selected = st.name
+                    Toast.makeText(ctx, "${st.name} set — restart app to apply", Toast.LENGTH_SHORT).show()
+                } else {
+                    downloading = st.name
+                    scope.launch {
+                        val ok = EmojiStore.download(ctx, st)
+                        downloading = null
+                        if (ok) { EmojiStore.choose(st.name); selected = st.name; Toast.makeText(ctx, "${st.name} downloaded — restart app to apply", Toast.LENGTH_LONG).show() }
+                        else Toast.makeText(ctx, "Download failed — check your connection", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+        Text("Saved to Download/WhatsAyX/fonts/emoji · applies on next app launch.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp, start = 2.dp))
+    }
+}
+
+@Composable
+private fun EmojiStyleRow(name: String, sub: String, selectedNow: Boolean, downloaded: Boolean, loading: Boolean, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(enabled = !loading) { onClick() }.padding(horizontal = 8.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(name, style = MaterialTheme.typography.bodyLarge)
+            Text(sub, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        when {
+            loading -> CircularProgressIndicator(Modifier.size(22.dp), color = AYX_GREEN, strokeWidth = 2.5.dp)
+            selectedNow -> Icon(Icons.Filled.CheckCircle, "selected", tint = AYX_GREEN)
+            downloaded -> Icon(Icons.Filled.CheckCircle, "downloaded", tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f))
+            else -> Icon(Icons.Filled.Download, "download", tint = IOS_BLUE)
         }
     }
 }
