@@ -567,7 +567,7 @@ private fun SplashScreen(dark: Boolean, onDone: () -> Unit) {
                 Box(Modifier.size(92.dp).graphicsLayer { scaleX = scale; scaleY = scale; alpha = appear }
                     .clip(RoundedCornerShape(28.dp)).background(Brush.linearGradient(listOf(AYX_GREEN, IOS_BLUE))),
                     contentAlignment = Alignment.Center) {
-                    Text("Ay", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.displaySmall)
+                    Text("AyX", color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false, style = MaterialTheme.typography.headlineMedium)
                 }
             }
             Spacer(Modifier.height(24.dp))
