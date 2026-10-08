@@ -67,6 +67,10 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.unit.IntOffset
@@ -121,6 +125,8 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Bolt
@@ -184,6 +190,9 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.buildAnnotatedString
@@ -298,12 +307,16 @@ class MainActivity : ComponentActivity() {
                     window.statusBarColor = android.graphics.Color.TRANSPARENT
                     WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !dark
                 }
-                Surface(Modifier.fillMaxSize()) {
-                    val ctx = LocalContext.current
-                    val prefs = remember { ctx.getSharedPreferences("wagw", Context.MODE_PRIVATE) }
-                    var agreed by remember { mutableStateOf(prefs.getBoolean("privacy_agreed", false)) }
-                    if (!agreed) PrivacyGate { prefs.edit().putBoolean("privacy_agreed", true).apply(); agreed = true }
-                    else GatewayApp()
+                Box(Modifier.fillMaxSize()) {
+                    Surface(Modifier.fillMaxSize()) {
+                        val ctx = LocalContext.current
+                        val prefs = remember { ctx.getSharedPreferences("wagw", Context.MODE_PRIVATE) }
+                        var agreed by remember { mutableStateOf(prefs.getBoolean("privacy_agreed", false)) }
+                        if (!agreed) PrivacyGate { prefs.edit().putBoolean("privacy_agreed", true).apply(); agreed = true }
+                        else GatewayApp()
+                    }
+                    var splashDone by remember { mutableStateOf(false) }
+                    if (!splashDone) SplashScreen(dark) { splashDone = true }
                 }
             }
         }
@@ -511,14 +524,61 @@ private fun queryName(ctx: Context, uri: Uri): String? =
 
 @Composable
 fun PrivacyGate(onAgree: () -> Unit) {
-    var typed by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().statusBarsPadding().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Privacy Policy", style = MaterialTheme.typography.headlineSmall)
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-            Text(PRIVACY_TEXT, style = MaterialTheme.typography.bodyMedium)
+    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Spacer(Modifier.height(26.dp))
+        Box(Modifier.size(64.dp).clip(RoundedCornerShape(20.dp)).background(AYX_GREEN.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
+            Icon(Icons.Filled.Shield, null, tint = AYX_GREEN, modifier = Modifier.size(34.dp))
         }
-        OutlinedTextField(typed, { typed = it }, label = { Text("Type 'ok' to continue") }, modifier = Modifier.fillMaxWidth())
-        Button(onClick = onAgree, enabled = typed.trim().equals("ok", true), modifier = Modifier.fillMaxWidth()) { Text("I Agree") }
+        Spacer(Modifier.height(12.dp))
+        Text("Privacy Policy", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text("Your data never leaves your device", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(16.dp))
+        Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f), modifier = Modifier.fillMaxWidth().weight(1f)) {
+            Column(Modifier.verticalScroll(rememberScrollState()).padding(18.dp)) {
+                Text(PRIVACY_TEXT, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        Button(onClick = onAgree, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(14.dp)) {
+            Icon(Icons.Filled.CheckCircle, null, modifier = Modifier.size(19.dp)); Spacer(Modifier.width(8.dp)); Text("I Agree & Continue", fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(Modifier.height(18.dp))
+    }
+}
+
+// Smooth launch splash: gradient logo scales + fades in behind a sweeping ring, then the whole screen fades out.
+@Composable
+private fun SplashScreen(dark: Boolean, onDone: () -> Unit) {
+    var start by remember { mutableStateOf(false) }
+    var gone by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (start) 1f else 0.62f, animationSpec = tween(680, easing = FastOutSlowInEasing), label = "splashScale")
+    val appear by animateFloatAsState(if (start) 1f else 0f, animationSpec = tween(560), label = "splashAppear")
+    val out by animateFloatAsState(if (gone) 0f else 1f, animationSpec = tween(440), label = "splashOut")
+    val inf = rememberInfiniteTransition(label = "splashRing")
+    val sweep by inf.animateFloat(0f, 360f, infiniteRepeatable(tween(1300, easing = LinearEasing)), label = "splashSweep")
+    LaunchedEffect(Unit) { start = true; delay(1500); gone = true; delay(450); onDone() }
+    val bg = if (dark) Color(0xFF000000) else Color(0xFFFFFFFF)
+    Box(Modifier.fillMaxSize().graphicsLayer { alpha = out }.background(bg), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(contentAlignment = Alignment.Center) {
+                Canvas(Modifier.size(118.dp).graphicsLayer { alpha = appear }) {
+                    val d = size.minDimension
+                    val inset = d * 0.07f
+                    drawArc(brush = Brush.sweepGradient(listOf(AYX_GREEN, IOS_BLUE, AYX_GREEN)),
+                        startAngle = sweep, sweepAngle = 300f, useCenter = false,
+                        topLeft = Offset(inset, inset), size = Size(d - 2f * inset, d - 2f * inset),
+                        style = Stroke(width = d * 0.045f, cap = StrokeCap.Round))
+                }
+                Box(Modifier.size(84.dp).graphicsLayer { scaleX = scale; scaleY = scale; alpha = appear }
+                    .clip(RoundedCornerShape(26.dp)).background(Brush.linearGradient(listOf(AYX_GREEN, IOS_BLUE))),
+                    contentAlignment = Alignment.Center) {
+                    Text("Ay", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.headlineMedium)
+                }
+            }
+            Spacer(Modifier.height(22.dp))
+            Text(APP_NAME, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
+                color = if (dark) Color.White else Color(0xFF111111), modifier = Modifier.graphicsLayer { alpha = appear })
+        }
     }
 }
 
@@ -1046,7 +1106,7 @@ fun GatewayApp() {
         topBar = {
             // Glass header: translucent so the list scrolls behind it. Chat screen has its own header.
             if (openChat == null) {
-            Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.80f), shadowElevation = 8.dp, tonalElevation = 2.dp,
+            Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.80f), shadowElevation = 6.dp, tonalElevation = 0.dp,
                 shape = RoundedCornerShape(bottomStart = 26.dp, bottomEnd = 26.dp), modifier = Modifier.fillMaxWidth()) {
             CenterAlignedTopAppBar(
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
@@ -1070,12 +1130,22 @@ fun GatewayApp() {
                     } else Text(title, fontWeight = FontWeight.Bold, modifier = Modifier.combinedClickable(
                         interactionSource = remember { MutableInteractionSource() }, indication = null,
                         onClick = {},
+                        // Long-press the WhatsAyX title to reveal hidden items — Status tab reveals hidden statuses, Home reveals hidden chats.
                         onLongClick = {
-                            if (ChatFlags.reveal) ChatFlags.reveal = false
-                            else {
-                                val km = ctx.getSystemService(KeyguardManager::class.java)
-                                if (km != null && km.isKeyguardSecure) revealUnlock.launch(km.createConfirmDeviceCredentialIntent("Show hidden chats", "Verify to reveal"))
-                                else ChatFlags.reveal = true
+                            if (chatsPage == 1) {
+                                if (StatusFlags.reveal) StatusFlags.reveal = false
+                                else {
+                                    val km = ctx.getSystemService(KeyguardManager::class.java)
+                                    if (km != null && km.isKeyguardSecure) statusRevealUnlock.launch(km.createConfirmDeviceCredentialIntent("Show hidden statuses", "Verify to reveal"))
+                                    else StatusFlags.reveal = true
+                                }
+                            } else {
+                                if (ChatFlags.reveal) ChatFlags.reveal = false
+                                else {
+                                    val km = ctx.getSystemService(KeyguardManager::class.java)
+                                    if (km != null && km.isKeyguardSecure) revealUnlock.launch(km.createConfirmDeviceCredentialIntent("Show hidden chats", "Verify to reveal"))
+                                    else ChatFlags.reveal = true
+                                }
                             }
                         }))
                 },
@@ -1127,7 +1197,7 @@ fun GatewayApp() {
             }
         }
     ) { pad ->
-        val homeBlur by animateDpAsState(if (statusFabMenu || textStatusDlg) 16.dp else 0.dp, label = "homeblur")
+        val homeBlur by animateDpAsState(if (statusFabMenu || textStatusDlg || showSetName) 16.dp else 0.dp, label = "homeblur")
         Box(Modifier.fillMaxSize().blur(homeBlur)) {
         if (openChat != null && status.registered) {
             // ===== Edge-to-edge chat: wallpaper + messages full-bleed, floating glass header on top =====
@@ -1244,8 +1314,8 @@ fun GatewayApp() {
             // Floating rounded glass Home/Status navigation — overlaid so the list scrolls behind it.
             if (status.registered && openChat == null && screen == "chats") {
                 val selC = MaterialTheme.colorScheme.primary; val dimC = MaterialTheme.colorScheme.onSurfaceVariant
-                Surface(shape = RoundedCornerShape(30.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
-                    tonalElevation = 3.dp, shadowElevation = 16.dp,
+                Surface(shape = RoundedCornerShape(30.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                    tonalElevation = 0.dp, shadowElevation = 14.dp, border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)),
                     modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 12.dp)) {
                     Row(Modifier.padding(horizontal = 6.dp).height(60.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.width(104.dp).fillMaxHeight().clip(RoundedCornerShape(24.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { chatsPage = 0 }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
@@ -1469,7 +1539,6 @@ private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<Stri
     val blurDp by animateDpAsState(if (menuChat != null || mutePick != null) 18.dp else 0.dp, label = "homeblur")
 
     LazyColumn(Modifier.fillMaxSize().blur(blurDp), contentPadding = contentPad) {
-        if (hiddenCount > 0) item { HiddenReveal(if (ChatFlags.reveal) "Hidden chats shown · tap to hide" else "Show $hiddenCount hidden chat" + (if (hiddenCount > 1) "s" else ""), ChatFlags.reveal, onToggleReveal) }
         itemsIndexed(groups, key = { _, e -> e.key }) { _, entry ->
             val msgs = entry.value
             val last = msgs.maxByOrNull { it.ts }!!
@@ -1496,7 +1565,12 @@ private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<Stri
     }
 
     menuChat?.let { jid ->
+        val cmsgs = messages.filter { it.chat == jid }
+        val cname = chatTitle(cmsgs)
+        val clast = cmsgs.maxByOrNull { it.ts }
+        val cprev = clast?.let { when { it.deleted -> "deleted"; it.text.isNotBlank() -> it.text; it.mediaType != null -> "[${it.mediaType}]"; else -> "" } } ?: ""
         ChatActionSheet(
+            name = cname, jid = jid, preview = (if (clast?.fromMe == true) "You: " else "") + cprev, dpCache = dpCache,
             muted = ChatFlags.isMuted(jid),
             hidden = ChatFlags.hidden[jid] == true,
             locked = ChatFlags.locked[jid] == true,
@@ -1515,20 +1589,36 @@ private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<Stri
 
 // Chat long-press action sheet (home screen) — mute (timed), hide, lock, delete
 @Composable
-private fun ChatActionSheet(muted: Boolean, hidden: Boolean, locked: Boolean, onDismiss: () -> Unit,
+private fun ChatActionSheet(name: String, jid: String, preview: String, dpCache: MutableMap<String, ImageBitmap?>,
+    muted: Boolean, hidden: Boolean, locked: Boolean, onDismiss: () -> Unit,
     onMute: () -> Unit, onUnmute: () -> Unit, onHide: () -> Unit, onLock: () -> Unit, onDelete: () -> Unit) {
     val onSurf = MaterialTheme.colorScheme.onSurface
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(24.dp), color = dialogBg().copy(alpha = 0.97f),
-            tonalElevation = 6.dp, shadowElevation = 12.dp,
-            modifier = Modifier.fillMaxWidth().border(1.dp, onSurf.copy(alpha = 0.10f), RoundedCornerShape(24.dp))) {
-            Column(Modifier.padding(vertical = 8.dp)) {
-                if (muted) ActionSheetItem(Icons.Filled.Notifications, "Unmute chat", AYX_GREEN, onUnmute)
-                else ActionSheetItem(Icons.Filled.NotificationsOff, "Mute chat", AYX_GREEN, onMute)
-                ActionSheetItem(if (hidden) Icons.Filled.Visibility else Icons.Filled.VisibilityOff, if (hidden) "Unhide chat" else "Hide chat", AYX_GREEN, onHide)
-                ActionSheetItem(if (locked) Icons.Filled.LockOpen else Icons.Filled.Lock, if (locked) "Unlock chat" else "Lock chat", AYX_GREEN, onLock)
-                HorizontalDivider(color = onSurf.copy(alpha = 0.08f))
-                ActionSheetItem(Icons.Filled.Delete, "Delete chat", AYX_RED, onDelete, destructive = true)
+    // Full-screen blurred-backdrop menu: the chat itself floats above its action box.
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(Modifier.fillMaxSize().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Surface(shape = RoundedCornerShape(20.dp), color = dialogBg().copy(alpha = 0.98f), shadowElevation = 10.dp,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, onSurf.copy(alpha = 0.08f)), modifier = Modifier.fillMaxWidth()) {
+                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Avatar(jid, name, dpCache, 48.dp)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (preview.isNotBlank()) Text(preview, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+                Surface(shape = RoundedCornerShape(20.dp), color = dialogBg().copy(alpha = 0.98f), shadowElevation = 12.dp,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, onSurf.copy(alpha = 0.08f)), modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(vertical = 6.dp)) {
+                        if (muted) ActionSheetItem(Icons.Filled.Notifications, "Unmute chat", AYX_GREEN, onUnmute)
+                        else ActionSheetItem(Icons.Filled.NotificationsOff, "Mute chat", AYX_GREEN, onMute)
+                        ActionSheetItem(if (hidden) Icons.Filled.Visibility else Icons.Filled.VisibilityOff, if (hidden) "Unhide chat" else "Hide chat", AYX_GREEN, onHide)
+                        ActionSheetItem(if (locked) Icons.Filled.LockOpen else Icons.Filled.Lock, if (locked) "Unlock chat" else "Lock chat", AYX_GREEN, onLock)
+                        HorizontalDivider(color = onSurf.copy(alpha = 0.08f))
+                        ActionSheetItem(Icons.Filled.Delete, "Delete chat", AYX_RED, onDelete, destructive = true)
+                    }
+                }
             }
         }
     }
@@ -1795,32 +1885,52 @@ private fun MessageActionSheet(
     onDeleteMe: () -> Unit,
 ) {
     val onSurf = MaterialTheme.colorScheme.onSurface
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(24.dp), color = dialogBg().copy(alpha = 0.97f),
-            tonalElevation = 6.dp, shadowElevation = 12.dp,
-            modifier = Modifier.fillMaxWidth().border(1.dp, onSurf.copy(alpha = 0.10f), RoundedCornerShape(24.dp))) {
-            Column(Modifier.padding(vertical = 8.dp)) {
-                // reaction row
-                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    listOf("👍", "❤️", "😂", "😮", "😢", "🙏").forEach { e ->
-                        Box(Modifier.size(42.dp).clip(CircleShape).clickable { onReact(e) }, contentAlignment = Alignment.Center) {
-                            Text(e, style = MaterialTheme.typography.headlineSmall)
+    val dark = isSystemInDarkTheme()
+    val spec = bubbleSpec(m.fromMe, dark)
+    val side = if (m.fromMe) Alignment.End else Alignment.Start
+    // Full-screen blurred-backdrop context menu (iOS / Telegram style): reaction pill + the floating
+    // message + the action box, all hugging the message's own side (sent → right, received → left).
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(Modifier.fillMaxSize().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
+            Column(Modifier.fillMaxWidth().statusBarsPadding().navigationBarsPadding().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()),
+                horizontalAlignment = side) {
+                // reaction pill
+                Surface(shape = RoundedCornerShape(28.dp), color = dialogBg().copy(alpha = 0.98f), shadowElevation = 10.dp,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, onSurf.copy(alpha = 0.08f))) {
+                    Row(Modifier.padding(horizontal = 6.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        listOf("👍", "❤️", "😂", "😮", "😢", "🙏").forEach { e ->
+                            Box(Modifier.size(42.dp).clip(CircleShape).clickable { onReact(e) }, contentAlignment = Alignment.Center) {
+                                Text(e, style = MaterialTheme.typography.headlineSmall)
+                            }
                         }
                     }
                 }
-                HorizontalDivider(color = onSurf.copy(alpha = 0.08f))
-                val canEdit = m.fromMe && m.text.isNotBlank() && !m.deleted
-                val canCopy = m.text.isNotBlank() && !m.deleted
-                if (canEdit) ActionSheetItem(Icons.Filled.Edit, "Edit message", AYX_GREEN, onEdit)
-                ActionSheetItem(Icons.Filled.Info, "Message info", AYX_GREEN, onInfo)
-                if (!m.deleted) ActionSheetItem(Icons.AutoMirrored.Filled.Reply, "Reply", AYX_GREEN, onReply)
-                if (!m.deleted) ActionSheetItem(Icons.AutoMirrored.Filled.ArrowForward, "Forward", AYX_GREEN, onForward)
-                if (canCopy) ActionSheetItem(Icons.Filled.ContentCopy, "Copy", AYX_GREEN, onCopy)
-                ActionSheetItem(Icons.Filled.Checklist, "Select", AYX_GREEN, onSelect)
-                HorizontalDivider(color = onSurf.copy(alpha = 0.08f))
-                if (m.fromMe && !m.deleted) ActionSheetItem(Icons.Filled.Delete, "Delete for everyone", AYX_RED, onDeleteEveryone, destructive = true)
-                ActionSheetItem(Icons.Filled.DeleteOutline, "Delete for me", AYX_RED, onDeleteMe, destructive = true)
+                Spacer(Modifier.height(10.dp))
+                // floating copy of the long-pressed message
+                Surface(color = spec.first, shape = spec.third, shadowElevation = 8.dp, modifier = Modifier.widthIn(max = 300.dp)) {
+                    val preview = when { m.deleted -> "This message was deleted"; m.text.isNotBlank() -> m.text; m.mediaType != null -> "[${m.mediaType}]"; else -> "" }
+                    Text(preview, color = spec.second, style = MaterialTheme.typography.bodyLarge, maxLines = 10, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+                }
+                Spacer(Modifier.height(10.dp))
+                // action box — same side as the message
+                Surface(shape = RoundedCornerShape(20.dp), color = dialogBg().copy(alpha = 0.98f), shadowElevation = 12.dp,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, onSurf.copy(alpha = 0.08f)),
+                    modifier = Modifier.widthIn(min = 230.dp, max = 300.dp)) {
+                    Column(Modifier.padding(vertical = 6.dp)) {
+                        val canEdit = m.fromMe && m.text.isNotBlank() && !m.deleted
+                        val canCopy = m.text.isNotBlank() && !m.deleted
+                        if (canEdit) ActionSheetItem(Icons.Filled.Edit, "Edit message", AYX_GREEN, onEdit)
+                        ActionSheetItem(Icons.Filled.Info, "Message info", AYX_GREEN, onInfo)
+                        if (!m.deleted) ActionSheetItem(Icons.AutoMirrored.Filled.Reply, "Reply", AYX_GREEN, onReply)
+                        if (!m.deleted) ActionSheetItem(Icons.AutoMirrored.Filled.ArrowForward, "Forward", AYX_GREEN, onForward)
+                        if (canCopy) ActionSheetItem(Icons.Filled.ContentCopy, "Copy", AYX_GREEN, onCopy)
+                        ActionSheetItem(Icons.Filled.Checklist, "Select", AYX_GREEN, onSelect)
+                        HorizontalDivider(color = onSurf.copy(alpha = 0.08f))
+                        if (m.fromMe && !m.deleted) ActionSheetItem(Icons.Filled.Delete, "Delete for everyone", AYX_RED, onDeleteEveryone, destructive = true)
+                        ActionSheetItem(Icons.Filled.DeleteOutline, "Delete for me", AYX_RED, onDeleteMe, destructive = true)
+                    }
+                }
             }
         }
     }
@@ -1924,15 +2034,12 @@ private fun ChatGlassHeader(
     val pill = MaterialTheme.colorScheme.surface.copy(alpha = frost)
     val onPill = MaterialTheme.colorScheme.onSurface
     val borderCol = onPill.copy(alpha = 0.12f)
-    // a faint top sheen makes the translucent pill read like real glass
-    val sheen = Brush.verticalGradient(listOf(Color.White.copy(alpha = if (dark) 0.06f else 0.28f), Color.Transparent))
     val pillShape = RoundedCornerShape(24.dp)
     var menu by remember { mutableStateOf(false) }
 
     // ONE floating frosted card: back + avatar + name/presence + edit + menu (original WhatsApp layout, no separate arrow chip)
     Box(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 6.dp)) {
         Box(Modifier.fillMaxWidth().clip(pillShape).background(pill).border(1.dp, borderCol, pillShape)) {
-            Box(Modifier.matchParentSize().background(sheen))
             Row(Modifier.padding(start = 2.dp, end = 2.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "back", tint = onPill) }
                 Box(Modifier.clip(CircleShape).clickable { onAvatarClick() }) { Avatar(jid, name, dpCache, 38.dp, CircleShape) }
@@ -1943,10 +2050,10 @@ private fun ChatGlassHeader(
                     val sub = presence?.let { pr -> if (pr.online) "online" else if (pr.lastSeen > 0) "last seen " + fmt(pr.lastSeen * 1000) else "" } ?: ""
                     if (sub.isNotEmpty()) Text(sub, style = MaterialTheme.typography.labelSmall, color = onPill.copy(alpha = 0.7f), maxLines = 1)
                 }
-                IconButton(onClick = onEdit) { Icon(Icons.Filled.Edit, "set name", tint = onPill) }
                 Box {
                     IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "menu", tint = onPill) }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(text = { Text("Set name") }, leadingIcon = { Icon(Icons.Filled.Edit, null) }, onClick = { menu = false; onEdit() })
                         DropdownMenuItem(text = { Text("Change wallpaper") }, onClick = { menu = false; onWallpaper() })
                         if (!isBlocked) DropdownMenuItem(text = { Text("Block contact") }, onClick = { menu = false; onBlock() })
                         else DropdownMenuItem(text = { Text("Unblock contact") }, onClick = { menu = false; onUnblock() })
@@ -2967,10 +3074,67 @@ private fun LinkRow(icon: androidx.compose.ui.graphics.vector.ImageVector, tint:
     }
 }
 
+// Like LinkRow, but the leading icon is any composable (used for the real brand glyphs below).
+@Composable
+private fun LinkRowSlot(leading: @Composable () -> Unit, title: String, sub: String?, onClick: () -> Unit) {
+    Surface(onClick = onClick, shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(14.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)), contentAlignment = Alignment.Center) { leading() }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyLarge)
+                if (sub != null) Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+// The real Instagram mark: rounded-square + lens + corner dot, in the brand gradient.
+@Composable
+private fun InstagramGlyph(size: androidx.compose.ui.unit.Dp) {
+    val grad = Brush.linearGradient(listOf(Color(0xFFFEDA77), Color(0xFFF58529), Color(0xFFDD2A7B), Color(0xFF8134AF), Color(0xFF515BD4)))
+    Canvas(Modifier.size(size)) {
+        val s = this.size.minDimension
+        val sw = s * 0.095f
+        val pad = sw / 2f + s * 0.05f
+        val rr = s * 0.30f
+        drawRoundRect(brush = grad, topLeft = Offset(pad, pad), size = Size(s - 2f * pad, s - 2f * pad), cornerRadius = CornerRadius(rr, rr), style = Stroke(sw))
+        drawCircle(brush = grad, radius = s * 0.19f, center = Offset(s / 2f, s / 2f), style = Stroke(sw))
+        drawCircle(brush = grad, radius = s * 0.05f, center = Offset(s * 0.71f, s * 0.29f))
+    }
+}
+
+// The real Telegram mark: blue disc with a white paper plane.
+@Composable
+private fun TelegramGlyph(size: androidx.compose.ui.unit.Dp) {
+    val tg = Brush.linearGradient(listOf(Color(0xFF2AABEE), Color(0xFF229ED9)))
+    Canvas(Modifier.size(size)) {
+        val s = this.size.minDimension
+        drawCircle(brush = tg, radius = s / 2f, center = Offset(s / 2f, s / 2f))
+        val body = androidx.compose.ui.graphics.Path().apply {
+            moveTo(s * 0.22f, s * 0.49f)
+            lineTo(s * 0.79f, s * 0.27f)
+            lineTo(s * 0.645f, s * 0.75f)
+            lineTo(s * 0.47f, s * 0.585f)
+            close()
+        }
+        drawPath(body, Color.White)
+        val fold = androidx.compose.ui.graphics.Path().apply {
+            moveTo(s * 0.47f, s * 0.585f)
+            lineTo(s * 0.645f, s * 0.75f)
+            lineTo(s * 0.44f, s * 0.67f)
+            close()
+        }
+        drawPath(fold, Color(0xFFC8E6F7))
+    }
+}
+
 @Composable
 private fun AboutSettings(ctx: Context, onLogout: () -> Unit) {
     val ver = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "" }
     var confirm by remember { mutableStateOf(false) }
+    var showPrivacy by remember { mutableStateOf(false) }
     val artId = remember { ctx.resources.getIdentifier("about_art", "drawable", ctx.packageName) }
     val art = remember(artId) { if (artId != 0) runCatching { BitmapFactory.decodeResource(ctx.resources, artId)?.asImageBitmap() }.getOrNull() else null }
 
@@ -2996,17 +3160,29 @@ private fun AboutSettings(ctx: Context, onLogout: () -> Unit) {
     }
 
     Text("CONNECT", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
-    LinkRow(Icons.Filled.PhotoCamera, Color(0xFFFF7EB6), AyxHere.igLabel, "Instagram") { openUrl(ctx, AyxHere.igUrl) }
-    LinkRow(Icons.AutoMirrored.Filled.Send, CAT_AI, AyxHere.tgLabel, "Telegram") { openUrl(ctx, AyxHere.tgUrl) }
+    LinkRowSlot({ InstagramGlyph(21.dp) }, AyxHere.igLabel, "Instagram") { openUrl(ctx, AyxHere.igUrl) }
+    LinkRowSlot({ TelegramGlyph(21.dp) }, AyxHere.tgLabel, "Telegram") { openUrl(ctx, AyxHere.tgUrl) }
 
-    Text("If I'm available everywhere, kindly contact me here.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp, top = 2.dp))
+    Text("If I'm unavailable everywhere, kindly contact me here.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp, top = 2.dp))
     LinkRow(Icons.Filled.Language, CAT_WALLPAPER, "Website", "Personal site") { openUrl(ctx, AyxHere.webUrl) }
+
+    Text("LEGAL", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
+    LinkRow(Icons.Filled.Shield, AYX_GREEN, "Privacy Policy", "How your data is handled") { showPrivacy = true }
 
     Text("ACCOUNT", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
     OutlinedButton(onClick = { confirm = true }, modifier = Modifier.fillMaxWidth(),
         colors = ButtonDefaults.outlinedButtonColors(contentColor = ERR_RED),
         border = androidx.compose.foundation.BorderStroke(1.dp, ERR_RED.copy(alpha = 0.6f))) {
         Icon(Icons.AutoMirrored.Filled.Logout, null); Spacer(Modifier.width(8.dp)); Text("Unlink / reset")
+    }
+    if (showPrivacy) {
+        AlertDialog(onDismissRequest = { showPrivacy = false },
+            containerColor = dialogBg(),
+            shape = RoundedCornerShape(22.dp),
+            icon = { Icon(Icons.Filled.Shield, null, tint = AYX_GREEN) },
+            title = { Text("Privacy Policy") },
+            text = { Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) { Text(PRIVACY_TEXT, style = MaterialTheme.typography.bodySmall) } },
+            confirmButton = { TextButton(onClick = { showPrivacy = false }) { Text("Close", color = AYX_GREEN) } })
     }
     if (confirm) {
         AlertDialog(onDismissRequest = { confirm = false },
@@ -3029,26 +3205,49 @@ private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
 
 @Composable
 private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) -> Unit, onReset: () -> Unit) {
-    var number by remember { mutableStateOf("91") }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Option A — Scan QR", style = MaterialTheme.typography.titleMedium)
-        Text("On another phone: WhatsApp → Linked devices → Link a device → scan this.", style = MaterialTheme.typography.bodySmall)
-        ElevatedCard {
-            Box(Modifier.fillMaxWidth().padding(12.dp), contentAlignment = Alignment.Center) {
-                if (qr != null) Image(qr, "QR", Modifier.fillMaxWidth().aspectRatio(1f), contentScale = ContentScale.Fit)
-                else Text("Generating QR…", Modifier.padding(32.dp))
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Spacer(Modifier.height(44.dp))
+        Box(Modifier.size(76.dp).clip(RoundedCornerShape(22.dp)).background(Brush.linearGradient(listOf(AYX_GREEN, IOS_BLUE))), contentAlignment = Alignment.Center) {
+            Icon(Icons.Filled.QrCode2, null, tint = Color.White, modifier = Modifier.size(40.dp))
+        }
+        Spacer(Modifier.height(16.dp))
+        Text(APP_NAME, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text("Link your WhatsApp to get started", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(24.dp))
+        // QR card (scan this from WhatsApp on your phone)
+        Surface(shape = RoundedCornerShape(26.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.40f), modifier = Modifier.fillMaxWidth()) {
+            Box(Modifier.padding(18.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(18.dp)).background(Color.White), contentAlignment = Alignment.Center) {
+                    if (qr != null) Image(qr, "QR", Modifier.fillMaxSize().padding(16.dp), contentScale = ContentScale.Fit)
+                    else Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(color = AYX_GREEN, strokeWidth = 3.dp)
+                        Spacer(Modifier.height(12.dp)); Text("Generating QR…", color = Color(0xFF555555), style = MaterialTheme.typography.bodySmall)
+                    }
+                }
             }
         }
-        HorizontalDivider()
-        Text("Option B — Pairing code (same phone)", style = MaterialTheme.typography.titleMedium)
-        OutlinedTextField(number, { number = it.filter(Char::isDigit) }, label = { Text("Number with country code") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone), modifier = Modifier.fillMaxWidth())
-        Button(onClick = { onPair(number) }, enabled = number.length in 8..15, modifier = Modifier.fillMaxWidth()) { Text("Get pairing code") }
-        pairingCode?.let {
-            ElevatedCard { Column(Modifier.padding(16.dp)) { Text("Pairing code", style = MaterialTheme.typography.labelMedium); Text(it, style = MaterialTheme.typography.headlineMedium) } }
+        Spacer(Modifier.height(20.dp))
+        Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f), modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                LinkStep("1", "Open WhatsApp on your phone")
+                LinkStep("2", "Tap Settings → Linked devices")
+                LinkStep("3", "Tap Link a device, then scan this QR")
+            }
         }
-        HorizontalDivider()
-        OutlinedButton(onClick = onReset, modifier = Modifier.fillMaxWidth()) { Text("Reset session (fresh QR)") }
+        Spacer(Modifier.height(16.dp))
+        TextButton(onClick = onReset) { Text("QR not working? Get a fresh one") }
+        Spacer(Modifier.height(30.dp))
+    }
+}
+
+@Composable
+private fun LinkStep(n: String, text: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(26.dp).clip(CircleShape).background(AYX_GREEN.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
+            Text(n, style = MaterialTheme.typography.labelMedium, color = AYX_GREEN, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.width(12.dp))
+        Text(text, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
@@ -3124,7 +3323,6 @@ private fun StatusScreen(statuses: List<GatewayClient.StatusItem>, contentPad: a
     val version = StatusData.seenVersion.value            // recompose + reorder the moment a status is viewed
     val mine = statuses.filter { it.mine }
     val others = statuses.filter { !it.mine }
-    val hiddenCount = others.groupBy { it.sender }.keys.count { StatusFlags.isHidden(it) }
     // group by sender, drop hidden (unless revealed), then bucket: unread on top, viewed below, muted at the bottom
     val groups = others.groupBy { it.sender }.entries.filter { StatusFlags.reveal || !StatusFlags.isHidden(it.key) }
     val active = groups.filter { !StatusFlags.isMuted(it.key) }
@@ -3133,7 +3331,6 @@ private fun StatusScreen(statuses: List<GatewayClient.StatusItem>, contentPad: a
     val muted = groups.filter { StatusFlags.isMuted(it.key) }.sortedByDescending { e -> e.value.maxOf { it.ts } }
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = contentPad) {
-        if (hiddenCount > 0) item { HiddenReveal(if (StatusFlags.reveal) "Hidden statuses shown · tap to hide" else "Show $hiddenCount hidden status" + (if (hiddenCount > 1) "es" else ""), StatusFlags.reveal, onToggleReveal) }
         item {
             Text(if (StatusFlags.reveal) "My Status · showing hidden" else "My Status",
                 style = MaterialTheme.typography.labelMedium, color = IOS_BLUE,
@@ -3631,17 +3828,40 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
 @Composable
 private fun ProfileScreen(myJid: String?, dpCache: MutableMap<String, ImageBitmap?>, onPickPhoto: () -> Unit, onSaveName: (String) -> Unit) {
     var name by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Spacer(Modifier.height(20.dp))
-        Box(Modifier.clip(CircleShape).clickable { onPickPhoto() }) {
-            if (myJid != null) Avatar(myJid, "Me", dpCache, 120.dp)
-            else Box(Modifier.size(120.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer))
+    val number = myJid?.substringBefore("@")?.let { if (it.isNotEmpty() && it.all(Char::isDigit)) "+$it" else it } ?: ""
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Spacer(Modifier.height(18.dp))
+        Box(contentAlignment = Alignment.BottomEnd) {
+            Box(Modifier.size(128.dp).clip(CircleShape).clickable { onPickPhoto() }) {
+                if (myJid != null) Avatar(myJid, "Me", dpCache, 128.dp)
+                else Box(Modifier.size(128.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Filled.Person, null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+            }
+            Box(Modifier.size(38.dp).clip(CircleShape).background(AYX_GREEN).border(3.dp, MaterialTheme.colorScheme.surface, CircleShape).clickable { onPickPhoto() }, contentAlignment = Alignment.Center) {
+                Icon(Icons.Filled.PhotoCamera, "change photo", tint = Color.White, modifier = Modifier.size(19.dp))
+            }
         }
-        TextButton(onClick = onPickPhoto) { Text("Change photo") }
-        Spacer(Modifier.height(24.dp))
-        OutlinedTextField(name, { name = it }, label = { Text("Your name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(14.dp))
-        Button(onClick = { if (name.isNotBlank()) onSaveName(name.trim()) }, enabled = name.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("Save name") }
+        Spacer(Modifier.height(12.dp))
+        if (number.isNotBlank()) {
+            Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.40f)) {
+                Text(number, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Spacer(Modifier.height(26.dp))
+        Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f), modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
+                Text("DISPLAY NAME", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(name, { name = it }, placeholder = { Text("Your name") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = AYX_GREEN, unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)))
+                Text("Shows on your WhatsApp profile.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
+            }
+        }
+        Spacer(Modifier.height(18.dp))
+        Button(onClick = { if (name.isNotBlank()) onSaveName(name.trim()) }, enabled = name.isNotBlank(), modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(14.dp)) {
+            Icon(Icons.Filled.CheckCircle, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Save name")
+        }
     }
 }
 
