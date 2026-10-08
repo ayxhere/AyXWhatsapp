@@ -31,10 +31,10 @@ object EmojiStore {
 
     // Endpoints exactly as provided: api.imayx.in/font1 (iOS), /font2 (FluentUI), /3 (JoyPixel), /4 (OneUI).
     val styles: List<Style> = listOf(
-        Style("iOS", "https://api.imayx.in/font1", "ios"),
-        Style("FluentUI", "https://api.imayx.in/font2", "fluentui"),
-        Style("JoyPixel", "https://api.imayx.in/3", "joypixel"),
-        Style("OneUI", "https://api.imayx.in/4", "oneui"),
+        Style("iOS", "https://api.imayx.in/font/1", "ios"),
+        Style("FluentUI", "https://api.imayx.in/font/2", "fluentui"),
+        Style("JoyPixel", "https://api.imayx.in/font/3", "joypixel"),
+        Style("OneUI", "https://api.imayx.in/font/4", "oneui"),
     )
 
     var selected by mutableStateOf(SYSTEM)
