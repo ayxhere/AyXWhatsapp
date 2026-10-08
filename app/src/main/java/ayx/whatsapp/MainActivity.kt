@@ -821,7 +821,7 @@ fun GatewayApp() {
                         if (SessionBackup.exists(ctx)) {
                             SessionBackup.load(ctx)?.let { js ->
                                 notify("restoring login…")
-                                if (GatewayClient.importSession(JSONObject(js))) { status = GatewayClient.status(); notify("login restored") }
+                                if (GatewayClient.importSession(js)) { status = GatewayClient.status(); notify("login restored") }
                             }
                         }
                     }
@@ -843,7 +843,7 @@ fun GatewayApp() {
                 // Back up the login once per session so a later reset / reinstall keeps it.
                 if (!didBackup) {
                     didBackup = true
-                    runCatching { GatewayClient.exportSession()?.let { SessionBackup.save(ctx, it.toString()) } }
+                    runCatching { val js = GatewayClient.exportSession(); if (js.isNotBlank() && js != "{}") SessionBackup.save(ctx, js) }
                 }
                 messages = GatewayClient.getMessages()
                 optimistic.removeAll { opt -> messages.any { it.fromMe && it.chat == opt.chat && it.text == opt.text && it.ts >= opt.ts - 8000 } }

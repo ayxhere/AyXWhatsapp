@@ -317,16 +317,6 @@ object GatewayClient {
         post("/logout", JSONObject()).optBoolean("ok", false)
     }
 
-    // Full session (auth creds + settings + messages) for off-device backup.
-    suspend fun exportSession(): JSONObject? = withContext(Dispatchers.IO) {
-        try { get("/session/export") } catch (e: Exception) { null }
-    }
-
-    // Restore a previously exported session and reconnect. Returns true if linked afterwards.
-    suspend fun importSession(data: JSONObject): Boolean = withContext(Dispatchers.IO) {
-        try { post("/session/import", data).optBoolean("registered", false) } catch (e: Exception) { false }
-    }
-
     suspend fun getSettings(): Settings = withContext(Dispatchers.IO) {
         parseSettings(get("/settings"))
     }
