@@ -1042,22 +1042,11 @@ fun GatewayApp() {
                 else FloatingActionButton(onClick = { screen = "newchat"; ensureContacts() }) { Icon(Icons.Filled.Add, "new chat") }
             }
         },
-        bottomBar = {
-            // Bottom navigation — Home (chats) and Status. Only on the main screen.
-            if (status.registered && openChat == null && screen == "chats") {
-                NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 3.dp) {
-                    NavigationBarItem(selected = chatsPage == 0, onClick = { chatsPage = 0 },
-                        icon = { Icon(Icons.Filled.Home, "Home") }, label = { Text("Home") })
-                    NavigationBarItem(selected = chatsPage == 1, onClick = { chatsPage = 1 },
-                        icon = { Icon(Icons.Filled.DonutLarge, "Status") }, label = { Text("Status") })
-                }
-            }
-        },
+        bottomBar = {},   // Home/Status nav is a FLOATING rounded glass bar overlaid on the content (see below)
         topBar = {
-            // Chat screen renders edge-to-edge with its own floating glass header, so the shared app bar is drawn only off-chat.
-            // Header stays PINNED; the Home/Status navigation is the bottom bar.
+            // Glass header: translucent so the list scrolls behind it. Chat screen has its own header.
             if (openChat == null) {
-            Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 8.dp, tonalElevation = 2.dp,
+            Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.80f), shadowElevation = 8.dp, tonalElevation = 2.dp,
                 shape = RoundedCornerShape(bottomStart = 26.dp, bottomEnd = 26.dp), modifier = Modifier.fillMaxWidth()) {
             CenterAlignedTopAppBar(
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
@@ -1193,12 +1182,12 @@ fun GatewayApp() {
                 onAvatarClick = { dpView = ocChat }
             )
         } else {
-        Box(Modifier.fillMaxSize().padding(pad).consumeWindowInsets(pad)) {
+        Box(Modifier.fillMaxSize().consumeWindowInsets(pad)) {
             when {
-                !status.registered -> LinkScreen(qr, status.pairingCode,
+                !status.registered -> Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode,
                     onPair = { n -> scope.launch { try { notify("code: " + GatewayClient.pair(n)) } catch (e: Exception) { notify("pair error: ${e.message}") } } },
-                    onReset = { scope.launch { GatewayClient.logout(); notify("reset") } })
-                screen == "settings" -> SettingsScreen(status, settings, page = settingsPage, onPage = { settingsPage = it }, wallpaperVersion = wallpaperVersion,
+                    onReset = { scope.launch { GatewayClient.logout(); notify("reset") } }) }
+                screen == "settings" -> Box(Modifier.padding(pad)) { SettingsScreen(status, settings, page = settingsPage, onPage = { settingsPage = it }, wallpaperVersion = wallpaperVersion,
                     onToggle = { patch -> scope.launch { settings = GatewayClient.patchSettings(patch) } },
                     onRules = { r -> scope.launch { settings = GatewayClient.setRules(r) } },
                     onLogout = { scope.launch { GatewayClient.logout(); notify("logged out") } }, ctx = ctx,
@@ -1207,13 +1196,13 @@ fun GatewayApp() {
                     onPickPhoto = { profilePicPicker.launch("image/*") },
                     onSaveName = { n -> scope.launch { runCatching { GatewayClient.setProfileName(n) }.onSuccess { notify("name updated") }.onFailure { notify("name: ${it.message}") } } },
                     dpCache = dpCache,
-                    messages = messages)
-                screen == "newchat" -> NewChatScreen(deviceContacts, contactsLoading, dpCache,
-                    onPickNumber = { num -> openChat = num + "@s.whatsapp.net"; screen = "chats" })
-                screen == "profile" -> ProfileScreen(myJid, dpCache,
+                    messages = messages) }
+                screen == "newchat" -> Box(Modifier.padding(pad)) { NewChatScreen(deviceContacts, contactsLoading, dpCache,
+                    onPickNumber = { num -> openChat = num + "@s.whatsapp.net"; screen = "chats" }) }
+                screen == "profile" -> Box(Modifier.padding(pad)) { ProfileScreen(myJid, dpCache,
                     onPickPhoto = { profilePicPicker.launch("image/*") },
-                    onSaveName = { n -> scope.launch { runCatching { GatewayClient.setProfileName(n) }.onSuccess { notify("name updated") }.onFailure { notify("name: ${it.message}") } } })
-                else -> ChatsWithStatus(messages, statuses, dpCache, searchQuery, chatsPage,
+                    onSaveName = { n -> scope.launch { runCatching { GatewayClient.setProfileName(n) }.onSuccess { notify("name updated") }.onFailure { notify("name: ${it.message}") } } }) }
+                else -> ChatsWithStatus(messages, statuses, dpCache, searchQuery, chatsPage, topInset = pad.calculateTopPadding(),
                     onPageChange = { chatsPage = it },
                     onLoadStatuses = { scope.launch { val fresh = GatewayClient.getStatuses(); statuses = if (fresh.isNotEmpty()) StatusData.merge(fresh) else StatusData.load() } },
                     onOpenStatus = { st ->
@@ -1231,6 +1220,14 @@ fun GatewayApp() {
                             else StatusFlags.reveal = true
                         }
                     },
+                    onToggleChatReveal = {
+                        if (ChatFlags.reveal) ChatFlags.reveal = false
+                        else {
+                            val km = ctx.getSystemService(KeyguardManager::class.java)
+                            if (km != null && km.isKeyguardSecure) revealUnlock.launch(km.createConfirmDeviceCredentialIntent("Show hidden chats", "Verify to reveal"))
+                            else ChatFlags.reveal = true
+                        }
+                    },
                     onDelete = { jid -> scope.launch { GatewayClient.deleteChat(jid); messages = GatewayClient.getMessages() } },
                     onOpen = { jid ->
                         if (ChatFlags.locked[jid] == true) {
@@ -1244,7 +1241,24 @@ fun GatewayApp() {
             }
         }
         }
-            // ===== shared overlays: shown on every screen, including the edge-to-edge chat =====
+            // Floating rounded glass Home/Status navigation — overlaid so the list scrolls behind it.
+            if (status.registered && openChat == null && screen == "chats") {
+                val selC = MaterialTheme.colorScheme.primary; val dimC = MaterialTheme.colorScheme.onSurfaceVariant
+                Surface(shape = RoundedCornerShape(30.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
+                    tonalElevation = 3.dp, shadowElevation = 16.dp,
+                    modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 12.dp)) {
+                    Row(Modifier.padding(horizontal = 6.dp).height(60.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.width(104.dp).fillMaxHeight().clip(RoundedCornerShape(24.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { chatsPage = 0 }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                            Icon(Icons.Filled.Home, "Home", tint = if (chatsPage == 0) selC else dimC, modifier = Modifier.size(22.dp))
+                            Spacer(Modifier.height(2.dp)); Text("Home", color = if (chatsPage == 0) selC else dimC, style = MaterialTheme.typography.labelSmall, fontWeight = if (chatsPage == 0) FontWeight.SemiBold else FontWeight.Normal)
+                        }
+                        Column(Modifier.width(104.dp).fillMaxHeight().clip(RoundedCornerShape(24.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { chatsPage = 1 }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                            Icon(Icons.Filled.DonutLarge, "Status", tint = if (chatsPage == 1) selC else dimC, modifier = Modifier.size(22.dp))
+                            Spacer(Modifier.height(2.dp)); Text("Status", color = if (chatsPage == 1) selC else dimC, style = MaterialTheme.typography.labelSmall, fontWeight = if (chatsPage == 1) FontWeight.SemiBold else FontWeight.Normal)
+                        }
+                    }
+                }
+            }
             toast?.let {
                 Surface(color = MaterialTheme.colorScheme.inverseSurface, shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 90.dp)) {
@@ -1423,14 +1437,27 @@ private fun ProfilePhotoViewer(jid: String, name: String, onDownload: () -> Unit
     }
 }
 
+// Discoverable "show hidden" row — so hidden chats/statuses can always be brought back.
+@Composable
+private fun HiddenReveal(label: String, revealed: Boolean, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable { onClick() }.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(if (revealed) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(14.dp))
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+    }
+    HorizontalDivider()
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<String, ImageBitmap?>, query: String, onDelete: (String) -> Unit, onOpen: (String) -> Unit) {
+private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<String, ImageBitmap?>, query: String, contentPad: androidx.compose.foundation.layout.PaddingValues, onToggleReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit) {
+    val allKeys = messages.map { it.chat }.toSet()
+    val hiddenCount = allKeys.count { ChatFlags.hidden[it] == true }
     val groups = messages.groupBy { it.chat }.entries
         .filter { ChatFlags.reveal || ChatFlags.hidden[it.key] != true }
         .filter { query.isBlank() || chatTitle(it.value).contains(query, true) || it.key.contains(query) }
         .sortedByDescending { it.value.maxOf { m -> m.ts } }
-    if (groups.isEmpty()) {
+    if (groups.isEmpty() && hiddenCount == 0) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text("No chats yet.\nIncoming messages will appear here.", style = MaterialTheme.typography.bodyMedium)
         }
@@ -1441,7 +1468,8 @@ private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<Stri
     var mutePick by remember { mutableStateOf<String?>(null) }
     val blurDp by animateDpAsState(if (menuChat != null || mutePick != null) 18.dp else 0.dp, label = "homeblur")
 
-    LazyColumn(Modifier.fillMaxSize().blur(blurDp)) {
+    LazyColumn(Modifier.fillMaxSize().blur(blurDp), contentPadding = contentPad) {
+        if (hiddenCount > 0) item { HiddenReveal(if (ChatFlags.reveal) "Hidden chats shown · tap to hide" else "Show $hiddenCount hidden chat" + (if (hiddenCount > 1) "s" else ""), ChatFlags.reveal, onToggleReveal) }
         itemsIndexed(groups, key = { _, e -> e.key }) { _, entry ->
             val msgs = entry.value
             val last = msgs.maxByOrNull { it.ts }!!
@@ -3074,8 +3102,10 @@ private fun NewChatScreen(contacts: List<DeviceContact>, loading: Boolean, dpCac
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, statuses: List<GatewayClient.StatusItem>, dpCache: MutableMap<String, ImageBitmap?>, query: String, page: Int, onPageChange: (Int) -> Unit, onLoadStatuses: () -> Unit, onOpenStatus: (GatewayClient.StatusItem) -> Unit, onToggleStatusReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit) {
+private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, statuses: List<GatewayClient.StatusItem>, dpCache: MutableMap<String, ImageBitmap?>, query: String, page: Int, topInset: androidx.compose.ui.unit.Dp, onPageChange: (Int) -> Unit, onLoadStatuses: () -> Unit, onOpenStatus: (GatewayClient.StatusItem) -> Unit, onToggleStatusReveal: () -> Unit, onToggleChatReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit) {
     val pager = rememberPagerState(initialPage = page) { 2 }
+    // content scrolls BEHIND the glass header (topInset) and the floating bottom nav (bottom)
+    val contentPad = androidx.compose.foundation.layout.PaddingValues(top = topInset + 6.dp, bottom = 118.dp)
     // bottom-nav tap (page) ↔ swipe (pager) stay in sync
     LaunchedEffect(page) { if (pager.currentPage != page) pager.animateScrollToPage(page) }
     LaunchedEffect(pager.currentPage) {
@@ -3083,17 +3113,18 @@ private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, statuses: List<Ga
         while (pager.currentPage == 1) { onLoadStatuses(); delay(5000) }
     }
     HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { pg ->
-        if (pg == 0) ChatList(messages, dpCache, query, onDelete, onOpen)
-        else StatusScreen(statuses, onOpenStatus, dpCache, onToggleStatusReveal)
+        if (pg == 0) ChatList(messages, dpCache, query, contentPad, onToggleChatReveal, onDelete, onOpen)
+        else StatusScreen(statuses, contentPad, onOpenStatus, dpCache, onToggleStatusReveal)
     }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun StatusScreen(statuses: List<GatewayClient.StatusItem>, onOpen: (GatewayClient.StatusItem) -> Unit, dpCache: MutableMap<String, ImageBitmap?>, onToggleReveal: () -> Unit) {
+private fun StatusScreen(statuses: List<GatewayClient.StatusItem>, contentPad: androidx.compose.foundation.layout.PaddingValues, onOpen: (GatewayClient.StatusItem) -> Unit, dpCache: MutableMap<String, ImageBitmap?>, onToggleReveal: () -> Unit) {
     val version = StatusData.seenVersion.value            // recompose + reorder the moment a status is viewed
     val mine = statuses.filter { it.mine }
     val others = statuses.filter { !it.mine }
+    val hiddenCount = others.groupBy { it.sender }.keys.count { StatusFlags.isHidden(it) }
     // group by sender, drop hidden (unless revealed), then bucket: unread on top, viewed below, muted at the bottom
     val groups = others.groupBy { it.sender }.entries.filter { StatusFlags.reveal || !StatusFlags.isHidden(it.key) }
     val active = groups.filter { !StatusFlags.isMuted(it.key) }
@@ -3101,7 +3132,8 @@ private fun StatusScreen(statuses: List<GatewayClient.StatusItem>, onOpen: (Gate
     val read = active.filter { StatusData.groupSeen(it.value) }.sortedByDescending { e -> e.value.maxOf { it.ts } }
     val muted = groups.filter { StatusFlags.isMuted(it.key) }.sortedByDescending { e -> e.value.maxOf { it.ts } }
 
-    LazyColumn(Modifier.fillMaxSize()) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = contentPad) {
+        if (hiddenCount > 0) item { HiddenReveal(if (StatusFlags.reveal) "Hidden statuses shown · tap to hide" else "Show $hiddenCount hidden status" + (if (hiddenCount > 1) "es" else ""), StatusFlags.reveal, onToggleReveal) }
         item {
             Text(if (StatusFlags.reveal) "My Status · showing hidden" else "My Status",
                 style = MaterialTheme.typography.labelMedium, color = IOS_BLUE,
