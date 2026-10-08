@@ -35,6 +35,7 @@ object ContactStore {
     fun nameFor(jid: String): String? {
         SetName.get(jid)?.let { return it }   // user-set alias always wins
         map[jid]?.let { if (it.isNotBlank()) return it }
+        if (jid.endsWith("@lid")) return null   // a LID is not a phone number — never fuzzy-match it to a device contact
         val num = jid.substringBefore("@").substringBefore(":").filter { it.isDigit() }
         if (num.isBlank()) return null
         map[num]?.let { if (it.isNotBlank()) return it }

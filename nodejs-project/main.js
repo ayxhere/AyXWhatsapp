@@ -94,7 +94,7 @@ const chatHistory = new Map()  // jid -> [{ role:'user'|'assistant', content }] 
 const dpCache = new Map()      // jid -> profile picture url (or null)
 const contacts = new Map()     // jid -> { name, notify }
 const presences = new Map()
-const statusViewers = {}  // statusId -> Set of viewer jids    // jid -> { presence, lastSeen }
+const statusViewers = {}  // statusId -> { viewerJid: lastViewMs }    // jid -> { presence, lastSeen }
 let statuses = []              // status@broadcast items (newest first)
 try {
   const loaded = JSON.parse(fs.readFileSync(STATUS_FILE, 'utf8'))
@@ -216,8 +216,9 @@ function loadMessages() {
   try {
     const arr = JSON.parse(fs.readFileSync(MESSAGES_FILE, 'utf8'))
     if (Array.isArray(arr)) {
-      msgLog = arr
-      for (const e of arr) if (e && e.id) msgStore.set(e.id, e)
+      const seenIds = new Set()
+      msgLog = arr.filter(e => { if (!e) return false; if (!e.id) return true; if (seenIds.has(e.id)) return false; seenIds.add(e.id); return true })
+      for (const e of msgLog) { if (e && e.chat && String(e.chat).endsWith('@lid') && lidToPn.has(baseJid(e.chat))) e.chat = lidToPn.get(baseJid(e.chat)); if (e && e.id) msgStore.set(e.id, e) }
       log('loaded', arr.length, 'messages from disk')
     }
   } catch (_) {}
@@ -306,16 +307,10 @@ function extractText(m) {
 }
 
 function resolveName(msg, jid) {
-  const c = contacts.get(jid)
-  let n = msg.pushName || msg.verifiedBizName || (c && c.name) || nameStore[jid] || ''
-  if (!n && jid && jid.endsWith('@lid') && sock) {
-    try {
-      const lm = sock.signalRepository && sock.signalRepository.lidMapping
-      const pn = lm && lm.getPNForLID && lm.getPNForLID(jid)
-      if (pn) { const c2 = contacts.get(pn); n = (c2 && c2.name) || nameStore[pn] || ''; if (n) { rememberName(jid, n) } }
-    } catch (_) {}
-  }
-  if (n && !(msg.key && msg.key.fromMe)) rememberName(jid, n)
+  if (typeof msg === 'string') { jid = msg; msg = {} }   // (callers sometimes pass only the jid)
+  msg = msg || {}
+  const n = msg.pushName || msg.verifiedBizName || nameOf(jid) || ''
+  if (n && !(msg.key && msg.key.fromMe)) rememberName(baseJid(jid), n)
   return n
 }
 
@@ -345,13 +340,111 @@ function isDownloadAsk(text) {
 
 // OpenAI-compatible chat completion (Groq / OpenRouter / etc.)
 // true if this chat is on the "don't reply" list (matched by digits so @lid and @s.whatsapp.net both hit)
+const _dig = j => String(j || '').split('@')[0].split(':')[0].replace(/\D/g, '')
+const jidAlias = new Map()   // digits -> Set(digits): the same person's @lid and phone-number ids
+function learnAlias(a, b) {
+  const x = _dig(a), y = _dig(b)
+  if (!x || !y || x === y) return
+  if (!jidAlias.has(x)) jidAlias.set(x, new Set()); if (!jidAlias.has(y)) jidAlias.set(y, new Set())
+  jidAlias.get(x).add(y); jidAlias.get(y).add(x)
+}
 function aiExcluded(jid) {
   const list = settings.aiExcludeJids || []
-  if (!list.length) return false
+  if (!list.length || !jid) return false
   if (list.includes(jid)) return true
-  const d = String(jid).split('@')[0].split(':')[0].replace(/\D/g, '')
+  const d = _dig(jid)
   if (!d) return false
-  return list.some(x => String(x).split('@')[0].split(':')[0].replace(/\D/g, '') === d)
+  const mine = new Set([d]); (jidAlias.get(d) || new Set()).forEach(v => mine.add(v))
+  // contact memory also knows lid<->number pairs
+  const cm = contactMem.get(jid); if (cm) { if (cm.lid) mine.add(_dig(cm.lid)); if (cm.pn) mine.add(_dig(cm.pn)) }
+  return list.some(x => mine.has(_dig(x)))
+}
+// ---- LID <-> phone-number identity ------------------------------------------------------------------
+// WhatsApp now delivers the SAME person under a hidden @lid id OR a phone-number id (and per device: 123:5@lid).
+// We keep one persisted map so every chat / status / viewer is stored under ONE canonical id (the phone
+// number when known) → no duplicate chats, no raw LID digits shown, device-contact names always match.
+const LIDMAP_FILE = path.join(path.dirname(AUTH_DIR), 'lidmap.json')
+const lidToPn = new Map(), pnToLid = new Map()
+try { const o = JSON.parse(fs.readFileSync(LIDMAP_FILE, 'utf8')); for (const [l, pn] of Object.entries(o)) { lidToPn.set(l, pn); pnToLid.set(pn, l); learnAlias(l, pn) } } catch (_) {}
+let _lidSave = null
+function saveLidMap() {
+  if (_lidSave) return
+  _lidSave = setTimeout(() => { _lidSave = null; try { fs.writeFileSync(LIDMAP_FILE, JSON.stringify(Object.fromEntries(lidToPn))) } catch (_) {} }, 1500)
+}
+function baseJid(j) {   // strip the ":device" part
+  if (!j) return j
+  const s = String(j), at = s.indexOf('@')
+  return at < 0 ? s : s.slice(0, at).split(':')[0] + s.slice(at)
+}
+function canon(j) {
+  const b = baseJid(j)
+  return (b && b.endsWith('@lid') && lidToPn.has(b)) ? lidToPn.get(b) : b
+}
+function learnLid(a, b) {
+  a = baseJid(a); b = baseJid(b)
+  if (!a || !b) return
+  let lid, pn
+  if (a.endsWith('@lid') && b.endsWith('@s.whatsapp.net')) { lid = a; pn = b }
+  else if (b.endsWith('@lid') && a.endsWith('@s.whatsapp.net')) { lid = b; pn = a }
+  else return
+  if (lidToPn.get(lid) === pn) return
+  lidToPn.set(lid, pn); pnToLid.set(pn, lid); saveLidMap()
+  learnAlias(lid, pn)
+  migrateLid(lid, pn)
+}
+// re-key everything already stored under the lid → the phone number (merges the duplicate chats)
+function migrateLid(lid, pn) {
+  try {
+    let ch = false
+    for (const e of msgLog) if (e && e.chat === lid) { e.chat = pn; ch = true }
+    for (const e of msgStore.values()) if (e && e.chat === lid) e.chat = pn
+    if (chatHistory.has(lid)) { chatHistory.set(pn, (chatHistory.get(pn) || []).concat(chatHistory.get(lid))); chatHistory.delete(lid) }
+    if (nameStore[lid]) { if (!nameStore[pn]) nameStore[pn] = nameStore[lid]; delete nameStore[lid]; saveNamesDebounced() }
+    for (const st of statuses) if (st && !st.mine && baseJid(st.sender) === lid) { st.sender = pn; ch = true }
+    if (ch) { saveMessagesDebounced(); saveStatusesDebounced() }
+  } catch (_) {}
+}
+async function resolveLid(jid) {   // canonical id, asking Baileys' own LID store when we don't know it yet
+  const b = baseJid(jid)
+  if (!b || !b.endsWith('@lid')) return b
+  if (lidToPn.has(b)) return lidToPn.get(b)
+  try {
+    const lm = sock && sock.signalRepository && sock.signalRepository.lidMapping
+    if (lm && lm.getPNForLID) { const pn = await lm.getPNForLID(b); if (pn) learnLid(b, pn) }
+  } catch (_) {}
+  return canon(b)
+}
+// best known WhatsApp/contact name for a person, whichever id we know them by
+function nameOf(jid) {
+  const b = baseJid(jid)
+  if (!b) return ''
+  const alt = b.endsWith('@lid') ? lidToPn.get(b) : pnToLid.get(b)
+  for (const j of [b, alt]) {
+    if (!j) continue
+    const c = contacts.get(j)
+    const n = (c && (c.name || c.notify)) || nameStore[j]
+    if (n) return n
+  }
+  return ''
+}
+function learnContactIds(c) {   // Baileys v7 contacts carry both ids
+  try { if (c && c.id) { learnLid(c.id, c.lid); learnLid(c.id, c.phoneNumber); learnLid(c.id, c.jid) } } catch (_) {}
+}
+
+// full check for a message: learns the sender's other id (lid <-> number) from the message itself and
+// from Baileys' LID mapping, so an excluded chat stays excluded whichever id WhatsApp delivers it under.
+async function aiExcludedMsg(msg) {
+  const from = msg.key.remoteJid
+  const alts = [msg.key.remoteJidAlt, msg.key.senderPn, msg.key.participantAlt, msg.key.participantPn].filter(Boolean)
+  for (const a of alts) learnAlias(from, a)
+  try {
+    const lm = sock && sock.signalRepository && sock.signalRepository.lidMapping
+    if (lm) {
+      if (String(from).endsWith('@lid') && lm.getPNForLID) { const pn = await lm.getPNForLID(from); if (pn) learnAlias(from, pn) }
+      else if (String(from).endsWith('@s.whatsapp.net') && lm.getLIDForPN) { const l = await lm.getLIDForPN(from); if (l) learnAlias(from, l) }
+    }
+  } catch (_) {}
+  return aiExcluded(from) || alts.some(aiExcluded)
 }
 
 // strict single-language presets — picking one STOPS the Hindi/Bangla mixing
@@ -385,18 +478,39 @@ function looksRefusal(t) {
          s.includes('as an ai') || s.includes("can't assist") || s.includes('cannot assist') || s.includes("i can't do")
 }
 // one chat-completion call → trimmed text or null
+// at most 2 AI calls in flight (bursts of messages used to hit the provider's rate-limit and get dropped)
+let _aiActive = 0; const _aiWait = []
+async function aiSlot() { if (_aiActive < 2) { _aiActive++; return } await new Promise(r => _aiWait.push(r)); _aiActive++ }
+function aiRelease() { _aiActive--; const n = _aiWait.shift(); if (n) n() }
+
 async function chatComplete(model, messages) {
+  await aiSlot()
   try {
-    const res = await fetch(settings.aiApiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + settings.aiApiKey },
-      body: JSON.stringify({ model, messages, temperature: 0.7 }),
-    })
-    if (!res.ok) { log('ai http', res.status, (await res.text()).slice(0, 160)); return null }
-    const data = await res.json()
-    const out = data?.choices?.[0]?.message?.content
-    return out ? String(out).trim() : null
-  } catch (e) { log('ai err', e?.message); return null }
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      let wait = 1200 * attempt
+      try {
+        const res = await fetch(settings.aiApiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + settings.aiApiKey },
+          body: JSON.stringify({ model, messages, temperature: 0.7 }),
+        })
+        if (res.ok) {
+          const data = await res.json()
+          const out = data?.choices?.[0]?.message?.content
+          if (out && String(out).trim()) return String(out).trim()
+          log('ai empty reply, retry', attempt)
+        } else {
+          const body = (await res.text()).slice(0, 160)
+          log('ai http', res.status, body)
+          if (res.status === 429 || res.status >= 500) {
+            const ra = Number(res.headers.get('retry-after')); if (ra > 0) wait = Math.min(ra * 1000, 15000)
+          } else return null   // 4xx (bad key / bad model): retrying won't help
+        }
+      } catch (e) { log('ai err', e?.message) }
+      if (attempt < 5) await delay(wait)
+    }
+    return null
+  } finally { aiRelease() }
 }
 
 // add who-we're-talking-to context from AI memory so replies stay consistent per person
@@ -412,7 +526,7 @@ function contactContext(jid) {
 
 async function aiReply(jid, force, currentText, langHint) {
   // force = called from voice/image path, which has its own enable toggle (don't require the master text toggle)
-  if ((!force && !settings.aiReplyEnabled) || !settings.aiApiUrl || !settings.aiApiKey) return null
+  if (!settings.aiReplyEnabled || !settings.aiApiUrl || !settings.aiApiKey) return null   // master toggle OFF = no AI reply anywhere
   // forward the REAL recent conversation (both sides) so Groq replies in context, not generic
   let history = (settings.aiFullContext === false) ? histMsgs(jid) : fullChatContext(jid, 18)
   // currentText = the actual message to answer NOW (voice transcript). It may not be in msgLog (voice has no
@@ -443,8 +557,8 @@ function _today() { return new Date().toISOString().slice(0, 10) }
 function groupDailyCount(jid) { const e = groupDaily.get(jid); return (!e || e.date !== _today()) ? 0 : e.count }
 function incGroupDaily(jid) { const d = _today(); const e = groupDaily.get(jid); if (!e || e.date !== d) groupDaily.set(jid, { date: d, count: 1 }); else e.count++ }
 
-async function groupAiReply(jid) {
-  if (!settings.aiApiUrl || !settings.aiApiKey) return null
+async function groupAiReply(jid, explicit) {
+  if ((!explicit && !settings.aiReplyEnabled) || !settings.aiApiUrl || !settings.aiApiKey) return null
   const history = (settings.aiFullContext === false) ? histMsgs(jid, 9) : fullChatContext(jid, 12)
   const sys = sysWith('You are a friendly, witty member of a WhatsApp group chat. Reply briefly and naturally like a real person, in 1-2 short lines. Be relevant to what was just said, warm and casual.')
   try {
@@ -964,6 +1078,9 @@ async function synthVoice(text, voice, langOverride) {
 }
 
 function remember(id, entry) {
+  if (id && msgStore.has(id) && msgLog.some(m => m && m.id === id)) {   // same message delivered twice → update, never double
+    const old = msgStore.get(id); Object.assign(old, entry, { id }); saveMessagesDebounced(); return
+  }
   if (id) {
     entry.id = id
     msgStore.set(id, entry)
@@ -1017,6 +1134,8 @@ function handleConnUpdate(u) {
     status.lastError = null
     currentQr = null; pairingCode = null; pairingNumber = null
     log('CONNECTED as', status.me)
+    _retry = 0
+    setTimeout(async () => { try { const ls = new Set(); for (const e of msgLog) if (e && String(e.chat).endsWith('@lid')) ls.add(e.chat); for (const st of statuses) if (st && !st.mine && String(st.sender).endsWith('@lid')) ls.add(baseJid(st.sender)); for (const l of ls) await resolveLid(l) } catch (_) {} }, 4000)
     applyPresence()
   }
 
@@ -1037,10 +1156,26 @@ function handleConnUpdate(u) {
         setTimeout(async () => { await loadAuth(); startSocket().catch(e => log('fresh start err', e?.message)) }, 5000)
       }
     } else {
-      const wait = alreadyLinked ? 2000 : 8000
-      setTimeout(() => startSocket().catch(e => log('reconnect err', e?.message)), wait)
+      // backoff: fast first retries, then up to 30s; 515 (restartRequired) retries immediately.
+      // 440 (connectionReplaced) = another session took over -> wait longer so we don't fight it in a tight loop.
+      _retry = Math.min(_retry + 1, 8)
+      let wait = Math.min(2000 * Math.pow(1.6, _retry - 1), 30000)
+      if (code === DisconnectReason.restartRequired) wait = 300
+      else if (code === DisconnectReason.connectionReplaced) wait = 20000
+      else if (!alreadyLinked) wait = Math.max(wait, 8000)
+      scheduleReconnect(wait)
     }
   }
+}
+
+let _retry = 0
+let _reconnTimer = null
+function scheduleReconnect(wait) {
+  if (_reconnTimer) return                      // one pending reconnect at a time (no parallel sockets)
+  _reconnTimer = setTimeout(() => {
+    _reconnTimer = null
+    startSocket().catch(e => { log('reconnect err', e?.message); scheduleReconnect(5000) })
+  }, wait)
 }
 
 function applyEdit(origId, contentMsg, ts) {
@@ -1198,15 +1333,35 @@ function isForwarded(message) {
   return false
 }
 
-async function handleMessages({ messages, type }) {
+// Every incoming message is handled in order PER CHAT (queue) — before, 4 quick messages ran in parallel,
+// fought over presence/AI limits and only 1 got a reply. Now each gets its own swipe-reply, none skipped.
+const _chatQ = new Map()
+const _handled = new Set()
+function handleMessages(ev) {
+  for (const msg of (ev && ev.messages) || []) {
+    const key = (msg.key && msg.key.remoteJid) || '_'
+    const prev = _chatQ.get(key) || Promise.resolve()
+    const next = prev.then(() => handleMessagesBatch({ messages: [msg], type: ev.type })).catch(e => log('queue err', e?.message))
+    _chatQ.set(key, next)
+    next.finally(() => { if (_chatQ.get(key) === next) _chatQ.delete(key) })
+  }
+}
+
+async function handleMessagesBatch({ messages, type }) {
   for (const msg of messages || []) {
     try {
       if (!msg.message) continue
+      { const hid = msg.key && msg.key.id && !msg.key.fromMe ? (msg.key.remoteJid + '|' + msg.key.id) : null
+        if (hid) { if (_handled.has(hid)) continue; _handled.add(hid); if (_handled.size > 3000) _handled.delete(_handled.values().next().value) } }
       msg.message = unwrapInner(msg.message) || msg.message
       const from = msg.key.remoteJid
       const fromMe = !!msg.key.fromMe
       const id = msg.key.id
-      const sender = msg.key.participant || '' // group: who sent it
+      // learn lid <-> number from the message itself, then use ONE canonical id for storage/UI
+      learnLid(msg.key.remoteJid, msg.key.remoteJidAlt); learnLid(msg.key.remoteJid, msg.key.senderPn)
+      learnLid(msg.key.participant, msg.key.participantAlt); learnLid(msg.key.participant, msg.key.participantPn)
+      const chatJid = (from && String(from).endsWith('@lid')) ? await resolveLid(from) : from
+      const sender = msg.key.participant ? canon(msg.key.participant) : '' // group: who sent it
 
       // standalone reaction arrives via messages.reaction; don't show as a message
       if (msg.message.reactionMessage) continue
@@ -1233,10 +1388,12 @@ async function handleMessages({ messages, type }) {
 
       if (!from) continue
       if (from === 'status@broadcast') {
-        const sndr = fromMe ? ((sock && sock.user && sock.user.id) || 'me') : (msg.key.participant || msg.participant)
+        learnLid(msg.key.participant, msg.key.participantAlt); learnLid(msg.key.participant, msg.key.participantPn)
+        let sndr = fromMe ? ((sock && sock.user && sock.user.id) || 'me') : (msg.key.participant || msg.participant)
+        if (sndr && !fromMe) sndr = await resolveLid(sndr)
         if (sndr) {
           const sTs = msg.messageTimestamp ? Number(msg.messageTimestamp) * 1000 : Date.now()
-          const sEntry = { sender: sndr, name: fromMe ? 'My Status' : (msg.pushName || ''), mine: fromMe, id: msg.key.id, text: extractText(msg.message), ts: sTs }
+          const sEntry = { sender: sndr, name: fromMe ? 'My Status' : (msg.pushName || nameOf(sndr) || ''), mine: fromMe, id: msg.key.id, text: extractText(msg.message), ts: sTs }
           try { await enrichMedia(msg, sEntry) } catch (_) {}
           // keep raw so status media can be re-fetched on demand if the cache file is gone
           if (msg.key.id) { rawStore.set(msg.key.id, { key: msg.key, message: msg.message }); if (rawStore.size > 500) { const rk = rawStore.keys().next().value; rawStore.delete(rk) } }
@@ -1247,7 +1404,7 @@ async function handleMessages({ messages, type }) {
         continue
       }
       const ts = msg.messageTimestamp ? Number(msg.messageTimestamp) * 1000 : Date.now()
-      const entry = { chat: from, name: resolveName(msg, from), sender, fromMe, text: extractText(msg.message), ts, id }
+      const entry = { chat: chatJid, name: resolveName(msg, chatJid), sender, fromMe, text: extractText(msg.message), ts, id }
       if (fromMe) entry.status = (typeof msg.status === 'number' ? msg.status : 1)  // 1 pending,2 sent,3 delivered,4 read
       if (isForwarded(msg.message)) entry.forwarded = true
       entry.quoted = quotedOf(msg.message)
@@ -1268,12 +1425,12 @@ async function handleMessages({ messages, type }) {
           try { await sock.readMessages([msg.key]); log('auto-read ok') }
           catch (e) { log('auto-read err', e?.message) }
         }
-        if (!aiExcluded(from)) {   // excluded chats: reply nothing (no keyword, no AI, no voice/image)
+        if (!(await aiExcludedMsg(msg))) {   // excluded chats: reply nothing (no keyword, no AI, no voice/image)
           const mtype = entry.media && entry.media.type
           const cmd = (text || '').trim()
           const lc = cmd.toLowerCase()
           // remember who this is (name, lid/number, language) for AI Memory + consistent replies
-          touchContact(from, resolveName(msg, from), text)
+          touchContact(chatJid, resolveName(msg, chatJid), text)
           // all auto-replies are sent as a swipe-left QUOTED reply to the exact message
           const q = { quoted: msg }
           // human-like presence: read + come online + "typing" before replying (restored to offline after)
@@ -1324,7 +1481,7 @@ async function handleMessages({ messages, type }) {
               }
             }
 
-          } else if (mtype === 'image' && settings.aiReplyImage) {
+          } else if (mtype === 'image' && settings.aiReplyImage && settings.aiReplyEnabled) {
             // IMAGE → vision reply (own toggle, independent of the master text toggle)
             pushHistory(from, 'user', text ? text : '[image]')
             const vr = await visionReply(from, entry.media.name, text)
@@ -1332,7 +1489,7 @@ async function handleMessages({ messages, type }) {
               try { await sock.sendMessage(from, { text: vr }, q); pushHistory(from, 'assistant', vr); log('ai image reply sent') }
               catch (e) { log('ai image reply err', e?.message) }
             }
-          } else if (mtype === 'audio' && settings.aiReplyVoice) {
+          } else if (mtype === 'audio' && settings.aiReplyVoice && settings.aiReplyEnabled) {
             // VOICE → transcribe then reply (own toggle; AI forced so master text toggle isn't required)
             const tr = await transcribeMedia(entry.media.name)
             if (tr) {
@@ -1392,7 +1549,7 @@ async function handleMessages({ messages, type }) {
           if (qq) explicit = true
         } else {
           pushHistory(from, 'user', t)
-          if (settings.groupAiEnabled && groupDailyCount(from) < 10) {
+          if (settings.aiReplyEnabled && settings.groupAiEnabled && groupDailyCount(from) < 10) {
             const isGreeting = /^(hi+|he+y+|he+llo+|helo|namaste|namaskar|hola|salaam|assalam|yo|sup)\b/i.test(t)
             const isQuestion = t.includes('?') || /^(what|why|how|when|who|where|which|kya|kaise|kyu|kyun|kaun|kab|kahan|kitna|ki|ke|bolo|batao)\b/i.test(t)
             if (isGreeting || isQuestion) auto = true
@@ -1400,7 +1557,7 @@ async function handleMessages({ messages, type }) {
         }
         if (explicit || auto) {
           try { await sock.readMessages([msg.key]) } catch (_) {}
-          const reply = await groupAiReply(from)
+          const reply = await groupAiReply(from, explicit)
           if (reply) {
             try { await sock.sendMessage(from, { text: reply }); pushHistory(from, 'assistant', reply); if (auto) incGroupDaily(from); log('group ai sent (' + (explicit ? 'cmd' : 'auto ' + groupDailyCount(from) + '/10') + ')') }
             catch (e) { log('group ai send err', e?.message) }
@@ -1440,16 +1597,19 @@ function handleUpdates(updates) {
 
 // history sync on link -> fill the message log
 async function handleHistory({ messages, contacts: cts }) {
-  if (cts) for (const c of cts) { if (c.id) { const nm = c.name || c.notify || ''; contacts.set(c.id, { name: nm, notify: c.notify || '' }); rememberName(c.id, nm) } }
+  if (cts) for (const c of cts) { learnContactIds(c); if (c.id) { const nm = c.name || c.notify || ''; contacts.set(c.id, { name: nm, notify: c.notify || '' }); rememberName(c.id, nm) } }
   let n = 0
   for (const msg of messages || []) {
     try {
       if (!msg.message) continue
       msg.message = unwrapInner(msg.message) || msg.message
-      const from = msg.key.remoteJid
-      if (!from) continue
+      learnLid(msg.key.remoteJid, msg.key.remoteJidAlt); learnLid(msg.key.participant, msg.key.participantAlt)
+      const from0 = msg.key.remoteJid
+      if (!from0) continue
+      const from = from0 === 'status@broadcast' ? from0 : canon(from0)
+      if (msg.key.id && msgStore.has(msg.key.id) && from !== 'status@broadcast') continue   // already have it
       if (from === 'status@broadcast') {
-        const sndr2 = msg.key.fromMe ? ((sock && sock.user && sock.user.id) || 'me') : (msg.key.participant || msg.participant)
+        const sndr2 = msg.key.fromMe ? ((sock && sock.user && sock.user.id) || 'me') : canon(msg.key.participant || msg.participant)
         if (sndr2) {
           const sTs2 = msg.messageTimestamp ? Number(msg.messageTimestamp) * 1000 : Date.now()
           const sE = { sender: sndr2, name: msg.key.fromMe ? 'My Status' : (msg.pushName || ''), mine: !!msg.key.fromMe, id: msg.key.id, text: extractText(msg.message), ts: sTs2 }
@@ -1473,9 +1633,21 @@ async function handleHistory({ messages, contacts: cts }) {
 }
 
 async function startSocket() {
+  // tear down any previous socket first so old listeners / zombie websockets can't fire duplicate closes
+  if (sock) {
+    const old = sock
+    sock = null
+    try { old.ev.removeAllListeners('connection.update') } catch (_) {}
+    try { old.ev.removeAllListeners('messages.upsert') } catch (_) {}
+    try { old.ev.removeAllListeners('messages.update') } catch (_) {}
+    try { old.end(undefined) } catch (_) {}
+    try { old.ws && old.ws.close() } catch (_) {}
+  }
   let version
-  try { const v = await fetchLatestBaileysVersion(); version = v.version; log('WA version', version.join('.')) }
-  catch (e) { log('version fetch failed, using bundled') }
+  try {
+    const v = await Promise.race([fetchLatestBaileysVersion(), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000))])
+    version = v.version; log('WA version', version.join('.'))
+  } catch (e) { log('version fetch failed, using bundled') }
 
   sock = makeWASocket({
     version,
@@ -1487,6 +1659,7 @@ async function startSocket() {
     syncFullHistory: false,
     keepAliveIntervalMs: 25000,   // proper websocket keepalive so the socket doesn't idle-drop (stops reconnect flapping)
     connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 60000,
     retryRequestDelayMs: 500,
   })
   sock.ev.on('creds.update', saveCreds)
@@ -1508,7 +1681,8 @@ async function startSocket() {
       else if (item && item.all && item.jid === 'status@broadcast') { statuses = []; saveStatusesDebounced(); log('all statuses cleared on primary') }
     } catch (_) {}
   })
-  const addContacts = (list) => { for (const c of list || []) { if (c.id) { const nm = c.name || c.notify || ''; contacts.set(c.id, { name: nm, notify: c.notify || '' }); rememberName(c.id, nm) } } }
+  const addContacts = (list) => { for (const c of list || []) { learnContactIds(c); if (c.id) { const nm = c.name || c.notify || ''; contacts.set(c.id, { name: nm, notify: c.notify || '' }); rememberName(c.id, nm) } } }
+  try { sock.ev.on('lid-mapping.update', (m) => { try { if (m) learnLid(m.lid, m.pn) } catch (_) {} }) } catch (_) {}
   sock.ev.on('contacts.upsert', addContacts)
   sock.ev.on('contacts.update', addContacts)
   sock.ev.on('contacts.set', ({ contacts: cs }) => addContacts(cs))
@@ -1518,10 +1692,14 @@ async function startSocket() {
         const k = u.key || {}
         if (k.remoteJid === 'status@broadcast' && k.fromMe) {
           const id = k.id
-          const viewer = (u.receipt && (u.receipt.userJid || u.receipt.receiptTimestamp && u.receipt.userJid)) || k.participant
+          const rec = u.receipt || {}
+          const viewer = rec.userJid || k.participant
           if (id && viewer) {
-            if (!statusViewers[id]) statusViewers[id] = new Set()
-            statusViewers[id].add(viewer)
+            const toMs = (x) => { if (!x) return 0; const n = (typeof x === 'object') ? (x.toNumber ? x.toNumber() : Number(x.low)) : Number(x); return n > 0 ? n * 1000 : 0 }
+            const t = toMs(rec.readTimestamp) || toMs(rec.receiptTimestamp) || toMs(rec.playedTimestamp) || Date.now()
+            if (!statusViewers[id]) statusViewers[id] = {}
+            const b = baseJid(viewer)
+            if (!(statusViewers[id][b] >= t)) statusViewers[id][b] = t
           }
         } else if (k.fromMe && k.id) {
           // normal chat delivery/read receipt -> bump tick status
@@ -2326,12 +2504,27 @@ app.post('/status/delete', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e && e.message }) }
 })
 
-app.get('/status/viewers', (req, res) => {
-  const ids = String(req.query.id || '').split(',').map(x => x.trim()).filter(Boolean)
-  const set = new Set()
-  for (const id of ids) { const v = statusViewers[id]; if (v) for (const j of v) set.add(j) }
-  const out = Array.from(set).map(jid => ({ jid, name: resolveName(jid) }))
-  res.json({ viewers: out })
+app.get('/status/viewers', async (req, res) => {
+  try {
+    const ids = String(req.query.id || '').split(',').map(x => x.trim()).filter(Boolean)
+    const myIds = new Set([baseJid(sock && sock.user && sock.user.id), baseJid(sock && sock.user && sock.user.lid)].filter(Boolean))
+    const merged = new Map()   // ONE row per person, whichever id / device they came in as
+    for (const id of ids) {
+      const v = statusViewers[id]; if (!v) continue
+      for (const [raw, ts] of Object.entries(v)) {
+        const b = baseJid(raw)
+        const c = await resolveLid(b)
+        if (myIds.has(b) || myIds.has(c)) continue
+        const cur = merged.get(c) || { jid: c, lid: '', ts: 0 }
+        if (b.endsWith('@lid')) cur.lid = b
+        cur.ts = Math.max(cur.ts, ts || 0)
+        merged.set(c, cur)
+      }
+    }
+    const out = Array.from(merged.values()).map(x => ({ jid: x.jid, lid: x.lid || pnToLid.get(x.jid) || '', name: nameOf(x.jid) || nameOf(x.lid) || '', ts: x.ts }))
+    out.sort((a, b) => b.ts - a.ts)
+    res.json({ viewers: out })
+  } catch (e) { res.status(500).json({ error: e && e.message, viewers: [] }) }
 })
 
 app.get('/me', (req, res) => {

@@ -103,6 +103,7 @@ import androidx.compose.material.icons.filled.DonutLarge
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.ExpandLess
@@ -281,7 +282,6 @@ class MainActivity : ComponentActivity() {
         TranslateStore.init(applicationContext)
         FontStore.init(applicationContext)
         EmojiStore.init(applicationContext)
-        EmojiStore.initEmojiCompat(applicationContext)   // apply chosen emoji font (one-shot per process)
         setContent {
             val sysDark = isSystemInDarkTheme()
             val mode = ThemeStore.mode.value
@@ -412,6 +412,7 @@ private fun chatTitle(msgs: List<GatewayClient.Msg>): String {
     msgs.firstOrNull { !it.fromMe && it.name.isNotBlank() }?.let { return it.name }
     return when {
         chat.endsWith("@g.us") -> "Group"
+        chat.endsWith("@lid") -> "Unknown contact"   // hidden WhatsApp id, not a phone number
         else -> { val n = chat.substringBefore("@").filter { it.isDigit() }; if (n.isNotBlank()) "+" + n else "Unknown" }
     }
 }
@@ -1477,7 +1478,7 @@ private fun chatTitleOf(messages: List<GatewayClient.Msg>, jid: String): String 
 }
 
 @Composable
-private fun Avatar(jid: String, name: String, cache: MutableMap<String, ImageBitmap?>, size: androidx.compose.ui.unit.Dp, shape: Shape = CircleShape) {
+internal fun Avatar(jid: String, name: String, cache: MutableMap<String, ImageBitmap?>, size: androidx.compose.ui.unit.Dp, shape: Shape = CircleShape) {
     LaunchedEffect(jid) {
         if (!cache.containsKey(jid)) {
             val b = GatewayClient.dpBytes(jid)
@@ -2294,11 +2295,11 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
 // sub-page title shown in the top app bar (single source of the back arrow)
 private fun settingsTitle(page: String): String = when (page) {
     "general" -> "General"; "autoreply" -> "Auto-reply"; "ai" -> "AI Assistant"; "chat" -> "Chat Settings"
-    "imageai" -> "Image AI"; "aimemory" -> "AI Memory"; "voice" -> "AI Voice"; "font" -> "Font & Emoji"
+    "imageai" -> "Image AI"; "aimemory" -> "AI Memory"; "voice" -> "AI Voice"; "font" -> "App Font"; "emoji" -> "Emoji"
     "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "about" -> "About"; "support" -> "Support Development"; else -> "Settings"
 }
 // parent page for nested back (Wallpaper under Chat Settings; Image AI / AI Memory / Voice under AI Assistant; Font under General)
-private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "general"; else -> "home" }
+private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "general"; "emoji" -> "general"; else -> "home" }
 
 @Composable
 private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient.Settings, page: String, onPage: (String) -> Unit, wallpaperVersion: Int,
@@ -2309,8 +2310,9 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
     // back arrow + title live in the top app bar; sub-pages have no second arrow
     AnimatedContent(targetState = page, transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(140)) }, label = "setpage") { p ->
         when (p) {
-            "general" -> SettingsSubPage { GeneralSettings(settings, onToggle, onOpenFont = { onPage("font") }) }
+            "general" -> SettingsSubPage { GeneralSettings(settings, onToggle, onOpenFont = { onPage("font") }, onOpenEmoji = { onPage("emoji") }) }
             "font" -> SettingsSubPage { FontSettings(ctx) }
+            "emoji" -> SettingsSubPage { EmojiSettings(ctx) }
             "autoreply" -> SettingsSubPage { AutoReplySection(settings, onToggle, onRules) }
             "ai" -> SettingsSubPage { AiSettings(settings, onToggle, messages, dpCache, onOpenImageAi = { onPage("imageai") }, onOpenMemory = { onPage("aimemory") }) }
             "imageai" -> SettingsSubPage { ImageAiSettings(settings, onToggle, ctx) }
@@ -2470,6 +2472,19 @@ private fun FontSettings(ctx: Context) {
             Icon(Icons.Filled.Add, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Upload custom font (.ttf / .otf)")
         }
     }
+}
+
+// Dedicated Emoji page — download an emoji style and apply it app-wide (instantly).
+@Composable
+private fun EmojiSettings(ctx: Context) {
+    val scope = rememberCoroutineScope()
+    SettingsGroup("Preview") {
+        Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+            Text("😀 😂 ❤️ 👍 🙏 🎉 🔥 ✨ 😎 🥳", style = MaterialTheme.typography.headlineSmall)
+            Spacer(Modifier.height(4.dp))
+            Text("Pick a style — it downloads once, then applies across the whole app.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
     SettingsGroup("Emoji style") {
         EmojiStylePicker(ctx, scope)
     }
@@ -2480,10 +2495,9 @@ private fun EmojiStylePicker(ctx: Context, scope: CoroutineScope) {
     var selected by remember { mutableStateOf(EmojiStore.selected) }
     var downloading by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text("😀 😂 ❤️ 👍 🙏 🎉 🔥 ✨ 😎 🥳", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(vertical = 6.dp))
         EmojiStyleRow("System default", "Your phone's built-in emoji", selected == EmojiStore.SYSTEM, true, false) {
             EmojiStore.choose(EmojiStore.SYSTEM); selected = EmojiStore.SYSTEM
-            Toast.makeText(ctx, "System emoji set — restart app to apply", Toast.LENGTH_SHORT).show()
+            Toast.makeText(ctx, "System emoji restored", Toast.LENGTH_SHORT).show()
         }
         EmojiStore.styles.forEach { st ->
             val have = EmojiStore.isDownloaded(ctx, st.key)
@@ -2491,19 +2505,20 @@ private fun EmojiStylePicker(ctx: Context, scope: CoroutineScope) {
                 if (downloading != null) return@EmojiStyleRow
                 if (have) {
                     EmojiStore.choose(st.name); selected = st.name
-                    Toast.makeText(ctx, "${st.name} set — restart app to apply", Toast.LENGTH_SHORT).show()
+                    if (EmojiStore.activeFont(ctx) == null) Toast.makeText(ctx, "Couldn't load this emoji font — re-download it", Toast.LENGTH_LONG).show() else
+                    Toast.makeText(ctx, "${st.name} emoji applied", Toast.LENGTH_SHORT).show()
                 } else {
                     downloading = st.name
                     scope.launch {
-                        val ok = EmojiStore.download(ctx, st)
+                        val err = EmojiStore.download(ctx, st)
                         downloading = null
-                        if (ok) { EmojiStore.choose(st.name); selected = st.name; Toast.makeText(ctx, "${st.name} downloaded — restart app to apply", Toast.LENGTH_LONG).show() }
-                        else Toast.makeText(ctx, "Download failed — check your connection", Toast.LENGTH_SHORT).show()
+                        if (err == null) { EmojiStore.choose(st.name); selected = st.name; Toast.makeText(ctx, "${st.name} downloaded & applied", Toast.LENGTH_LONG).show() }
+                        else Toast.makeText(ctx, "Download failed: $err", Toast.LENGTH_LONG).show()
                     }
                 }
             }
         }
-        Text("Saved to Download/WhatsAyX/fonts/emoji · applies on next app launch.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp, start = 2.dp))
+        Text("Saved to Download/WhatsAyX/fonts/emoji · applies instantly (Android 10+).", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp, start = 2.dp))
     }
 }
 
@@ -2524,7 +2539,7 @@ private fun EmojiStyleRow(name: String, sub: String, selectedNow: Boolean, downl
 }
 
 @Composable
-private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit, onOpenFont: () -> Unit) {
+private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit, onOpenFont: () -> Unit, onOpenEmoji: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var refreshTick by remember { mutableStateOf(0) }
@@ -2545,7 +2560,8 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
         SettingRow(Icons.AutoMirrored.Filled.ArrowForward, CAT_AI, "Forwarded tag", "Show the \"Forwarded\" label on forwarded messages", ChatStyle.showForwardTag.value) { ChatStyle.setShowForwardTag(it) }
     }
     SettingsGroup("Appearance") {
-        ActionRow(Icons.Filled.TextFields, CAT_GENERAL, "Font & Emoji", "Current: ${FontStore.appFont}  ·  change app font & emoji") { onOpenFont() }
+        ActionRow(Icons.Filled.TextFields, CAT_GENERAL, "App font", "Current: ${FontStore.appFont}  ·  preview, pick or upload .ttf/.otf") { onOpenFont() }
+        ActionRow(Icons.Filled.EmojiEmotions, CAT_GENERAL, "Emoji", "Current: ${EmojiStore.selected}  ·  download & apply emoji style") { onOpenEmoji() }
     }
 
     SettingsGroup("Message translation") {
@@ -2727,7 +2743,7 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
 
     // MAIN box — the three reply types + group
     SettingsGroup("Replies") {
-        SettingRow(Icons.Filled.AutoAwesome, CAT_AI, "AI reply (text)", "AI replies to every personal text chat (when no keyword rule matches)", settings.aiReplyEnabled) { onToggle(JSONObject().put("aiReplyEnabled", it)) }
+        SettingRow(Icons.Filled.AutoAwesome, CAT_AI, "AI reply (master)", "Master switch — OFF stops ALL AI replies (text, image, voice, groups). Keyword rules still work", settings.aiReplyEnabled) { onToggle(JSONObject().put("aiReplyEnabled", it)) }
         SettingRow(Icons.Filled.Image, Color(0xFFFFB26B), "Image reply", "AI looks at incoming images (vision) then swipe-replies", settings.aiReplyImage) { onToggle(JSONObject().put("aiReplyImage", it)) }
         SettingRow(Icons.Filled.QuestionAnswer, Color(0xFFB69DF8), "Group AI reply", "Answer greetings/questions in groups (max 10/day); /ai works anytime", settings.groupAiEnabled) { onToggle(JSONObject().put("groupAiEnabled", it)) }
         Text("Image replies come as a swipe-left quote on the exact message. Voice note reply is now in \"AI Voice\" settings.",
@@ -3735,6 +3751,8 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
     var confirmDelete by remember { mutableStateOf<String?>(null) }
     var showViewers by remember { mutableStateOf(false) }
     val myMine = items.first().mine
+    // viewers sheet open → blur the status behind it (like the rest of the UI) and freeze playback
+    val statusBlur by animateDpAsState(if (showViewers && st.mediaType != "video") 18.dp else 0.dp, label = "statusblur")
 
     var bmp by remember(st.mediaName, si, ii) { mutableStateOf<ImageBitmap?>(null) }
     var imgLoading by remember(st.mediaName, si, ii) { mutableStateOf(st.mediaName != null && st.mediaType != "video") }
@@ -3766,7 +3784,9 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
         progress = 0f
         val dur = 5000L; val step = 40L; var elapsed = 0L
         while (elapsed < dur) {
-            delay(step); elapsed += step; progress = (elapsed.toFloat() / dur).coerceIn(0f, 1f)
+            delay(step)
+            if (showViewers) continue   // paused while the viewers sheet is open
+            elapsed += step; progress = (elapsed.toFloat() / dur).coerceIn(0f, 1f)
             if (replyText.isNotBlank()) return@LaunchedEffect
         }
         goNext()
@@ -3781,9 +3801,15 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
         }
     }
 
+    // video: pause while the viewers sheet is open, resume when it closes
+    LaunchedEffect(showViewers, videoView, videoReady) {
+        val vv = videoView ?: return@LaunchedEffect
+        if (showViewers) runCatching { vv.pause() } else if (videoReady) runCatching { vv.start() }
+    }
+
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize(), color = Color.Black) {
-            Box(Modifier.fillMaxSize().pointerInput(myMine) {
+            Box(Modifier.fillMaxSize().blur(statusBlur).pointerInput(myMine) {
                 if (myMine) { var dyAcc = 0f; detectVerticalDragGestures(onDragEnd = { if (dyAcc < -80f) showViewers = true; dyAcc = 0f }) { _, dy -> dyAcc += dy } }
             }) {
                 if (st.mediaType == "audio" && st.mediaName != null) {
@@ -3897,7 +3923,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                         confirmButton = { TextButton(onClick = { confirmDelete = null; onDeleteStatus(id); onClose() }) { Text("Delete", color = Color(0xFFFF3B30)) } },
                         dismissButton = { TextButton(onClick = { confirmDelete = null }) { Text("Cancel") } })
                 }
-                if (showViewers) StatusViewersSheet(items.filter { it.mine }.mapNotNull { it.id }, onClose = { showViewers = false })
+                if (showViewers) StatusViewersSheet(items.filter { it.mine }.mapNotNull { it.id }, dpCache, onClose = { showViewers = false })
             }
         }
     }

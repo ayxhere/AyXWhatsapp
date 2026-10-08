@@ -19,7 +19,8 @@
         android:label="WhatsAyX"
         android:supportsRtl="true"
         android:theme="@style/Theme.WAGateway"
-        android:usesCleartextTraffic="true">
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:usesCleartextTraffic="false">
 
         <activity
             android:name=".MainActivity"

@@ -387,12 +387,13 @@ object GatewayClient {
         post("/status/delete", JSONObject().put("id", id)).optBoolean("ok", false)
     }
     // who viewed my status (jid to display name)
-    suspend fun getStatusViewers(ids: List<String>): List<Pair<String, String>> = withContext(Dispatchers.IO) {
+    data class StatusViewer(val jid: String, val lid: String, val name: String, val ts: Long)
+    suspend fun getStatusViewers(ids: List<String>): List<StatusViewer> = withContext(Dispatchers.IO) {
         try {
             if (ids.isEmpty()) return@withContext emptyList()
             val idParam = java.net.URLEncoder.encode(ids.joinToString(","), "UTF-8")
             val arr = get("/status/viewers?id=$idParam").optJSONArray("viewers") ?: return@withContext emptyList()
-            (0 until arr.length()).map { val o = arr.getJSONObject(it); o.optString("jid") to o.optString("name") }
+            (0 until arr.length()).map { val o = arr.getJSONObject(it); StatusViewer(o.optString("jid"), o.optString("lid"), o.optString("name"), o.optLong("ts", 0L)) }
         } catch (e: Exception) { emptyList() }
     }
     suspend fun getMe(): String = withContext(Dispatchers.IO) {
@@ -406,7 +407,7 @@ object GatewayClient {
                 val md = o.optJSONObject("media")
                 StatusItem(
                     sender = o.optString("sender"),
-                    name = o.optString("name").ifEmpty { o.optString("sender").substringBefore("@") },
+                    name = o.optString("name").ifEmpty { if (o.optString("sender").endsWith("@lid")) "" else o.optString("sender").substringBefore("@") },
                     text = o.optString("text"),
                     mediaName = md?.optString("name")?.ifEmpty { null },
                     mediaType = md?.optString("type")?.ifEmpty { null },

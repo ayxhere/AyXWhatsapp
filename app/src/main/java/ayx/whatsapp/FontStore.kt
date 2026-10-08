@@ -2,8 +2,14 @@ package ayx.whatsapp
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.graphics.Paint
+import android.graphics.Typeface
+import android.graphics.fonts.FontStyle
+import android.graphics.fonts.SystemFonts
 import android.net.Uri
+import android.os.Build
 import android.provider.OpenableColumns
+import androidx.annotation.RequiresApi
 import androidx.compose.material3.Typography
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -12,6 +18,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import java.io.File
+import android.graphics.fonts.FontFamily as AFontFamily
 
 // App + status-lyrics fonts: bundled ones under assets/fonts/, plus any .ttf/.otf the user uploads
 // (kept in filesDir/userfonts). Used by the app-wide font picker (Settings → General → Font & Emoji)
@@ -83,12 +90,23 @@ object FontStore {
         val cur = prefs?.getStringSet("custom", emptySet())?.toMutableSet() ?: mutableSetOf()
         cur.add(disp); prefs?.edit()?.putStringSet("custom", cur)?.apply()
         cache.remove(disp)
+        comboCache.keys.removeAll { it.startsWith(disp + "|") }
         disp
     }.getOrNull()
 
     // FontFamily for a name (null = system default). Cached; failures fall back to null (system).
+    // When an emoji style is selected, the emoji font is chained in as the glyph fallback (API 29+),
+    // so emojis render in that style everywhere this family is used (text keeps the chosen font).
     fun family(ctx: Context, name: String): FontFamily? {
-        val path = fonts[name] ?: return null
+        val path = fonts[name] ?: ""
+        val emoji = EmojiStore.activeFont(ctx)          // reads EmojiStore.selected -> recomposes on change
+        if (emoji != null && Build.VERSION.SDK_INT >= 29) {
+            val ck = name + "|" + EmojiStore.selected
+            val hit = comboCache[ck]
+            if (hit != null) return hit
+            val fam = combined(ctx, path, emoji)
+            if (fam != null) { comboCache[ck] = fam; return fam }
+        }
         if (path.isBlank()) return null
         return cache.getOrPut(name) {
             runCatching {
@@ -96,6 +114,46 @@ object FontStore {
             }.getOrNull()
         }
     }
+
+    private val comboCache = HashMap<String, FontFamily>()
+    private var sysPrimary: android.graphics.fonts.Font? = null
+    private var sysPrimaryDone = false
+
+    // The phone's regular UI font, found by matching Typeface.DEFAULT's metrics. Needed so the emoji font
+    // (which also carries digits/#/* for keycaps) never takes over normal text.
+    @RequiresApi(29)
+    private fun systemPrimary(): android.graphics.fonts.Font? {
+        if (sysPrimaryDone) return sysPrimary
+        sysPrimaryDone = true
+        runCatching {
+            val probe = "Hamburgefonstiv 0123456789 gjpqy"
+            val paint = Paint()
+            paint.typeface = Typeface.DEFAULT
+            val ref = paint.measureText(probe)
+            for (f in SystemFonts.getAvailableFonts()) {
+                if (f.style.weight != 400 || f.style.slant != FontStyle.FONT_SLANT_UPRIGHT) continue
+                val tf = Typeface.CustomFallbackBuilder(AFontFamily.Builder(f).build()).build()
+                paint.typeface = tf
+                if (kotlin.math.abs(paint.measureText(probe) - ref) < 0.01f) { sysPrimary = f; break }
+            }
+        }
+        return sysPrimary
+    }
+
+    @RequiresApi(29)
+    private fun combined(ctx: Context, path: String, emoji: android.graphics.fonts.Font): FontFamily? = runCatching {
+        val primary: android.graphics.fonts.Font? = when {
+            path.isBlank() -> systemPrimary()
+            path.startsWith("/") -> android.graphics.fonts.Font.Builder(File(path)).build()
+            else -> android.graphics.fonts.Font.Builder(ctx.assets, path).build()
+        }
+        val emojiFam = AFontFamily.Builder(emoji).build()
+        val b = if (primary != null)
+            Typeface.CustomFallbackBuilder(AFontFamily.Builder(primary).build()).addCustomFallback(emojiFam)
+        else Typeface.CustomFallbackBuilder(emojiFam)
+        b.setSystemFallback("sans-serif")
+        FontFamily(b.build())
+    }.getOrNull()
 
     fun appFamily(ctx: Context): FontFamily? = family(ctx, appFont)
 
