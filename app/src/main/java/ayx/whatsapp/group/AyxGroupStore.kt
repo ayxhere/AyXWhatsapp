@@ -3,7 +3,7 @@ package ayx.whatsapp.group
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
+import androidx.security.crypto.MasterKeys
 
 /**
  * AyX Group credentials, held in EncryptedSharedPreferences (AES-256).
@@ -26,13 +26,13 @@ object AyxGroupStore {
     fun prefs(ctx: Context): SharedPreferences {
         prefs?.let { return it }
         val appCtx = ctx.applicationContext
-        val masterKey = MasterKey.Builder(appCtx)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
+        // security-crypto 1.0.0: MasterKeys (plural). getOrCreate makes a
+        // AES256-GCM key in the AndroidKeyStore under the default alias.
+        val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
         return EncryptedSharedPreferences.create(
-            appCtx,
             FILE,
-            masterKey,
+            masterKeyAlias,
+            appCtx,
             EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
         ).also { prefs = it }
