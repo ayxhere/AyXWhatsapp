@@ -40,6 +40,12 @@
 -keep class androidx.work.** { *; }
 -dontwarn androidx.work.**
 
+# Tink (pulled in by security-crypto) references javax.annotation.concurrent.GuardedBy,
+# a compile-time-only annotation absent from the APK — safe to silence for R8
+# (fixes "Missing class javax.annotation.concurrent.GuardedBy" in minifyReleaseWithR8).
+-dontwarn com.google.crypto.tink.**
+-dontwarn javax.annotation.concurrent.**
+
 # --- Deliberately NOT added ---------------------------------------------------
 # No certificate pinning: api.imayx.in is served through a Cloudflare Tunnel and
 # edge certificates rotate. Pinning would break the app on rotation, so the
