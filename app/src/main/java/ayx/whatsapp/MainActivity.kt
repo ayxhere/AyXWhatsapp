@@ -119,6 +119,11 @@ import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.ui.res.painterResource
+import ayx.whatsapp.group.AyxGroupSync
+import ayx.whatsapp.group.AyxUpdatesScreen
+import ayx.whatsapp.group.AyxUpdatesWorker
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Notifications
@@ -251,6 +256,9 @@ class MainActivity : ComponentActivity() {
 
     private fun handleDeepLink(intent: Intent?) {
         intent?.getStringExtra("openChat")?.let { AppNav.pendingOpenChat.value = it }
+        if (intent?.getBooleanExtra(NotificationHelper.EXTRA_OPEN_AYX_UPDATES, false) == true) {
+            AppNav.pendingOpenAyxUpdates.value = true
+        }
         intent?.data?.let { uri ->
             val fromPath = uri.pathSegments.firstOrNull()?.filter { it.isDigit() }
             val fromQuery = uri.getQueryParameter("phone")?.filter { it.isDigit() }
@@ -265,6 +273,12 @@ class MainActivity : ComponentActivity() {
         handleDeepLink(intent)
     }
 
+    override fun onResume() {
+        super.onResume()
+        // AyX Group: debounced (5 min) foreground sync; the periodic worker covers the rest.
+        AyxGroupSync.foregroundSync(applicationContext)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -273,6 +287,9 @@ class MainActivity : ComponentActivity() {
         ) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
 
         handleDeepLink(intent)
+
+        // AyX Group: schedule the periodic updates sync once (KEEP = no-op if already scheduled).
+        AyxUpdatesWorker.enqueue(applicationContext)
 
         StatusData.init(applicationContext)
         StatusFlags.init(applicationContext)
@@ -601,6 +618,10 @@ fun GatewayApp() {
 
     var screen by remember { mutableStateOf("chats") }
     var openChat by remember { mutableStateOf<String?>(null) }
+    // AyX Group system channel — a dedicated screen, NOT a chat. No mute/block/hide applies.
+    var showAyxUpdates by remember { mutableStateOf(false) }
+    // Snippet for the pinned chat-list row; refreshed whenever the updates screen closes.
+    val ayxSnippet = remember(showAyxUpdates) { AyxGroupSync.latestSnippet(ctx) }
     var settingsPage by remember { mutableStateOf("home") }
     var wallpaperVersion by remember { mutableStateOf(0) }
     var showSetName by remember { mutableStateOf(false) }
@@ -788,6 +809,14 @@ fun GatewayApp() {
             AppNav.pendingOpenChat.value?.let { openChat = it; screen = "chats"; AppNav.pendingOpenChat.value = null }
         }
     }
+    // AyX updates notification tap → open the system channel screen (works even
+    // before WhatsApp is linked: AyX updates does not depend on the gateway).
+    LaunchedEffect(AppNav.pendingOpenAyxUpdates.value) {
+        if (AppNav.pendingOpenAyxUpdates.value) {
+            showAyxUpdates = true
+            AppNav.pendingOpenAyxUpdates.value = false
+        }
+    }
 
     LaunchedEffect(ChatStyle.runBackground.value) {
         // node runs in-process regardless; the foreground service (silent notification) is only for background keep-alive
@@ -854,8 +883,9 @@ fun GatewayApp() {
     }
     LaunchedEffect(toast) { if (toast != null) { delay(2500); toast = null } }
 
-    BackHandler(enabled = viewImg != null || viewVideoUrl != null || openChat != null || screen == "settings" || screen == "newchat" || screen == "profile") {
+    BackHandler(enabled = showAyxUpdates || viewImg != null || viewVideoUrl != null || openChat != null || screen == "settings" || screen == "newchat" || screen == "profile") {
         when {
+            showAyxUpdates -> showAyxUpdates = false
             viewImg != null -> viewImg = null
             viewVideoUrl != null -> viewVideoUrl = null
             openChat != null -> openChat = null
@@ -1173,8 +1203,8 @@ fun GatewayApp() {
                         }))
                 },
                 navigationIcon = {
-                    if (openChat != null || screen == "settings" || screen == "newchat" || screen == "profile")
-                        IconButton(onClick = { if (openChat != null) openChat = null else if (screen == "settings" && settingsPage != "home") settingsPage = settingsParent(settingsPage) else screen = "chats" },
+                    if (openChat != null || showAyxUpdates || screen == "settings" || screen == "newchat" || screen == "profile")
+                        IconButton(onClick = { if (openChat != null) openChat = null else if (showAyxUpdates) showAyxUpdates = false else if (screen == "settings" && settingsPage != "home") settingsPage = settingsParent(settingsPage) else screen = "chats" },
                             modifier = Modifier.padding(start = 6.dp).clip(CircleShape).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, "back")
                         }
@@ -1277,6 +1307,8 @@ fun GatewayApp() {
         } else {
         Box(Modifier.fillMaxSize().consumeWindowInsets(pad)) {
             when {
+                // AyX Group system channel — independent of WhatsApp link state.
+                showAyxUpdates -> Box(Modifier.padding(pad)) { AyxUpdatesScreen(onBack = { showAyxUpdates = false }) }
                 !status.registered -> Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode,
                     onPair = { n -> scope.launch { try { notify("code: " + GatewayClient.pair(n)) } catch (e: Exception) { notify("pair error: ${e.message}") } } },
                     onReset = { scope.launch { GatewayClient.logout(); SessionBackup.delete(ctx); notify("reset") } }) }
@@ -1296,6 +1328,8 @@ fun GatewayApp() {
                     onPickPhoto = { profilePicPicker.launch("image/*") },
                     onSaveName = { n -> scope.launch { runCatching { GatewayClient.setProfileName(n) }.onSuccess { notify("name updated") }.onFailure { notify("name: ${it.message}") } } }) }
                 else -> ChatsWithStatus(messages, statuses, dpCache, searchQuery, chatsPage, topInset = pad.calculateTopPadding(),
+                    ayxSnippet = ayxSnippet,
+                    onOpenAyxUpdates = { showAyxUpdates = true },
                     onPageChange = { chatsPage = it },
                     onLoadStatuses = { scope.launch { val fresh = GatewayClient.getStatuses(); statuses = if (fresh.isNotEmpty()) StatusData.merge(fresh) else StatusData.load() } },
                     onOpenStatus = { st ->
@@ -1543,26 +1577,52 @@ private fun HiddenReveal(label: String, revealed: Boolean, onClick: () -> Unit) 
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<String, ImageBitmap?>, query: String, contentPad: androidx.compose.foundation.layout.PaddingValues, onToggleReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit) {
+private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<String, ImageBitmap?>, query: String, contentPad: androidx.compose.foundation.layout.PaddingValues, ayxSnippet: String, onOpenAyxUpdates: () -> Unit, onToggleReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit) {
     val allKeys = messages.map { it.chat }.toSet()
     val hiddenCount = allKeys.count { ChatFlags.hidden[it] == true }
     val groups = messages.groupBy { it.chat }.entries
         .filter { ChatFlags.reveal || ChatFlags.hidden[it.key] != true }
         .filter { query.isBlank() || chatTitle(it.value).contains(query, true) || it.key.contains(query) }
         .sortedByDescending { it.value.maxOf { m -> m.ts } }
-    if (groups.isEmpty() && hiddenCount == 0) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("No chats yet.\nIncoming messages will appear here.", style = MaterialTheme.typography.bodyMedium)
-        }
-        return
-    }
     // long-press a chat → blur the list behind + a floating action sheet (iOS/WhatsApp style)
     var menuChat by remember { mutableStateOf<String?>(null) }
     var mutePick by remember { mutableStateOf<String?>(null) }
     val blurDp by animateDpAsState(if (menuChat != null || mutePick != null) 18.dp else 0.dp, label = "homeblur")
 
     LazyColumn(Modifier.fillMaxSize().blur(blurDp), contentPadding = contentPad) {
-        itemsIndexed(groups, key = { _, e -> e.key }) { _, entry ->
+        // AyX Group system channel — always pinned at the very top. This is NOT a
+        // chat: tap opens the updates screen. There is deliberately NO long-press
+        // menu (no mute / block / hide / delete) and no ChatFlags interaction.
+        item(key = "ayx_updates") {
+            Row(Modifier.fillMaxWidth().clickable { onOpenAyxUpdates() }.padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Image(painterResource(R.drawable.ayx_updates_avatar), "AyX updates",
+                    Modifier.size(50.dp).clip(CircleShape), contentScale = ContentScale.Crop)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                            Text("✦ AyX updates", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, false))
+                            Spacer(Modifier.width(5.dp))
+                            Icon(Icons.Filled.PushPin, "pinned", modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Text("", style = MaterialTheme.typography.labelSmall)
+                    }
+                    Text(ayxSnippet, style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            HorizontalDivider()
+        }
+        if (groups.isEmpty() && hiddenCount == 0) {
+            item {
+                Box(Modifier.fillMaxWidth().padding(top = 48.dp), contentAlignment = Alignment.Center) {
+                    Text("No chats yet.\nIncoming messages will appear here.", style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        } else {
+            itemsIndexed(groups, key = { _, e -> e.key }) { _, entry ->
             val msgs = entry.value
             val last = msgs.maxByOrNull { it.ts }!!
             val name = chatTitle(msgs)
@@ -1584,6 +1644,7 @@ private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<Stri
                 }
             }
             HorizontalDivider()
+        }
         }
     }
 
@@ -3396,7 +3457,7 @@ private fun NewChatScreen(contacts: List<DeviceContact>, loading: Boolean, dpCac
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, statuses: List<GatewayClient.StatusItem>, dpCache: MutableMap<String, ImageBitmap?>, query: String, page: Int, topInset: androidx.compose.ui.unit.Dp, onPageChange: (Int) -> Unit, onLoadStatuses: () -> Unit, onOpenStatus: (GatewayClient.StatusItem) -> Unit, onToggleStatusReveal: () -> Unit, onToggleChatReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit) {
+private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, statuses: List<GatewayClient.StatusItem>, dpCache: MutableMap<String, ImageBitmap?>, query: String, page: Int, topInset: androidx.compose.ui.unit.Dp, ayxSnippet: String, onOpenAyxUpdates: () -> Unit, onPageChange: (Int) -> Unit, onLoadStatuses: () -> Unit, onOpenStatus: (GatewayClient.StatusItem) -> Unit, onToggleStatusReveal: () -> Unit, onToggleChatReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit) {
     val pager = rememberPagerState(initialPage = page) { 2 }
     // content scrolls BEHIND the glass header (topInset) and the floating bottom nav (bottom)
     val contentPad = androidx.compose.foundation.layout.PaddingValues(top = topInset + 6.dp, bottom = 118.dp)
@@ -3407,14 +3468,14 @@ private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, statuses: List<Ga
         while (pager.currentPage == 1) { onLoadStatuses(); delay(5000) }
     }
     HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { pg ->
-        if (pg == 0) ChatList(messages, dpCache, query, contentPad, onToggleChatReveal, onDelete, onOpen)
-        else StatusScreen(statuses, contentPad, onOpenStatus, dpCache, onToggleStatusReveal)
+        if (pg == 0) ChatList(messages, dpCache, query, contentPad, ayxSnippet, onOpenAyxUpdates, onToggleChatReveal, onDelete, onOpen)
+        else StatusScreen(statuses, contentPad, onOpenAyxUpdates, onOpenStatus, dpCache, onToggleStatusReveal)
     }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun StatusScreen(statuses: List<GatewayClient.StatusItem>, contentPad: androidx.compose.foundation.layout.PaddingValues, onOpen: (GatewayClient.StatusItem) -> Unit, dpCache: MutableMap<String, ImageBitmap?>, onToggleReveal: () -> Unit) {
+private fun StatusScreen(statuses: List<GatewayClient.StatusItem>, contentPad: androidx.compose.foundation.layout.PaddingValues, onOpenAyxUpdates: () -> Unit, onOpen: (GatewayClient.StatusItem) -> Unit, dpCache: MutableMap<String, ImageBitmap?>, onToggleReveal: () -> Unit) {
     val version = StatusData.seenVersion.value            // recompose + reorder the moment a status is viewed
     val mine = statuses.filter { it.mine }
     val others = statuses.filter { !it.mine }
@@ -3426,6 +3487,26 @@ private fun StatusScreen(statuses: List<GatewayClient.StatusItem>, contentPad: a
     val muted = groups.filter { StatusFlags.isMuted(it.key) }.sortedByDescending { e -> e.value.maxOf { it.ts } }
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = contentPad) {
+        // AyX Group system channel — locked ring, always on top. This is NOT a status
+        // sender: StatusFlags mute/hide/lock do not apply, and there is no long-press menu.
+        item(key = "ayx_updates_ring") {
+            Row(Modifier.fillMaxWidth().clickable { onOpenAyxUpdates() }.padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(54.dp).border(2.dp, AYX_GREEN, CircleShape).padding(3.dp), contentAlignment = Alignment.Center) {
+                    Image(painterResource(R.drawable.ayx_updates_avatar), "AyX updates",
+                        Modifier.size(46.dp).clip(CircleShape), contentScale = ContentScale.Crop)
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("✦ AyX", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("Official updates from AyX", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Icon(Icons.Filled.Lock, "locked", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+            }
+            HorizontalDivider()
+        }
         item {
             Text(if (StatusFlags.reveal) "My Status · showing hidden" else "My Status",
                 style = MaterialTheme.typography.labelMedium, color = IOS_BLUE,

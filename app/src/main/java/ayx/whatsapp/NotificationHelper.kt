@@ -17,12 +17,19 @@ private fun notifIcon(c: android.content.Context): Int {
     return if (id != 0) id else android.R.drawable.ic_dialog_email
 }
 
-object AppNav { val pendingOpenChat = mutableStateOf<String?>(null) }
+object AppNav {
+    val pendingOpenChat = mutableStateOf<String?>(null)
+    val pendingOpenAyxUpdates = mutableStateOf(false)
+}
 
 object NotificationHelper {
     const val CHANNEL = "messages"
     const val KEY_REPLY = "key_reply"
     const val EXTRA_JID = "jid"
+
+    /** AyX Group system channel — dedicated "✦ AyX updates" announcements, NOT a chat. */
+    const val CHANNEL_UPDATES = "ayx_updates"
+    const val EXTRA_OPEN_AYX_UPDATES = "open_ayx_updates"
 
     fun ensureChannel(ctx: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -31,6 +38,42 @@ object NotificationHelper {
                 mgr.createNotificationChannel(NotificationChannel(CHANNEL, "Messages", NotificationManager.IMPORTANCE_HIGH))
             }
         }
+    }
+
+    fun ensureUpdatesChannel(ctx: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val mgr = ctx.getSystemService(NotificationManager::class.java)
+            if (mgr.getNotificationChannel(CHANNEL_UPDATES) == null) {
+                mgr.createNotificationChannel(NotificationChannel(CHANNEL_UPDATES, "AyX updates", NotificationManager.IMPORTANCE_HIGH))
+            }
+        }
+    }
+
+    /**
+     * Post an "✦ AyX updates" announcement notification.
+     * Deliberately does NOT consult ChatFlags/StatusFlags: this is a system
+     * channel, not a chat JID — it cannot be muted, blocked, hidden or deleted
+     * by the user. Notification id is stable per announcement so re-delivery
+     * updates the same notification instead of stacking duplicates.
+     */
+    fun notifyUpdate(ctx: Context, announcementId: String, title: String, body: String) {
+        ensureUpdatesChannel(ctx)
+        val id = ("ayx_update_" + announcementId).hashCode()
+        val openIntent = Intent(ctx, MainActivity::class.java)
+            .putExtra(EXTRA_OPEN_AYX_UPDATES, true)
+            .setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
+        val openPending = PendingIntent.getActivity(ctx, id, openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val n = NotificationCompat.Builder(ctx, CHANNEL_UPDATES)
+            .setSmallIcon(notifIcon(ctx))
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setAutoCancel(true)
+            .setContentIntent(openPending)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .build()
+        try { NotificationManagerCompat.from(ctx).notify(id, n) } catch (_: SecurityException) {}
     }
 
     fun notifyMessage(ctx: Context, jid: String, name: String, text: String, dp: Bitmap?) {
