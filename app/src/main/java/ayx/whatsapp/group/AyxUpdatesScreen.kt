@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.CircularProgressIndicator
@@ -77,6 +78,7 @@ fun AyxUpdatesScreen(onBack: () -> Unit, onOpenWebsite: () -> Unit) {
     var lastSync by remember { mutableLongStateOf(AyxGroupStore.lastSyncAt(ctx)) }
     var syncing by remember { mutableStateOf(false) }
     var viewerIndex by remember { mutableStateOf<Int?>(null) }
+    var showAdminSetup by remember { mutableStateOf(false) }
 
     val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
@@ -126,6 +128,11 @@ fun AyxUpdatesScreen(onBack: () -> Unit, onOpenWebsite: () -> Unit) {
         )
     }
 
+    // Backend admin setup dialog (one-time)
+    if (showAdminSetup) {
+        AyxAdminSetupDialog(onDismiss = { showAdminSetup = false })
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -157,6 +164,10 @@ fun AyxUpdatesScreen(onBack: () -> Unit, onOpenWebsite: () -> Unit) {
                     // Website link
                     IconButton(onClick = onOpenWebsite) {
                         Icon(Icons.Filled.OpenInNew, contentDescription = "Open imayx.in")
+                    }
+                    // Backend admin setup (one-time)
+                    IconButton(onClick = { showAdminSetup = true }) {
+                        Icon(Icons.Filled.AdminPanelSettings, contentDescription = "Backend admin setup")
                     }
                     if (syncing) {
                         CircularProgressIndicator(
@@ -344,4 +355,95 @@ private fun AyxStatusBubble(s: AyxStatus, onClick: () -> Unit) {
 private fun formatTime(ts: Long): String {
     if (ts <= 0L) return ""
     return SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(ts)).lowercase(Locale.getDefault())
+}
+
+/**
+ * One-time backend admin account setup. The AyX Group backend runs embedded
+ * in this app (no Termux needed); this creates the admin login for the
+ * web admin panel at imayx.in/admin/ayx-group/.
+ */
+@Composable
+private fun AyxAdminSetupDialog(onDismiss: () -> Unit) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var status by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var backendAlive by remember { mutableStateOf<Boolean?>(null) }
+
+    LaunchedEffect(Unit) {
+        backendAlive = AyxBackendAdmin.backendAlive()
+        if (backendAlive == true) {
+            val exists = AyxBackendAdmin.adminExists(ctx)
+            if (exists == true) status = "Admin account already exists — you're all set."
+        }
+    }
+
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Backend admin setup") },
+        text = {
+            Column {
+                when (backendAlive) {
+                    null -> Text("Checking backend…", style = MaterialTheme.typography.bodySmall)
+                    false -> Text(
+                        "Backend not running yet. Wait a few seconds after app start, then reopen this.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    true -> {
+                        Text(
+                            "Creates the admin login for the web panel (imayx.in/admin/ayx-group/). One-time only.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        androidx.compose.material3.OutlinedTextField(
+                            value = username,
+                            onValueChange = { username = it },
+                            label = { Text("Username") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        androidx.compose.material3.OutlinedTextField(
+                            value = password,
+                            onValueChange = { password = it },
+                            label = { Text("Password (min 12 chars)") },
+                            singleLine = true,
+                            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+                status?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(
+                onClick = {
+                    if (backendAlive != true || busy) return@TextButton
+                    busy = true
+                    status = "Creating…"
+                    scope.launch {
+                        val (ok, msg) = AyxBackendAdmin.createAdmin(ctx, username.trim(), password)
+                        status = msg
+                        busy = false
+                        if (ok) {
+                            // Auto-close on success after a beat
+                            kotlinx.coroutines.delay(1200)
+                            onDismiss()
+                        }
+                    }
+                },
+                enabled = backendAlive == true && !busy,
+            ) { Text("Create admin") }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Close") }
+        },
+    )
 }
