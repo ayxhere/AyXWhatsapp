@@ -199,14 +199,14 @@ fun AyxUpdatesScreen(onBack: () -> Unit, onOpenWebsite: () -> Unit) {
                 reverseLayout = true, // newest at bottom, like a chat
             ) {
                 // Statuses first (older), then announcements — chronological chat order
-                val ordered = (statuses.sortedBy { it.createdAt }.map { ChatItem.Status(it) } +
-                        announcements.sortedBy { it.publishedAt }.map { ChatItem.Announcement(it) })
-                    .sortedBy {
-                        when (it) {
-                            is ChatItem.Status -> it.s.createdAt
-                            is ChatItem.Announcement -> it.a.publishedAt
-                        }
+                val statusItems: List<ChatItem> = statuses.sortedBy { it.createdAt }.map { ChatItem.Status(it) }
+                val annItems: List<ChatItem> = announcements.sortedBy { it.publishedAt }.map { ChatItem.Announcement(it) }
+                val ordered = (statusItems + annItems).sortedBy {
+                    when (it) {
+                        is ChatItem.Status -> it.s.createdAt
+                        is ChatItem.Announcement -> it.a.publishedAt
                     }
+                }
                 items(ordered, key = {
                     when (it) {
                         is ChatItem.Status -> "s:" + it.s.id
