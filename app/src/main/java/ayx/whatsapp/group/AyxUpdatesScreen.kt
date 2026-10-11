@@ -9,18 +9,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.weight
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -36,6 +31,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -69,6 +65,7 @@ private val GlassHeader = Color(0xFF000000).copy(alpha = 0.72f)
 private val LightText = Color(0xFFE9EDEF)
 private val SubtleText = Color(0xFF8696A0)
 private val AccentGreen = Color(0xFF00A884)
+private val ComposerOutline = Color(0xFF8E8E93).copy(alpha = 0.6f)
 
 private sealed class ChatItem {
     abstract val ts: Long
@@ -145,19 +142,11 @@ fun AyxUpdatesScreen(onBack: () -> Unit) {
     }
 
     Box(Modifier.fillMaxSize()) {
-        val wp = wallpaper
-        if (wp != null) {
-            Image(wp, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-        } else {
-            Box(Modifier.fillMaxSize().background(Color(0xFF0B141A)))
-        }
+        wallpaper?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+            ?: Box(Modifier.fillMaxSize().background(Color(0xFF0B141A)))
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.18f)))
 
-        Column(
-            Modifier
-                .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
-        ) {
+        Column(Modifier.fillMaxSize()) {
             Surface(
                 color = GlassHeader,
                 shape = RoundedCornerShape(bottomStart = 20.dp, bottomEnd = 20.dp),
@@ -262,6 +251,14 @@ fun AyxUpdatesScreen(onBack: () -> Unit) {
                     placeholder = { Text("Message", color = SubtleText, fontSize = 15.sp) },
                     shape = RoundedCornerShape(24.dp), maxLines = 4,
                     modifier = Modifier.weight(1f),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = Color.Transparent,
+                        unfocusedContainerColor = Color.Transparent,
+                        focusedBorderColor = ComposerOutline,
+                        unfocusedBorderColor = ComposerOutline.copy(alpha = 0.7f),
+                        focusedTextColor = LightText, unfocusedTextColor = LightText,
+                        cursorColor = AccentGreen,
+                    ),
                 )
                 val canSend = inputText.trim().isNotEmpty() && !sending
                 IconButton(
@@ -287,7 +284,7 @@ private fun CharcoalIncomingBubble(sender: String, title: String, body: String, 
             shape = RoundedCornerShape(18.dp, 18.dp, 18.dp, 6.dp),
             modifier = Modifier.widthIn(max = 300.dp), shadowElevation = 1.dp,
         ) {
-            Column(Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 6.dp)) {
+            Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                 Text(sender, color = AccentGreen, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                 Spacer(Modifier.height(2.dp))
                 if (title.isNotBlank()) {
@@ -295,21 +292,10 @@ private fun CharcoalIncomingBubble(sender: String, title: String, body: String, 
                     Spacer(Modifier.height(2.dp))
                 }
                 if (body.isNotBlank()) {
-                    // Timestamp inline at bottom-end (Image 1 style)
-                    Box(Modifier.fillMaxWidth()) {
-                        Text(
-                            body, color = LightText, fontSize = 15.sp, lineHeight = 20.sp,
-                            modifier = Modifier.padding(end = 48.dp, bottom = 2.dp)
-                        )
-                        Text(
-                            formatTime(ts), color = SubtleText, fontSize = 11.sp,
-                            modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 2.dp)
-                        )
-                    }
-                } else {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        Text(formatTime(ts), color = SubtleText, fontSize = 11.sp)
-                    }
+                    Text(body, color = LightText, fontSize = 15.sp, lineHeight = 20.sp)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    Text(formatTime(ts), color = SubtleText, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
                 }
             }
         }
@@ -324,16 +310,11 @@ private fun CharcoalOutgoingBubble(body: String, ts: Long) {
             shape = RoundedCornerShape(18.dp, 18.dp, 6.dp, 18.dp),
             modifier = Modifier.widthIn(max = 300.dp), shadowElevation = 1.dp,
         ) {
-            // Timestamp inline at bottom-end (Image 1 style)
-            Box(Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 6.dp)) {
-                Text(
-                    body, color = LightText, fontSize = 15.sp, lineHeight = 20.sp,
-                    modifier = Modifier.padding(end = 48.dp, bottom = 2.dp)
-                )
-                Text(
-                    formatTime(ts), color = SubtleText, fontSize = 11.sp,
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 2.dp)
-                )
+            Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                Text(body, color = LightText, fontSize = 15.sp, lineHeight = 20.sp)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    Text(formatTime(ts), color = SubtleText, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
+                }
             }
         }
     }
