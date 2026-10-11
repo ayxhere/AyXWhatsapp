@@ -1142,7 +1142,7 @@ fun GatewayApp() {
 
     Scaffold(
         floatingActionButton = {
-            if (status.registered && openChat == null && screen == "chats") {
+            if (status.registered && openChat == null && !showAyxUpdates && screen == "chats") {
                 if (chatsPage == 1) Box {
                     FloatingActionButton(onClick = { statusFabMenu = true }) { Icon(Icons.Filled.PhotoCamera, "add status") }
                     DropdownMenu(expanded = statusFabMenu, onDismissRequest = { statusFabMenu = false }) {
@@ -1158,7 +1158,7 @@ fun GatewayApp() {
         bottomBar = {},   // Home/Status nav is a FLOATING rounded glass bar overlaid on the content (see below)
         topBar = {
             // Glass header: translucent so the list scrolls behind it. Chat screen has its own header.
-            if (openChat == null) {
+            if (openChat == null && !showAyxUpdates) {
             Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.80f), shadowElevation = 6.dp, tonalElevation = 0.dp,
                 shape = RoundedCornerShape(bottomStart = 26.dp, bottomEnd = 26.dp), modifier = Modifier.fillMaxWidth()) {
             CenterAlignedTopAppBar(
@@ -1212,7 +1212,7 @@ fun GatewayApp() {
                         Box(Modifier.padding(start = 10.dp).clip(CircleShape).clickable { screen = "profile" }) { Avatar(myJid!!, "Me", dpCache, 34.dp) }
                 },
                 actions = {
-                    if (status.registered && openChat == null && screen == "chats") {
+                    if (status.registered && openChat == null && !showAyxUpdates && screen == "chats") {
                         if (searchMode) {
                             IconButton(onClick = { searchMode = false; searchQuery = "" }) { Icon(Icons.Filled.Close, "close") }
                         } else {
@@ -1369,7 +1369,7 @@ fun GatewayApp() {
         }
         }
             // Floating rounded glass Home/Status navigation — overlaid so the list scrolls behind it.
-            if (status.registered && openChat == null && screen == "chats") {
+            if (status.registered && openChat == null && !showAyxUpdates && screen == "chats") {
                 val selC = MaterialTheme.colorScheme.primary; val dimC = MaterialTheme.colorScheme.onSurfaceVariant
                 Surface(shape = RoundedCornerShape(30.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
                     tonalElevation = 0.dp, shadowElevation = 14.dp, border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)),
