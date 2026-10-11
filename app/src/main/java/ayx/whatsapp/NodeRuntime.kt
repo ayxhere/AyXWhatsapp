@@ -38,6 +38,18 @@ object NodeRuntime {
         val mediaDir = File(ctx.filesDir, "media").apply { mkdirs() }
         NodeBridge.nativeSetenv("WAGW_MEDIA_DIR", mediaDir.absolutePath)
 
+        // AyX Group backend (Express API on :3101) — runs in the same Node
+        // process as the gateway. No Termux/proot needed.
+        val backendDir = File(ctx.filesDir, "ayx-backend").apply { mkdirs() }
+        val backendDb = File(backendDir, "data/ayx.db")
+        NodeBridge.nativeSetenv("AYX_BACKEND_ENABLED", "1")
+        NodeBridge.nativeSetenv("PORT", "3101")
+        NodeBridge.nativeSetenv("NODE_ENV", "production")
+        NodeBridge.nativeSetenv("DB_PATH", backendDb.absolutePath)
+        NodeBridge.nativeSetenv("UPLOAD_DIR", File(backendDir, "uploads").apply { mkdirs() }.absolutePath)
+        NodeBridge.nativeSetenv("SESSION_SECRET", getOrCreateBackendSecret(ctx))
+        NodeBridge.nativeSetenv("LOCAL_OP_TOKEN", getOrCreateLocalOpToken(ctx))
+
         val mainJs = File(projectDir, "main.js").absolutePath
         Thread({
             Log.i(TAG, "starting node: $mainJs")
@@ -46,8 +58,52 @@ object NodeRuntime {
         }, "nodejs").start()
     }
 
-    private fun extractIfNeeded(ctx: Context, projectDir: File) {
-        val marker = File(projectDir, ".version")
+    /**
+     * Backend SESSION_SECRET — generated once, stored in EncryptedSharedPreferences.
+     * The backend requires >= 32 chars; we generate 48 bytes (96 hex chars).
+     */
+    private fun getOrCreateBackendSecret(ctx: Context): String {
+        val prefs = androidx.security.crypto.EncryptedSharedPreferences.create(
+            "ayx_backend",
+            "ayx_backend_key",
+            ctx,
+            androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+        )
+        var secret = prefs.getString("session_secret", null)
+        if (secret.isNullOrBlank() || secret.length < 32) {
+            val bytes = ByteArray(48)
+            java.security.SecureRandom().nextBytes(bytes)
+            secret = bytes.joinToString("") { "%02x".format(it) }
+            prefs.edit().putString("session_secret", secret).apply()
+            Log.i(TAG, "generated new AyX backend session secret")
+        }
+        return secret
+    }
+
+    /**
+     * Token guarding the backend's one-time local admin bootstrap endpoint.
+     * Generated once, stored alongside the session secret.
+     */
+    private fun getOrCreateLocalOpToken(ctx: Context): String {
+        val prefs = androidx.security.crypto.EncryptedSharedPreferences.create(
+            "ayx_backend",
+            "ayx_backend_key",
+            ctx,
+            androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+        )
+        var token = prefs.getString("local_op_token", null)
+        if (token.isNullOrBlank() || token.length < 32) {
+            val bytes = ByteArray(32)
+            java.security.SecureRandom().nextBytes(bytes)
+            token = bytes.joinToString("") { "%02x".format(it) }
+            prefs.edit().putString("local_op_token", token).apply()
+        }
+        return token
+    }
+
+    private fun extractIfNeeded(ctx: Context, projectDir: File) {        val marker = File(projectDir, ".version")
         val current = ctx.packageManager.getPackageInfo(ctx.packageName, 0).lastUpdateTime.toString()
         if (marker.exists() && marker.readText() == current) return
 
