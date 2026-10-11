@@ -89,6 +89,23 @@ object AyxGroupApi {
         authed("POST", "/v1/installations/token", token).getString("access_token")
     }
 
+    /** Send a private message to the admin. Kind: feedback, bug, other. */
+    suspend fun sendMessage(token: String, body: String, kind: String = "other"): String =
+        withContext(Dispatchers.IO) {
+            authed(
+                "POST", "/v1/messages",
+                token,
+                JSONObject().put("body", body).put("kind", kind),
+            ).getString("message_id")
+        }
+
+    /** Get this installation's message history (with admin replies). */
+    suspend fun myMessages(token: String): List<UserMessage> = withContext(Dispatchers.IO) {
+        val o = authed("GET", "/v1/messages/mine?per_page=50", token)
+        val arr = o.optJSONArray("data") ?: return@withContext emptyList()
+        (0 until arr.length()).map { UserMessage.fromJson(arr.getJSONObject(it)) }
+    }
+
     private suspend fun authed(method: String, path: String, token: String, body: JSONObject? = null): JSONObject =
         request(method, path, body, token)
 
