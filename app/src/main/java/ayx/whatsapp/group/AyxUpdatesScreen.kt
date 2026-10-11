@@ -23,12 +23,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -44,6 +45,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -52,20 +55,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ayx.whatsapp.R
 import kotlinx.coroutines.launch
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-// WhatsApp dark-mode colors (original)
-private val WaChatBg = Color(0xFF0B141A)
-private val WaHeaderBg = Color(0xFF1F2C34)
-private val WaBubbleReceived = Color(0xFF1F2C34)
-private val WaBubbleSent = Color(0xFF005C4B)
-private val WaText = Color(0xFFE9EDEF)
-private val WaTextSecondary = Color(0xFF8696A0)
-private val WaGreen = Color(0xFF00A884)
-private val WaStatusRing = Color(0xFF00A884)
-private val WaInputBg = Color(0xFF1F2C34)
+// Original WhatsApp dark colors (from MainActivity bubbleSpec "whatsapp" style)
+private val OrigSentBubble = Color(0xFF005C4B)
+private val OrigRecvBubble = Color(0xFF202C33)
+private val OrigText = Color.White
+private val OrigHeaderBg = Color(0xFF1F2C34)
+private val OrigGreen = Color(0xFF00A884)
+private val OrigTimeText = Color(0xFF8696A0)
 
 /** Unified chat item: announcement, user message, or admin reply. */
 private sealed class ChatItem {
@@ -82,11 +83,11 @@ private sealed class ChatItem {
 }
 
 /**
- * "✦ AyX updates" — WhatsApp-original 2-way chat.
- * Announcements arrive as received bubbles from "✦ AyX".
- * Users can type and send direct messages to AyX (input bar at bottom).
- * Admin replies appear as received bubbles. Statuses show as a horizontal
- * row of rings — tap to open the full-screen viewer. Background sync.
+ * "✦ AyX updates" — uses the ORIGINAL WhatsApp chat screen style:
+ * wallpaper background, original bubble colors/shapes, original input bar.
+ * Announcements + admin replies = received bubbles from "✦ AyX".
+ * User messages = sent bubbles (green, right). Input bar at bottom
+ * for direct messaging to AyX.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -99,6 +100,17 @@ fun AyxUpdatesScreen(onBack: () -> Unit) {
     var viewerIndex by remember { mutableStateOf<Int?>(null) }
     var inputText by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
+
+    // Load wallpaper like the original chat screen
+    var wallpaper by remember { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(Unit) {
+        val f = File(ctx.filesDir, "wallpaper.jpg")
+        wallpaper = if (f.exists()) {
+            runCatching {
+                android.graphics.BitmapFactory.decodeFile(f.absolutePath)?.asImageBitmap()
+            }.getOrNull()
+        } else null
+    }
 
     // Background sync on open
     LaunchedEffect(Unit) {
@@ -124,17 +136,15 @@ fun AyxUpdatesScreen(onBack: () -> Unit) {
                 val token = AyxGroupStore.accessToken(ctx) ?: return@launch
                 AyxGroupApi.sendMessage(token, text, "other")
                 inputText = ""
-                // Refresh messages
                 userMessages = AyxGroupApi.myMessages(token)
             } catch (_: Exception) {
-                // Send failed — keep text for retry
+                // Keep text for retry
             } finally {
                 sending = false
             }
         }
     }
 
-    // Full-screen status viewer
     viewerIndex?.let { idx ->
         AyxStatusViewer(
             statuses = statuses,
@@ -143,7 +153,6 @@ fun AyxUpdatesScreen(onBack: () -> Unit) {
         )
     }
 
-    // Merge all items chronologically (oldest first, newest at bottom like WhatsApp)
     val chatItems: List<ChatItem> = remember(announcements, userMessages) {
         val list = ArrayList<ChatItem>()
         announcements.forEach { list.add(ChatItem.AnnouncementItem(it)) }
@@ -154,8 +163,14 @@ fun AyxUpdatesScreen(onBack: () -> Unit) {
         list.sortedBy { it.ts }
     }
 
-    Scaffold(
-        topBar = {
+    // Original style: Box with wallpaper, NOT Scaffold with solid color
+    Box(Modifier.fillMaxSize()) {
+        // Wallpaper background (like original chat)
+        wallpaper?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+            ?: Box(Modifier.fillMaxSize().background(Color(0xFF0B141A)))
+
+        Column(Modifier.fillMaxSize()) {
+            // Header (original style)
             TopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -168,7 +183,7 @@ fun AyxUpdatesScreen(onBack: () -> Unit) {
                         Spacer(Modifier.width(12.dp))
                         Text(
                             "✦ AyX updates",
-                            color = WaText,
+                            color = OrigText,
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 16.sp,
                         )
@@ -176,163 +191,153 @@ fun AyxUpdatesScreen(onBack: () -> Unit) {
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = WaText)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = OrigText)
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = WaHeaderBg),
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = OrigHeaderBg),
             )
-        },
-        containerColor = WaChatBg,
-        bottomBar = {
-            // WhatsApp-style input bar
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .background(WaChatBg)
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                OutlinedTextField(
-                    value = inputText,
-                    onValueChange = { inputText = it },
-                    placeholder = { Text("Message", color = WaTextSecondary, fontSize = 15.sp) },
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(24.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = WaInputBg,
-                        unfocusedContainerColor = WaInputBg,
-                        focusedBorderColor = Color.Transparent,
-                        unfocusedBorderColor = Color.Transparent,
-                        focusedTextColor = WaText,
-                        unfocusedTextColor = WaText,
-                        cursorColor = WaGreen,
-                    ),
-                    maxLines = 4,
-                )
-                Spacer(Modifier.width(6.dp))
-                IconButton(
-                    onClick = { doSend() },
-                    enabled = !sending && inputText.trim().isNotEmpty(),
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .background(WaGreen),
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.Send,
-                        contentDescription = "Send",
-                        tint = Color.White,
-                    )
-                }
-            }
-        },
-    ) { pad ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(pad),
-            contentPadding = PaddingValues(vertical = 8.dp),
-            reverseLayout = true, // newest at bottom
-        ) {
-            // Status rings (horizontal, like WhatsApp Status tab) — no text
+
+            // Status rings (if any)
             if (statuses.isNotEmpty()) {
-                item(key = "status_row") {
-                    LazyRow(
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        items(statuses, key = { it.id }) { s ->
-                            val idx = statuses.indexOfFirst { it.id == s.id }
-                            Box(
-                                modifier = Modifier
-                                    .size(64.dp)
-                                    .clip(CircleShape)
-                                    .background(WaStatusRing)
-                                    .padding(3.dp)
-                                    .clip(CircleShape)
-                                    .background(WaChatBg)
-                                    .padding(2.dp)
-                                    .clip(CircleShape)
-                                    .clickable { viewerIndex = idx.coerceAtLeast(0) },
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Image(
-                                    painterResource(R.drawable.ayx_updates_avatar),
-                                    "AyX status",
-                                    Modifier.fillMaxSize().clip(CircleShape),
-                                    contentScale = ContentScale.Crop,
-                                )
-                            }
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    items(statuses, key = { it.id }) { s ->
+                        val idx = statuses.indexOfFirst { it.id == s.id }
+                        Box(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(CircleShape)
+                                .background(OrigGreen)
+                                .padding(3.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF0B141A))
+                                .padding(2.dp)
+                                .clip(CircleShape)
+                                .clickable { viewerIndex = idx.coerceAtLeast(0) },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Image(
+                                painterResource(R.drawable.ayx_updates_avatar),
+                                "AyX status",
+                                Modifier.fillMaxSize().clip(CircleShape),
+                                contentScale = ContentScale.Crop,
+                            )
                         }
                     }
                 }
             }
 
-            if (chatItems.isEmpty() && statuses.isEmpty()) {
-                item(key = "empty") {
-                    Box(
-                        Modifier.fillMaxWidth().padding(32.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            "No updates yet. Send a message below to contact AyX.",
-                            color = WaTextSecondary,
-                            fontSize = 14.sp,
-                        )
+            // Messages (original: LazyColumn reverseLayout, 8dp horizontal padding, 3dp spacing)
+            LazyColumn(
+                modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp),
+                contentPadding = PaddingValues(top = 6.dp, bottom = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+                reverseLayout = true,
+            ) {
+                if (chatItems.isEmpty()) {
+                    item(key = "empty") {
+                        Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                            Text(
+                                "No updates yet. Send a message below to contact AyX.",
+                                color = OrigTimeText,
+                                fontSize = 14.sp,
+                            )
+                        }
+                    }
+                } else {
+                    items(chatItems.reversed(), key = {
+                        when (it) {
+                            is ChatItem.AnnouncementItem -> "a:${it.a.id}"
+                            is ChatItem.UserMsgItem -> "m:${it.m.id}"
+                            is ChatItem.ReplyItem -> "r:${it.r.id}"
+                        }
+                    }) { item ->
+                        when (item) {
+                            is ChatItem.AnnouncementItem -> OrigAnnouncementBubble(item.a)
+                            is ChatItem.UserMsgItem -> OrigSentBubble(item.m.body, item.m.createdAt)
+                            is ChatItem.ReplyItem -> OrigReplyBubble(item.r)
+                        }
                     }
                 }
-            } else {
-                // Newest first (reverseLayout shows newest at bottom)
-                items(chatItems.reversed(), key = {
-                    when (it) {
-                        is ChatItem.AnnouncementItem -> "a:${it.a.id}"
-                        is ChatItem.UserMsgItem -> "m:${it.m.id}"
-                        is ChatItem.ReplyItem -> "r:${it.r.id}"
-                    }
-                }) { item ->
-                    when (item) {
-                        is ChatItem.AnnouncementItem -> AyxAnnouncementBubble(item.a)
-                        is ChatItem.UserMsgItem -> AyxSentBubble(item.m.body, item.m.createdAt)
-                        is ChatItem.ReplyItem -> AyxReplyBubble(item.r)
-                    }
+            }
+
+            // Input bar (ORIGINAL style: attach, camera, text field, send button)
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                IconButton(onClick = { /* attach - not needed for AyX chat */ }) {
+                    Icon(Icons.Filled.AttachFile, "attach", tint = OrigTimeText)
+                }
+                IconButton(onClick = { /* camera - not needed for AyX chat */ }) {
+                    Icon(Icons.Filled.PhotoCamera, "camera", tint = OrigTimeText)
+                }
+                OutlinedTextField(
+                    value = inputText,
+                    onValueChange = { inputText = it },
+                    placeholder = { Text("Message", color = OrigTimeText) },
+                    shape = RoundedCornerShape(24.dp),
+                    maxLines = 4,
+                    modifier = Modifier.weight(1f),
+                )
+                FilledIconButton(
+                    onClick = { doSend() },
+                    enabled = inputText.isNotBlank() && !sending,
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Send, "send")
                 }
             }
         }
     }
 }
 
-/** Announcement as a WhatsApp-original received bubble. */
+/** Announcement — ORIGINAL WhatsApp received bubble style. */
 @Composable
-private fun AyxAnnouncementBubble(a: Announcement) {
+private fun OrigAnnouncementBubble(a: Announcement) {
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+        Modifier.fillMaxWidth().padding(vertical = 1.dp),
         horizontalArrangement = Arrangement.Start,
     ) {
         Surface(
-            color = WaBubbleReceived,
-            shape = RoundedCornerShape(2.dp, 12.dp, 12.dp, 12.dp),
-            modifier = Modifier.fillMaxWidth(0.85f),
+            color = OrigRecvBubble,
+            // Original whatsapp style: RoundedCornerShape(8.dp, 8.dp, 8.dp, 2.dp)
+            shape = RoundedCornerShape(8.dp, 8.dp, 8.dp, 2.dp),
+            modifier = Modifier.widthIn(max = 290.dp),
         ) {
-            Column(Modifier.padding(start = 10.dp, end = 8.dp, top = 7.dp, bottom = 6.dp)) {
+            Column(Modifier.padding(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                     "✦ AyX",
-                    color = WaGreen,
+                    color = OrigGreen,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 13.sp,
-                    lineHeight = 16.sp,
+                    modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = 2.dp),
                 )
-                Spacer(Modifier.height(2.dp))
                 if (a.title.isNotBlank()) {
-                    Text(a.title, color = WaText, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        a.title,
+                        color = OrigText,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                    )
                 }
                 if (a.body.isNotBlank()) {
-                    Text(a.body, color = WaText, fontSize = 15.sp, lineHeight = 20.sp)
+                    Text(
+                        a.body,
+                        color = OrigText,
+                        fontSize = 15.sp,
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                    )
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     Text(
                         formatTime(a.publishedAt),
-                        color = WaTextSecondary,
+                        color = OrigTimeText,
                         fontSize = 11.sp,
-                        modifier = Modifier.padding(top = 4.dp),
+                        modifier = Modifier.padding(end = 8.dp, bottom = 2.dp),
                     )
                 }
             }
@@ -340,26 +345,32 @@ private fun AyxAnnouncementBubble(a: Announcement) {
     }
 }
 
-/** User's sent message (right-aligned, green — WhatsApp style). */
+/** User sent message — ORIGINAL WhatsApp sent bubble style. */
 @Composable
-private fun AyxSentBubble(body: String, ts: Long) {
+private fun OrigSentBubble(body: String, ts: Long) {
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+        Modifier.fillMaxWidth().padding(vertical = 1.dp),
         horizontalArrangement = Arrangement.End,
     ) {
         Surface(
-            color = WaBubbleSent,
-            shape = RoundedCornerShape(12.dp, 2.dp, 12.dp, 12.dp),
-            modifier = Modifier.fillMaxWidth(0.85f),
+            color = OrigSentBubble,
+            // Original whatsapp style: RoundedCornerShape(8.dp, 8.dp, 2.dp, 8.dp)
+            shape = RoundedCornerShape(8.dp, 8.dp, 2.dp, 8.dp),
+            modifier = Modifier.widthIn(max = 290.dp),
         ) {
-            Column(Modifier.padding(start = 10.dp, end = 8.dp, top = 7.dp, bottom = 6.dp)) {
-                Text(body, color = WaText, fontSize = 15.sp, lineHeight = 20.sp)
+            Column(Modifier.padding(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    body,
+                    color = OrigText,
+                    fontSize = 15.sp,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     Text(
                         formatTime(ts),
-                        color = WaTextSecondary,
+                        color = OrigTimeText,
                         fontSize = 11.sp,
-                        modifier = Modifier.padding(top = 4.dp),
+                        modifier = Modifier.padding(end = 8.dp, bottom = 2.dp),
                     )
                 }
             }
@@ -367,34 +378,38 @@ private fun AyxSentBubble(body: String, ts: Long) {
     }
 }
 
-/** Admin's reply (received bubble from ✦ AyX). */
+/** Admin reply — ORIGINAL WhatsApp received bubble style. */
 @Composable
-private fun AyxReplyBubble(r: AdminReply) {
+private fun OrigReplyBubble(r: AdminReply) {
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+        Modifier.fillMaxWidth().padding(vertical = 1.dp),
         horizontalArrangement = Arrangement.Start,
     ) {
         Surface(
-            color = WaBubbleReceived,
-            shape = RoundedCornerShape(2.dp, 12.dp, 12.dp, 12.dp),
-            modifier = Modifier.fillMaxWidth(0.85f),
+            color = OrigRecvBubble,
+            shape = RoundedCornerShape(8.dp, 8.dp, 8.dp, 2.dp),
+            modifier = Modifier.widthIn(max = 290.dp),
         ) {
-            Column(Modifier.padding(start = 10.dp, end = 8.dp, top = 7.dp, bottom = 6.dp)) {
+            Column(Modifier.padding(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                     "✦ AyX",
-                    color = WaGreen,
+                    color = OrigGreen,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 13.sp,
-                    lineHeight = 16.sp,
+                    modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = 2.dp),
                 )
-                Spacer(Modifier.height(2.dp))
-                Text(r.body, color = WaText, fontSize = 15.sp, lineHeight = 20.sp)
+                Text(
+                    r.body,
+                    color = OrigText,
+                    fontSize = 15.sp,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     Text(
                         formatTime(r.createdAt),
-                        color = WaTextSecondary,
+                        color = OrigTimeText,
                         fontSize = 11.sp,
-                        modifier = Modifier.padding(top = 4.dp),
+                        modifier = Modifier.padding(end = 8.dp, bottom = 2.dp),
                     )
                 }
             }
