@@ -1,10 +1,5 @@
 package ayx.whatsapp.group
 
-import android.Manifest
-import android.content.pm.PackageManager
-import android.os.Build
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -20,17 +15,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.AdminPanelSettings
-import androidx.compose.material.icons.filled.OpenInNew
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,13 +30,12 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,66 +46,43 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
+import androidx.compose.ui.unit.sp
 import ayx.whatsapp.R
-import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+// WhatsApp dark-mode colors (original)
+private val WaChatBg = Color(0xFF0B141A)
+private val WaHeaderBg = Color(0xFF1F2C34)
+private val WaBubbleReceived = Color(0xFF1F2C34)
+private val WaText = Color(0xFFE9EDEF)
+private val WaTextSecondary = Color(0xFF8696A0)
+private val WaGreen = Color(0xFF00A884)
+private val WaStatusRing = Color(0xFF00A884)
+
 /**
- * The "✦ AyX updates" screen — styled like a WhatsApp chat:
- * announcements arrive as message bubbles from "✦ AyX", statuses open in the
- * full-screen WhatsApp-style viewer on tap. This is a read-only channel.
+ * "✦ AyX updates" — WhatsApp-original chat screen style.
+ * Announcements arrive as received message bubbles from "✦ AyX".
+ * Statuses show as a horizontal row of rings (like WhatsApp Status tab) —
+ * tap to open the full-screen viewer. Read-only channel, background sync.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AyxUpdatesScreen(onBack: () -> Unit, onOpenWebsite: () -> Unit) {
+fun AyxUpdatesScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
     var announcements by remember { mutableStateOf(AyxGroupSync.cachedAnnouncements(ctx)) }
     var statuses by remember { mutableStateOf(AyxGroupSync.cachedStatuses(ctx)) }
-    var lastSync by remember { mutableLongStateOf(AyxGroupStore.lastSyncAt(ctx)) }
-    var syncing by remember { mutableStateOf(false) }
     var viewerIndex by remember { mutableStateOf<Int?>(null) }
-    var showAdminSetup by remember { mutableStateOf(false) }
 
-    val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
-
+    // Background sync on open (debounced inside AyxGroupSync)
     LaunchedEffect(Unit) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) !=
-                PackageManager.PERMISSION_GRANTED
-        ) {
-            notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
-        // Initial sync
-        syncing = true
         try {
             AyxGroupSync.syncNow(ctx)
-        } catch (_: Exception) {
-            // Offline or server error: keep showing the cache.
-        } finally {
             announcements = AyxGroupSync.cachedAnnouncements(ctx)
             statuses = AyxGroupSync.cachedStatuses(ctx)
-            lastSync = AyxGroupStore.lastSyncAt(ctx)
-            syncing = false
-        }
-    }
-
-    fun doRefresh() {
-        scope.launch {
-            syncing = true
-            try {
-                AyxGroupSync.syncNow(ctx)
-            } catch (_: Exception) {
-                // Offline or server error: keep showing the cache.
-            } finally {
-                announcements = AyxGroupSync.cachedAnnouncements(ctx)
-                statuses = AyxGroupSync.cachedStatuses(ctx)
-                lastSync = AyxGroupStore.lastSyncAt(ctx)
-                syncing = false
-            }
+        } catch (_: Exception) {
+            // Offline: keep showing cache.
         }
     }
 
@@ -128,11 +95,6 @@ fun AyxUpdatesScreen(onBack: () -> Unit, onOpenWebsite: () -> Unit) {
         )
     }
 
-    // Backend admin setup dialog (one-time)
-    if (showAdminSetup) {
-        AyxAdminSetupDialog(onDismiss = { showAdminSetup = false })
-    }
-
     Scaffold(
         topBar = {
             TopAppBar(
@@ -141,210 +103,135 @@ fun AyxUpdatesScreen(onBack: () -> Unit, onOpenWebsite: () -> Unit) {
                         Image(
                             painterResource(R.drawable.ayx_updates_avatar),
                             "AyX",
-                            Modifier.size(36.dp).clip(CircleShape),
+                            Modifier.size(40.dp).clip(CircleShape),
                             contentScale = ContentScale.Crop,
                         )
-                        Spacer(Modifier.width(10.dp))
-                        Column {
-                            Text("✦ AyX updates", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
-                            Text(
-                                if (lastSync > 0L) "last synced " + relativeTime(lastSync) else "not synced yet",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            "✦ AyX updates",
+                            color = WaText,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 16.sp,
+                        )
                     }
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = WaText)
                     }
                 },
-                actions = {
-                    // Website link
-                    IconButton(onClick = onOpenWebsite) {
-                        Icon(Icons.Filled.OpenInNew, contentDescription = "Open imayx.in")
-                    }
-                    // Backend admin setup (one-time)
-                    IconButton(onClick = { showAdminSetup = true }) {
-                        Icon(Icons.Filled.AdminPanelSettings, contentDescription = "Backend admin setup")
-                    }
-                    if (syncing) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.padding(end = 14.dp).size(22.dp),
-                            strokeWidth = 2.dp,
-                        )
-                    } else {
-                        IconButton(onClick = { doRefresh() }) {
-                            Icon(Icons.Filled.Refresh, contentDescription = "Sync now")
-                        }
-                    }
-                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = WaHeaderBg),
             )
         },
+        containerColor = WaChatBg,
     ) { pad ->
-        if (announcements.isEmpty() && statuses.isEmpty()) {
-            Box(
-                Modifier.fillMaxSize().padding(pad),
-                contentAlignment = Alignment.Center,
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        "No updates yet.",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "Pull to refresh or tap the sync button.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(pad),
+            contentPadding = PaddingValues(vertical = 8.dp),
+        ) {
+            // Status rings (horizontal, like WhatsApp Status tab) — no text
+            if (statuses.isNotEmpty()) {
+                item(key = "status_row") {
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        items(statuses, key = { it.id }) { s ->
+                            val idx = statuses.indexOfFirst { it.id == s.id }
+                            Box(
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .clip(CircleShape)
+                                    .background(WaStatusRing)
+                                    .padding(3.dp)
+                                    .clip(CircleShape)
+                                    .background(WaChatBg)
+                                    .padding(2.dp)
+                                    .clip(CircleShape)
+                                    .clickable { viewerIndex = idx.coerceAtLeast(0) },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Image(
+                                    painterResource(R.drawable.ayx_updates_avatar),
+                                    "AyX status",
+                                    Modifier.fillMaxSize().clip(CircleShape),
+                                    contentScale = ContentScale.Crop,
+                                )
+                            }
+                        }
+                    }
                 }
             }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(pad),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-                reverseLayout = true, // newest at bottom, like a chat
-            ) {
-                val statusItems: List<ChatItem> = statuses.sortedBy { it.createdAt }.map { ChatItem.StatusItem(it) }
-                val annItems: List<ChatItem> = announcements.sortedBy { it.publishedAt }.map { ChatItem.AnnouncementItem(it) }
-                val ordered = (statusItems + annItems).sortedBy {
-                    when (it) {
-                        is ChatItem.StatusItem -> it.s.createdAt
-                        is ChatItem.AnnouncementItem -> it.a.publishedAt
+
+            // Announcements as WhatsApp received bubbles (newest first)
+            val sorted = announcements.sortedByDescending { it.publishedAt }
+            if (sorted.isEmpty() && statuses.isEmpty()) {
+                item(key = "empty") {
+                    Box(
+                        Modifier.fillMaxWidth().padding(32.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            "No updates yet.",
+                            color = WaTextSecondary,
+                            fontSize = 14.sp,
+                        )
                     }
                 }
-                items(ordered, key = {
-                    when (it) {
-                        is ChatItem.StatusItem -> "s:" + it.s.id
-                        is ChatItem.AnnouncementItem -> "a:" + it.a.id
-                    }
-                }) { item ->
-                    when (item) {
-                        is ChatItem.StatusItem -> {
-                            val idx = statuses.indexOfFirst { s -> s.id == item.s.id }
-                            AyxStatusBubble(item.s, onClick = { viewerIndex = idx.coerceAtLeast(0) })
-                        }
-                        is ChatItem.AnnouncementItem -> AyxAnnouncementBubble(item.a)
-                    }
+            } else {
+                items(sorted, key = { it.id }) { a ->
+                    AyxAnnouncementBubble(a)
                 }
             }
         }
     }
 }
 
-sealed class ChatItem {
-    data class StatusItem(val s: AyxStatus) : ChatItem()
-    data class AnnouncementItem(val a: Announcement) : ChatItem()
-}
-
-/** Announcement as a received chat bubble. */
+/** Announcement as a WhatsApp-original received bubble. */
 @Composable
 private fun AyxAnnouncementBubble(a: Announcement) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.Start,
+    ) {
         Surface(
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            shape = RoundedCornerShape(4.dp, 16.dp, 16.dp, 16.dp),
-            modifier = Modifier.widthIn(max = 300.dp),
+            color = WaBubbleReceived,
+            shape = RoundedCornerShape(2.dp, 12.dp, 12.dp, 12.dp),
         ) {
-            Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+            Column(Modifier.padding(start = 10.dp, end = 8.dp, top = 7.dp, bottom = 6.dp)) {
+                // Sender name (WhatsApp group style, teal)
                 Text(
                     "✦ AyX",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF00A884),
+                    color = WaGreen,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                    lineHeight = 16.sp,
                 )
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(2.dp))
                 if (a.title.isNotBlank()) {
                     Text(
                         a.title,
-                        style = MaterialTheme.typography.titleSmall,
+                        color = WaText,
                         fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
                     )
                     Spacer(Modifier.height(2.dp))
                 }
                 if (a.body.isNotBlank()) {
-                    Text(a.body, style = MaterialTheme.typography.bodyMedium)
-                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        a.body,
+                        color = WaText,
+                        fontSize = 15.sp,
+                        lineHeight = 20.sp,
+                    )
                 }
+                // Timestamp bottom-right (WhatsApp style)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     Text(
                         formatTime(a.publishedAt),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-    }
-}
-
-/** Status as a tappable chat bubble — opens the full-screen viewer. */
-@Composable
-private fun AyxStatusBubble(s: AyxStatus, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
-        Surface(
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            shape = RoundedCornerShape(4.dp, 16.dp, 16.dp, 16.dp),
-            modifier = Modifier.widthIn(max = 300.dp).clickable { onClick() },
-        ) {
-            Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    // Status ring (green, like WhatsApp unread)
-                    Box(
-                        Modifier.size(44.dp)
-                            .background(Color.Transparent)
-                            .padding(2.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surfaceVariant),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Image(
-                            painterResource(R.drawable.ayx_updates_avatar),
-                            "AyX status",
-                            Modifier.size(38.dp).clip(CircleShape),
-                            contentScale = ContentScale.Crop,
-                        )
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            "✦ AyX status",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF00A884),
-                        )
-                        Text(
-                            formatTime(s.createdAt),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-                if (!s.text.isNullOrBlank() && s.kind == "text") {
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        s.text,
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 3,
-                    )
-                }
-                if (s.kind == "image") {
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "📷 Photo status — tap to view",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                } else if (s.kind == "video") {
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "▶ Video status — tap to view",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = WaTextSecondary,
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(top = 4.dp),
                     )
                 }
             }
@@ -355,95 +242,4 @@ private fun AyxStatusBubble(s: AyxStatus, onClick: () -> Unit) {
 private fun formatTime(ts: Long): String {
     if (ts <= 0L) return ""
     return SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(ts)).lowercase(Locale.getDefault())
-}
-
-/**
- * One-time backend admin account setup. The AyX Group backend runs embedded
- * in this app (no Termux needed); this creates the admin login for the
- * web admin panel at imayx.in/admin/ayx-group/.
- */
-@Composable
-private fun AyxAdminSetupDialog(onDismiss: () -> Unit) {
-    val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var username by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var status by remember { mutableStateOf<String?>(null) }
-    var busy by remember { mutableStateOf(false) }
-    var backendAlive by remember { mutableStateOf<Boolean?>(null) }
-
-    LaunchedEffect(Unit) {
-        backendAlive = AyxBackendAdmin.backendAlive()
-        if (backendAlive == true) {
-            val exists = AyxBackendAdmin.adminExists(ctx)
-            if (exists == true) status = "Admin account already exists — you're all set."
-        }
-    }
-
-    androidx.compose.material3.AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Backend admin setup") },
-        text = {
-            Column {
-                when (backendAlive) {
-                    null -> Text("Checking backend…", style = MaterialTheme.typography.bodySmall)
-                    false -> Text(
-                        "Backend not running yet. Wait a few seconds after app start, then reopen this.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                    true -> {
-                        Text(
-                            "Creates the admin login for the web panel (imayx.in/admin/ayx-group/). One-time only.",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        androidx.compose.material3.OutlinedTextField(
-                            value = username,
-                            onValueChange = { username = it },
-                            label = { Text("Username") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        androidx.compose.material3.OutlinedTextField(
-                            value = password,
-                            onValueChange = { password = it },
-                            label = { Text("Password (min 12 chars)") },
-                            singleLine = true,
-                            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                }
-                status?.let {
-                    Spacer(Modifier.height(8.dp))
-                    Text(it, style = MaterialTheme.typography.bodySmall)
-                }
-            }
-        },
-        confirmButton = {
-            androidx.compose.material3.TextButton(
-                onClick = {
-                    if (backendAlive != true || busy) return@TextButton
-                    busy = true
-                    status = "Creating…"
-                    scope.launch {
-                        val (ok, msg) = AyxBackendAdmin.createAdmin(ctx, username.trim(), password)
-                        status = msg
-                        busy = false
-                        if (ok) {
-                            // Auto-close on success after a beat
-                            kotlinx.coroutines.delay(1200)
-                            onDismiss()
-                        }
-                    }
-                },
-                enabled = backendAlive == true && !busy,
-            ) { Text("Create admin") }
-        },
-        dismissButton = {
-            androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Close") }
-        },
-    )
 }
