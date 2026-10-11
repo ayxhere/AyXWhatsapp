@@ -11,7 +11,7 @@ import java.net.URL
 
 /**
  * One-time admin account bootstrap for the embedded AyX Group backend.
- * Talks to 127.0.0.1:3101/v1/local/* — guarded by the per-device LOCAL_OP_TOKEN.
+ * Talks to 127.0.0.1:3101/v1/local endpoints — guarded by the per-device LOCAL_OP_TOKEN.
  */
 object AyxBackendAdmin {
     private const val TAG = "AyxBackendAdmin"
