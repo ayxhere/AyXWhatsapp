@@ -2420,6 +2420,7 @@ private fun SettingsHome(status: GatewayClient.Status, onOpen: (String) -> Unit)
         CategoryCard(Icons.Filled.Palette, CAT_APPEARANCE, "Appearance", "Theme and accent color") { onOpen("appearance") }
         CategoryCard(Icons.Filled.Info, CAT_ABOUT, "About", "App information and reset") { onOpen("about") }
         CategoryCard(Icons.Filled.Favorite, CAT_SUPPORT, "Support Development", "Donate via UPI or crypto to support AyX") { onOpen("support") }
+        CategoryCard(Icons.Filled.Star, Color(0xFF7C3AED), "AyX updates", "Official announcements from AyX") { onOpen("ayx_updates") }
         Spacer(Modifier.height(16.dp))
     }
 }
