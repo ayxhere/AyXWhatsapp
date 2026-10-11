@@ -160,13 +160,17 @@ object AyxGroupSync {
     /**
      * Bitmap for an image status: served from the app-private media cache, else
      * downloaded with the installation Bearer token (25MB per-file cap, 25MB
-     * total cache cap with oldest-first eviction). Only https://api.imayx.in URLs
-     * are ever fetched.
+     * total cache cap with oldest-first eviction). Media URLs from the backend
+     * use the public base; rewritten to the local embedded backend for direct
+     * access (no tunnel needed).
      */
     suspend fun statusImageBitmap(ctx: Context, status: AyxStatus): ImageBitmap? =
         withContext(Dispatchers.IO) {
-            val url = status.mediaUrl?.takeIf { it.startsWith("https://api.imayx.in/") }
-                ?: return@withContext null
+            val rawUrl = status.mediaUrl?.takeIf {
+                it.startsWith("https://api.imayx.in/") || it.startsWith("http://127.0.0.1:3101/")
+            } ?: return@withContext null
+            // Rewrite public URL to local embedded backend
+            val url = rawUrl.replace("https://api.imayx.in/", "http://127.0.0.1:3101/")
             if (status.kind != "image") return@withContext null
             val file = mediaFile(ctx, status.id)
             if (!file.exists()) {
