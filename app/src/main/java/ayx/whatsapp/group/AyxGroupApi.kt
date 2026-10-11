@@ -24,8 +24,12 @@ class InstallationRevokedException : Exception("installation revoked by server")
  *   encrypted store (see AyxGroupStore).
  */
 object AyxGroupApi {
-    /** Public base URL — NOT a secret. */
-    const val BASE_URL = "https://api.imayx.in"
+    /**
+     * Direct connection to the embedded backend (runs inside this app on :3101).
+     * No tunnel, no internet needed — the app talks to its own backend.
+     * The web admin panel still uses https://api.imayx.in via the tunnel.
+     */
+    const val BASE_URL = "http://127.0.0.1:3101"
 
     private const val CONNECT_TIMEOUT_MS = 15_000
     private const val READ_TIMEOUT_MS = 15_000
