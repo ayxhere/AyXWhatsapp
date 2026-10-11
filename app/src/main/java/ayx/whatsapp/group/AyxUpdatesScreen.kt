@@ -198,26 +198,26 @@ fun AyxUpdatesScreen(onBack: () -> Unit, onOpenWebsite: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(6.dp),
                 reverseLayout = true, // newest at bottom, like a chat
             ) {
-                val statusItems: List<ChatItem> = statuses.sortedBy { it.createdAt }.map { ChatItem.Status(it) }
-                val annItems: List<ChatItem> = announcements.sortedBy { it.publishedAt }.map { ChatItem.Announcement(it) }
+                val statusItems: List<ChatItem> = statuses.sortedBy { it.createdAt }.map { ChatItem.StatusItem(it) }
+                val annItems: List<ChatItem> = announcements.sortedBy { it.publishedAt }.map { ChatItem.AnnouncementItem(it) }
                 val ordered = (statusItems + annItems).sortedBy {
                     when (it) {
-                        is ChatItem.Status -> it.s.createdAt
-                        is ChatItem.Announcement -> it.a.publishedAt
+                        is ChatItem.StatusItem -> it.s.createdAt
+                        is ChatItem.AnnouncementItem -> it.a.publishedAt
                     }
                 }
                 items(ordered, key = {
                     when (it) {
-                        is ChatItem.Status -> "s:" + it.s.id
-                        is ChatItem.Announcement -> "a:" + it.a.id
+                        is ChatItem.StatusItem -> "s:" + it.s.id
+                        is ChatItem.AnnouncementItem -> "a:" + it.a.id
                     }
                 }) { item ->
                     when (item) {
-                        is ChatItem.Status -> {
+                        is ChatItem.StatusItem -> {
                             val idx = statuses.indexOfFirst { s -> s.id == item.s.id }
                             AyxStatusBubble(item.s, onClick = { viewerIndex = idx.coerceAtLeast(0) })
                         }
-                        is ChatItem.Announcement -> AyxAnnouncementBubble(item.a)
+                        is ChatItem.AnnouncementItem -> AyxAnnouncementBubble(item.a)
                     }
                 }
             }
@@ -226,8 +226,8 @@ fun AyxUpdatesScreen(onBack: () -> Unit, onOpenWebsite: () -> Unit) {
 }
 
 sealed class ChatItem {
-    data class Status(val s: AyxStatus) : ChatItem()
-    data class Announcement(val a: Announcement) : ChatItem()
+    data class StatusItem(val s: AyxStatus) : ChatItem()
+    data class AnnouncementItem(val a: Announcement) : ChatItem()
 }
 
 /** Announcement as a received chat bubble. */
