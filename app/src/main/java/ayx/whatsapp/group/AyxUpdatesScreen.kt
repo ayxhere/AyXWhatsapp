@@ -198,7 +198,6 @@ fun AyxUpdatesScreen(onBack: () -> Unit, onOpenWebsite: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(6.dp),
                 reverseLayout = true, // newest at bottom, like a chat
             ) {
-                // Statuses first (older), then announcements — chronological chat order
                 val statusItems: List<ChatItem> = statuses.sortedBy { it.createdAt }.map { ChatItem.Status(it) }
                 val annItems: List<ChatItem> = announcements.sortedBy { it.publishedAt }.map { ChatItem.Announcement(it) }
                 val ordered = (statusItems + annItems).sortedBy {
@@ -226,7 +225,7 @@ fun AyxUpdatesScreen(onBack: () -> Unit, onOpenWebsite: () -> Unit) {
     }
 }
 
-private sealed class ChatItem {
+sealed class ChatItem {
     data class Status(val s: AyxStatus) : ChatItem()
     data class Announcement(val a: Announcement) : ChatItem()
 }
