@@ -1308,7 +1308,7 @@ fun GatewayApp() {
         Box(Modifier.fillMaxSize().consumeWindowInsets(pad)) {
             when {
                 // AyX Group system channel — independent of WhatsApp link state.
-                showAyxUpdates -> Box(Modifier.padding(pad)) { AyxUpdatesScreen(onBack = { showAyxUpdates = false }, onOpenWebsite = { openUrl(ctx, "https://imayx.in") }) }
+                showAyxUpdates -> Box(Modifier.padding(pad)) { AyxUpdatesScreen(onBack = { showAyxUpdates = false }) }
                 !status.registered -> Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode,
                     onPair = { n -> scope.launch { try { notify("code: " + GatewayClient.pair(n)) } catch (e: Exception) { notify("pair error: ${e.message}") } } },
                     onReset = { scope.launch { GatewayClient.logout(); SessionBackup.delete(ctx); notify("reset") } }) }
