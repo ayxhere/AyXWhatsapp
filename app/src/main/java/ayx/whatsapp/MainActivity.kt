@@ -124,7 +124,6 @@ import androidx.compose.ui.res.painterResource
 import ayx.whatsapp.group.AyxGroupSync
 import ayx.whatsapp.group.AyxUpdatesScreen
 import ayx.whatsapp.group.AyxUpdatesWorker
-import ayx.whatsapp.ui.PremiumSplashScreen
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Notifications
@@ -334,7 +333,7 @@ class MainActivity : ComponentActivity() {
                         else GatewayApp()
                     }
                     var splashDone by remember { mutableStateOf(false) }
-                    if (!splashDone) PremiumSplashScreen { splashDone = true }
+                    if (!splashDone) SplashScreen(dark) { splashDone = true }
                 }
             }
         }
