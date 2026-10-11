@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -31,7 +30,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -65,7 +63,6 @@ private val GlassHeader = Color(0xFF000000).copy(alpha = 0.72f)
 private val LightText = Color(0xFFE9EDEF)
 private val SubtleText = Color(0xFF8696A0)
 private val AccentGreen = Color(0xFF00A884)
-private val ComposerOutline = Color(0xFF8E8E93).copy(alpha = 0.6f)
 
 private sealed class ChatItem {
     abstract val ts: Long
@@ -251,14 +248,6 @@ fun AyxUpdatesScreen(onBack: () -> Unit) {
                     placeholder = { Text("Message", color = SubtleText, fontSize = 15.sp) },
                     shape = RoundedCornerShape(24.dp), maxLines = 4,
                     modifier = Modifier.weight(1f),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = Color.Transparent,
-                        unfocusedContainerColor = Color.Transparent,
-                        focusedBorderColor = ComposerOutline,
-                        unfocusedBorderColor = ComposerOutline.copy(alpha = 0.7f),
-                        focusedTextColor = LightText, unfocusedTextColor = LightText,
-                        cursorColor = AccentGreen,
-                    ),
                 )
                 val canSend = inputText.trim().isNotEmpty() && !sending
                 IconButton(
