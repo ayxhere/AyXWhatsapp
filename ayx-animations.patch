@@ -1,0 +1,44 @@
+--- a/app/src/main/java/ayx/whatsapp/MainActivity.kt
++++ b/app/src/main/java/ayx/whatsapp/MainActivity.kt
+@@ -125,6 +125,7 @@
+ import ayx.whatsapp.group.AyxUpdatesScreen
+ import ayx.whatsapp.group.AyxUpdatesWorker
+ import ayx.whatsapp.ui.PremiumSplashScreen
++import ayx.whatsapp.ui.AnimatedPage
+ import androidx.compose.material.icons.filled.Lock
+ import androidx.compose.material.icons.filled.LockOpen
+ import androidx.compose.material.icons.filled.Notifications
+@@ -1313,7 +1314,7 @@
+                 !status.registered -> Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode,
+                     onPair = { n -> scope.launch { try { notify("code: " + GatewayClient.pair(n)) } catch (e: Exception) { notify("pair error: ${e.message}") } } },
+                     onReset = { scope.launch { GatewayClient.logout(); SessionBackup.delete(ctx); notify("reset") } }) }
+-                screen == "settings" -> Box(Modifier.padding(pad)) { SettingsScreen(status, settings, page = settingsPage, onPage = { if (it == "ayx_updates") showAyxUpdates = true else settingsPage = it }, wallpaperVersion = wallpaperVersion,
++                screen == "settings" -> Box(Modifier.padding(pad)) { AnimatedPage { SettingsScreen(status, settings, page = settingsPage, onPage = { if (it == "ayx_updates") showAyxUpdates = true else settingsPage = it }, wallpaperVersion = wallpaperVersion,
+                     onToggle = { patch -> scope.launch { settings = GatewayClient.patchSettings(patch) } },
+                     onRules = { r -> scope.launch { settings = GatewayClient.setRules(r) } },
+                     onLogout = { scope.launch { GatewayClient.logout(); SessionBackup.delete(ctx); notify("logged out") } }, ctx = ctx,
+@@ -1322,13 +1323,13 @@
+                     onPickPhoto = { profilePicPicker.launch("image/*") },
+                     onSaveName = { n -> scope.launch { runCatching { GatewayClient.setProfileName(n) }.onSuccess { notify("name updated") }.onFailure { notify("name: ${it.message}") } } },
+                     dpCache = dpCache,
+-                    messages = messages) }
++                    messages = messages) } }
+                 screen == "newchat" -> Box(Modifier.padding(pad)) { NewChatScreen(deviceContacts, contactsLoading, dpCache,
+                     onPickNumber = { num -> openChat = num + "@s.whatsapp.net"; screen = "chats" }) }
+                 screen == "profile" -> Box(Modifier.padding(pad)) { ProfileScreen(myJid, dpCache,
+                     onPickPhoto = { profilePicPicker.launch("image/*") },
+                     onSaveName = { n -> scope.launch { runCatching { GatewayClient.setProfileName(n) }.onSuccess { notify("name updated") }.onFailure { notify("name: ${it.message}") } } }) }
+-                else -> ChatsWithStatus(messages, statuses, dpCache, searchQuery, chatsPage, topInset = pad.calculateTopPadding(),
++                else -> AnimatedPage { ChatsWithStatus(messages, statuses, dpCache, searchQuery, chatsPage, topInset = pad.calculateTopPadding(),
+                     ayxSnippet = ayxSnippet,
+                     onOpenAyxUpdates = { showAyxUpdates = true },
+                     onPageChange = { chatsPage = it },
+@@ -1365,7 +1366,7 @@
+                                 unlockLauncher.launch(km.createConfirmDeviceCredentialIntent("Unlock chat", "Verify to open this chat"))
+                             } else openChat = jid
+                         } else openChat = jid
+-                    })
++                    }) }
+             }
+         }
+         }
