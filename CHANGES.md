@@ -147,3 +147,11 @@ delivery is polling + local notifications — see "Deliberate deviations").
    enforcement (revocation, blocking) stays server-side. The channel cannot
    be muted/blocked/hidden from inside the app by design (product decision
    recorded per the owner's request).
+
+## Fix 2026-10-11 (build #124)
+- `AyxGroupStore.kt`: `MasterKey` (singular) does not exist in
+  `androidx.security:security-crypto:1.0.0` — verified against the published
+  AAR, which ships only `MasterKeys` (plural). Switched to the 1.0.0 API:
+  `MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)` + the
+  `create(fileName, masterKeyAlias, context, …)` overload. Same AES-256
+  security properties, no behavior change.

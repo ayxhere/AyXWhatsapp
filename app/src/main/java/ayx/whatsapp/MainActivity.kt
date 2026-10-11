@@ -1308,7 +1308,7 @@ fun GatewayApp() {
         Box(Modifier.fillMaxSize().consumeWindowInsets(pad)) {
             when {
                 // AyX Group system channel — independent of WhatsApp link state.
-                showAyxUpdates -> Box(Modifier.padding(pad)) { AyxUpdatesScreen(onBack = { showAyxUpdates = false }) }
+                showAyxUpdates -> Box(Modifier.padding(pad)) { AyxUpdatesScreen(onBack = { showAyxUpdates = false }, onOpenWebsite = { openUrl(ctx, "https://imayx.in") }) }
                 !status.registered -> Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode,
                     onPair = { n -> scope.launch { try { notify("code: " + GatewayClient.pair(n)) } catch (e: Exception) { notify("pair error: ${e.message}") } } },
                     onReset = { scope.launch { GatewayClient.logout(); SessionBackup.delete(ctx); notify("reset") } }) }
@@ -1513,13 +1513,20 @@ private fun chatTitleOf(messages: List<GatewayClient.Msg>, jid: String): String 
 
 @Composable
 internal fun Avatar(jid: String, name: String, cache: MutableMap<String, ImageBitmap?>, size: androidx.compose.ui.unit.Dp, shape: Shape = CircleShape) {
-    LaunchedEffect(jid) {
-        if (!cache.containsKey(jid)) {
-            val b = GatewayClient.dpBytes(jid)
-            cache[jid] = b?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }
+    // Normalize: strip device suffix (e.g. "123:45@s.whatsapp.net" -> "123@s.whatsapp.net")
+    // which the gateway's /dp endpoint may not handle.
+    val normJid = jid.substringBefore(":").let { base ->
+        val atIdx = jid.indexOf("@")
+        if (atIdx > 0 && jid.contains(":")) base + jid.substring(atIdx) else jid
+    }
+    LaunchedEffect(normJid) {
+        if (!cache.containsKey(normJid)) {
+            val b = GatewayClient.dpBytes(normJid)
+                ?: jid.takeIf { it != normJid }?.let { GatewayClient.dpBytes(it) }
+            cache[normJid] = b?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }
         }
     }
-    val dp = cache[jid]
+    val dp = cache[normJid]
     Box(Modifier.size(size).background(MaterialTheme.colorScheme.primaryContainer, shape), contentAlignment = Alignment.Center) {
         if (dp != null) Image(dp, "dp", Modifier.size(size).clip(shape), contentScale = ContentScale.Crop)
         else Text(name.take(1).uppercase(), style = MaterialTheme.typography.titleMedium)
@@ -1604,8 +1611,6 @@ private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<Stri
                         Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                             Text("✦ AyX updates", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, false))
-                            Spacer(Modifier.width(5.dp))
-                            Icon(Icons.Filled.PushPin, "pinned", modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Text("", style = MaterialTheme.typography.labelSmall)
                     }
@@ -3503,7 +3508,6 @@ private fun StatusScreen(statuses: List<GatewayClient.StatusItem>, contentPad: a
                     Text("Official updates from AyX", style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                Icon(Icons.Filled.Lock, "locked", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
             }
             HorizontalDivider()
         }
