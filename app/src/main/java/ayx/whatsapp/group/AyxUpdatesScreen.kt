@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -25,16 +24,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -61,15 +59,13 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-// Original WhatsApp dark colors (from MainActivity bubbleSpec "whatsapp" style)
-private val OrigSentBubble = Color(0xFF005C4B)
-private val OrigRecvBubble = Color(0xFF202C33)
-private val OrigText = Color.White
-private val OrigHeaderBg = Color(0xFF1F2C34)
-private val OrigGreen = Color(0xFF00A884)
-private val OrigTimeText = Color(0xFF8696A0)
+private val CharcoalBubble = Color(0xFF1C1C1E).copy(alpha = 0.92f)
+private val GlassHeader = Color(0xFF000000).copy(alpha = 0.72f)
+private val LightText = Color(0xFFE9EDEF)
+private val SubtleText = Color(0xFF8696A0)
+private val AccentGreen = Color(0xFF00A884)
+private val ComposerOutline = Color(0xFF8E8E93).copy(alpha = 0.6f)
 
-/** Unified chat item: announcement, user message, or admin reply. */
 private sealed class ChatItem {
     abstract val ts: Long
     data class AnnouncementItem(val a: Announcement) : ChatItem() {
@@ -83,13 +79,6 @@ private sealed class ChatItem {
     }
 }
 
-/**
- * "✦ AyX updates" — uses the ORIGINAL WhatsApp chat screen style:
- * wallpaper background, original bubble colors/shapes, original input bar.
- * Announcements + admin replies = received bubbles from "✦ AyX".
- * User messages = sent bubbles (green, right). Input bar at bottom
- * for direct messaging to AyX.
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AyxUpdatesScreen(onBack: () -> Unit) {
@@ -102,7 +91,6 @@ fun AyxUpdatesScreen(onBack: () -> Unit) {
     var inputText by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
 
-    // Load wallpaper like the original chat screen
     var wallpaper by remember { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(Unit) {
         val f = File(ctx.filesDir, "wallpaper.jpg")
@@ -113,19 +101,14 @@ fun AyxUpdatesScreen(onBack: () -> Unit) {
         } else null
     }
 
-    // Background sync on open
     LaunchedEffect(Unit) {
         try {
             AyxGroupSync.syncNow(ctx)
             announcements = AyxGroupSync.cachedAnnouncements(ctx)
             statuses = AyxGroupSync.cachedStatuses(ctx)
             val token = AyxGroupStore.accessToken(ctx)
-            if (token != null) {
-                userMessages = AyxGroupApi.myMessages(token)
-            }
-        } catch (_: Exception) {
-            // Offline: keep showing cache.
-        }
+            if (token != null) userMessages = AyxGroupApi.myMessages(token)
+        } catch (_: Exception) { }
     }
 
     fun doSend() {
@@ -138,20 +121,13 @@ fun AyxUpdatesScreen(onBack: () -> Unit) {
                 AyxGroupApi.sendMessage(token, text, "other")
                 inputText = ""
                 userMessages = AyxGroupApi.myMessages(token)
-            } catch (_: Exception) {
-                // Keep text for retry
-            } finally {
-                sending = false
-            }
+            } catch (_: Exception) { }
+            finally { sending = false }
         }
     }
 
     viewerIndex?.let { idx ->
-        AyxStatusViewer(
-            statuses = statuses,
-            startIndex = idx,
-            onClose = { viewerIndex = null },
-        )
+        AyxStatusViewer(statuses = statuses, startIndex = idx, onClose = { viewerIndex = null })
     }
 
     val chatItems: List<ChatItem> = remember(announcements, userMessages) {
@@ -164,77 +140,68 @@ fun AyxUpdatesScreen(onBack: () -> Unit) {
         list.sortedBy { it.ts }
     }
 
-    // Original style: Box with wallpaper, NOT Scaffold with solid color
     Box(Modifier.fillMaxSize()) {
-        // Wallpaper background (like original chat)
         wallpaper?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
             ?: Box(Modifier.fillMaxSize().background(Color(0xFF0B141A)))
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.18f)))
 
         Column(Modifier.fillMaxSize()) {
-            // Header (original style)
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Image(
-                            painterResource(R.drawable.ayx_updates_avatar),
-                            "AyX",
-                            Modifier.size(40.dp).clip(CircleShape),
-                            contentScale = ContentScale.Crop,
-                        )
-                        Spacer(Modifier.width(12.dp))
-                        Text(
-                            "✦ AyX updates",
-                            color = OrigText,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 16.sp,
-                        )
+            Surface(
+                color = GlassHeader,
+                shape = RoundedCornerShape(bottomStart = 20.dp, bottomEnd = 20.dp),
+                modifier = Modifier.fillMaxWidth(),
+                shadowElevation = 4.dp,
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = LightText)
                     }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = OrigText)
+                    Image(
+                        painterResource(R.drawable.ayx_updates_avatar), "AyX",
+                        Modifier.size(42.dp).clip(CircleShape), contentScale = ContentScale.Crop,
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        "✦ AyX updates", color = LightText,
+                        fontWeight = FontWeight.SemiBold, fontSize = 17.sp,
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconButton(onClick = { }, modifier = Modifier.size(40.dp)) {
+                        Icon(Icons.Filled.MoreVert, "More", tint = LightText)
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = OrigHeaderBg),
-            )
+                }
+            }
 
-            // Status rings (if any)
             if (statuses.isNotEmpty()) {
                 LazyRow(
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     items(statuses, key = { it.id }) { s ->
                         val idx = statuses.indexOfFirst { it.id == s.id }
                         Box(
-                            modifier = Modifier
-                                .size(64.dp)
-                                .clip(CircleShape)
-                                .background(OrigGreen)
-                                .padding(3.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFF0B141A))
-                                .padding(2.dp)
-                                .clip(CircleShape)
-                                .clickable { viewerIndex = idx.coerceAtLeast(0) },
+                            modifier = Modifier.size(62.dp).clip(CircleShape)
+                                .background(AccentGreen).padding(2.5.dp).clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.5f)).padding(2.dp)
+                                .clip(CircleShape).clickable { viewerIndex = idx.coerceAtLeast(0) },
                             contentAlignment = Alignment.Center,
                         ) {
                             Image(
-                                painterResource(R.drawable.ayx_updates_avatar),
-                                "AyX status",
-                                Modifier.fillMaxSize().clip(CircleShape),
-                                contentScale = ContentScale.Crop,
+                                painterResource(R.drawable.ayx_updates_avatar), "AyX status",
+                                Modifier.fillMaxSize().clip(CircleShape), contentScale = ContentScale.Crop,
                             )
                         }
                     }
                 }
             }
 
-            // Messages (original: LazyColumn reverseLayout, 8dp horizontal padding, 3dp spacing)
             LazyColumn(
-                modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp),
-                contentPadding = PaddingValues(top = 6.dp, bottom = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(3.dp),
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
                 reverseLayout = true,
             ) {
                 if (chatItems.isEmpty()) {
@@ -242,8 +209,7 @@ fun AyxUpdatesScreen(onBack: () -> Unit) {
                         Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
                             Text(
                                 "No updates yet. Send a message below to contact AyX.",
-                                color = OrigTimeText,
-                                fontSize = 14.sp,
+                                color = SubtleText, fontSize = 14.sp,
                             )
                         }
                     }
@@ -256,89 +222,52 @@ fun AyxUpdatesScreen(onBack: () -> Unit) {
                         }
                     }) { item ->
                         when (item) {
-                            is ChatItem.AnnouncementItem -> OrigAnnouncementBubble(item.a)
-                            is ChatItem.UserMsgItem -> OrigSentBubble(item.m.body, item.m.createdAt)
-                            is ChatItem.ReplyItem -> OrigReplyBubble(item.r)
+                            is ChatItem.AnnouncementItem -> CharcoalIncomingBubble(
+                                "✦ AyX", item.a.title, item.a.body, item.a.publishedAt,
+                            )
+                            is ChatItem.UserMsgItem -> CharcoalOutgoingBubble(item.m.body, item.m.createdAt)
+                            is ChatItem.ReplyItem -> CharcoalIncomingBubble(
+                                "✦ AyX", "", item.r.body, item.r.createdAt,
+                            )
                         }
                     }
                 }
             }
 
-            // Input bar (ORIGINAL style: attach, camera, text field, send button)
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+                Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                IconButton(onClick = { /* attach - not needed for AyX chat */ }) {
-                    Icon(Icons.Filled.AttachFile, "attach", tint = OrigTimeText)
+                IconButton(onClick = { }, modifier = Modifier.size(42.dp)) {
+                    Icon(Icons.Filled.AttachFile, "Attach", tint = LightText.copy(alpha = 0.9f))
                 }
-                IconButton(onClick = { /* camera - not needed for AyX chat */ }) {
-                    Icon(Icons.Filled.PhotoCamera, "camera", tint = OrigTimeText)
+                IconButton(onClick = { }, modifier = Modifier.size(42.dp)) {
+                    Icon(Icons.Filled.PhotoCamera, "Camera", tint = LightText.copy(alpha = 0.9f))
                 }
                 OutlinedTextField(
-                    value = inputText,
-                    onValueChange = { inputText = it },
-                    placeholder = { Text("Message", color = OrigTimeText) },
-                    shape = RoundedCornerShape(24.dp),
-                    maxLines = 4,
+                    value = inputText, onValueChange = { inputText = it },
+                    placeholder = { Text("Message", color = SubtleText, fontSize = 15.sp) },
+                    shape = RoundedCornerShape(24.dp), maxLines = 4,
                     modifier = Modifier.weight(1f),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = Color.Transparent,
+                        unfocusedContainerColor = Color.Transparent,
+                        focusedBorderColor = ComposerOutline,
+                        unfocusedBorderColor = ComposerOutline.copy(alpha = 0.7f),
+                        focusedTextColor = LightText, unfocusedTextColor = LightText,
+                        cursorColor = AccentGreen,
+                    ),
                 )
-                FilledIconButton(
-                    onClick = { doSend() },
-                    enabled = inputText.isNotBlank() && !sending,
+                val canSend = inputText.trim().isNotEmpty() && !sending
+                IconButton(
+                    onClick = { doSend() }, enabled = canSend,
+                    modifier = Modifier.size(46.dp).clip(CircleShape)
+                        .background(if (canSend) Color(0xFF2C2C2E).copy(alpha = 0.92f) else Color.Transparent),
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, "send")
-                }
-            }
-        }
-    }
-}
-
-/** Announcement — ORIGINAL WhatsApp received bubble style. */
-@Composable
-private fun OrigAnnouncementBubble(a: Announcement) {
-    Row(
-        Modifier.fillMaxWidth().padding(vertical = 1.dp),
-        horizontalArrangement = Arrangement.Start,
-    ) {
-        Surface(
-            color = OrigRecvBubble,
-            // Original whatsapp style: RoundedCornerShape(8.dp, 8.dp, 8.dp, 2.dp)
-            shape = RoundedCornerShape(8.dp, 8.dp, 8.dp, 2.dp),
-            modifier = Modifier.widthIn(max = 290.dp),
-        ) {
-            Column(Modifier.padding(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    "✦ AyX",
-                    color = OrigGreen,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 13.sp,
-                    modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = 2.dp),
-                )
-                if (a.title.isNotBlank()) {
-                    Text(
-                        a.title,
-                        color = OrigText,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        modifier = Modifier.padding(horizontal = 8.dp),
-                    )
-                }
-                if (a.body.isNotBlank()) {
-                    Text(
-                        a.body,
-                        color = OrigText,
-                        fontSize = 15.sp,
-                        modifier = Modifier.padding(horizontal = 8.dp),
-                    )
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    Text(
-                        formatTime(a.publishedAt),
-                        color = OrigTimeText,
-                        fontSize = 11.sp,
-                        modifier = Modifier.padding(end = 8.dp, bottom = 2.dp),
+                    Icon(
+                        Icons.AutoMirrored.Filled.Send, "Send",
+                        tint = if (canSend) LightText else SubtleText,
                     )
                 }
             }
@@ -346,72 +275,44 @@ private fun OrigAnnouncementBubble(a: Announcement) {
     }
 }
 
-/** User sent message — ORIGINAL WhatsApp sent bubble style. */
 @Composable
-private fun OrigSentBubble(body: String, ts: Long) {
-    Row(
-        Modifier.fillMaxWidth().padding(vertical = 1.dp),
-        horizontalArrangement = Arrangement.End,
-    ) {
+private fun CharcoalIncomingBubble(sender: String, title: String, body: String, ts: Long) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.Start) {
         Surface(
-            color = OrigSentBubble,
-            // Original whatsapp style: RoundedCornerShape(8.dp, 8.dp, 2.dp, 8.dp)
-            shape = RoundedCornerShape(8.dp, 8.dp, 2.dp, 8.dp),
-            modifier = Modifier.widthIn(max = 290.dp),
+            color = CharcoalBubble,
+            shape = RoundedCornerShape(18.dp, 18.dp, 18.dp, 6.dp),
+            modifier = Modifier.widthIn(max = 300.dp), shadowElevation = 1.dp,
         ) {
-            Column(Modifier.padding(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    body,
-                    color = OrigText,
-                    fontSize = 15.sp,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                )
+            Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                Text(sender, color = AccentGreen, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                Spacer(Modifier.height(2.dp))
+                if (title.isNotBlank()) {
+                    Text(title, color = LightText, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Spacer(Modifier.height(2.dp))
+                }
+                if (body.isNotBlank()) {
+                    Text(body, color = LightText, fontSize = 15.sp, lineHeight = 20.sp)
+                }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    Text(
-                        formatTime(ts),
-                        color = OrigTimeText,
-                        fontSize = 11.sp,
-                        modifier = Modifier.padding(end = 8.dp, bottom = 2.dp),
-                    )
+                    Text(formatTime(ts), color = SubtleText, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
                 }
             }
         }
     }
 }
 
-/** Admin reply — ORIGINAL WhatsApp received bubble style. */
 @Composable
-private fun OrigReplyBubble(r: AdminReply) {
-    Row(
-        Modifier.fillMaxWidth().padding(vertical = 1.dp),
-        horizontalArrangement = Arrangement.Start,
-    ) {
+private fun CharcoalOutgoingBubble(body: String, ts: Long) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.End) {
         Surface(
-            color = OrigRecvBubble,
-            shape = RoundedCornerShape(8.dp, 8.dp, 8.dp, 2.dp),
-            modifier = Modifier.widthIn(max = 290.dp),
+            color = CharcoalBubble,
+            shape = RoundedCornerShape(18.dp, 18.dp, 6.dp, 18.dp),
+            modifier = Modifier.widthIn(max = 300.dp), shadowElevation = 1.dp,
         ) {
-            Column(Modifier.padding(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    "✦ AyX",
-                    color = OrigGreen,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 13.sp,
-                    modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = 2.dp),
-                )
-                Text(
-                    r.body,
-                    color = OrigText,
-                    fontSize = 15.sp,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                )
+            Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                Text(body, color = LightText, fontSize = 15.sp, lineHeight = 20.sp)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    Text(
-                        formatTime(r.createdAt),
-                        color = OrigTimeText,
-                        fontSize = 11.sp,
-                        modifier = Modifier.padding(end = 8.dp, bottom = 2.dp),
-                    )
+                    Text(formatTime(ts), color = SubtleText, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
                 }
             }
         }
