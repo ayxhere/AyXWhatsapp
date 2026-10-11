@@ -107,3 +107,52 @@ fun relativeTime(ts: Long, now: Long = System.currentTimeMillis()): String {
         else -> SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(ts))
     }
 }
+
+/** A private message from this user to the admin (with admin replies). */
+data class UserMessage(
+    val id: String,
+    val body: String,
+    val kind: String, // feedback | bug | other
+    val status: String, // pending | read | replied | archived
+    val createdAt: Long, // epoch millis
+    val replies: List<AdminReply>,
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("id", id)
+        .put("body", body)
+        .put("kind", kind)
+        .put("status", status)
+        .put("created_at", createdAt)
+
+    companion object {
+        fun fromJson(o: JSONObject): UserMessage {
+            val repliesArr = o.optJSONArray("replies")
+            val replies = if (repliesArr != null) {
+                (0 until repliesArr.length()).map { AdminReply.fromJson(repliesArr.getJSONObject(it)) }
+            } else emptyList()
+            return UserMessage(
+                id = o.optString("id"),
+                body = o.optString("body"),
+                kind = o.optString("kind", "other"),
+                status = o.optString("status", "pending"),
+                createdAt = parseIso8601(o.optString("created_at")),
+                replies = replies,
+            )
+        }
+    }
+}
+
+/** An admin's reply to a user message. */
+data class AdminReply(
+    val id: String,
+    val body: String,
+    val createdAt: Long,
+) {
+    companion object {
+        fun fromJson(o: JSONObject): AdminReply = AdminReply(
+            id = o.optString("id"),
+            body = o.optString("body"),
+            createdAt = parseIso8601(o.optString("created_at")),
+        )
+    }
+}
