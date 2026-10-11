@@ -1,0 +1,67 @@
+--- /tmp/MainActivity_orig.kt	2026-10-11 18:53:07.296362485 +0530
++++ /tmp/MainActivity.kt	2026-10-11 18:53:00.631362511 +0530
+@@ -1312,7 +1312,7 @@
+                 !status.registered -> Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode,
+                     onPair = { n -> scope.launch { try { notify("code: " + GatewayClient.pair(n)) } catch (e: Exception) { notify("pair error: ${e.message}") } } },
+                     onReset = { scope.launch { GatewayClient.logout(); SessionBackup.delete(ctx); notify("reset") } }) }
+-                screen == "settings" -> Box(Modifier.padding(pad)) { SettingsScreen(status, settings, page = settingsPage, onPage = { settingsPage = it }, wallpaperVersion = wallpaperVersion,
++                screen == "settings" -> Box(Modifier.padding(pad)) { SettingsScreen(status, settings, page = settingsPage, onPage = { if (it == "ayx_updates") showAyxUpdates = true else settingsPage = it }, wallpaperVersion = wallpaperVersion,
+                     onToggle = { patch -> scope.launch { settings = GatewayClient.patchSettings(patch) } },
+                     onRules = { r -> scope.launch { settings = GatewayClient.setRules(r) } },
+                     onLogout = { scope.launch { GatewayClient.logout(); SessionBackup.delete(ctx); notify("logged out") } }, ctx = ctx,
+@@ -1597,29 +1597,6 @@
+     val blurDp by animateDpAsState(if (menuChat != null || mutePick != null) 18.dp else 0.dp, label = "homeblur")
+ 
+     LazyColumn(Modifier.fillMaxSize().blur(blurDp), contentPadding = contentPad) {
+-        // AyX Group system channel — always pinned at the very top. This is NOT a
+-        // chat: tap opens the updates screen. There is deliberately NO long-press
+-        // menu (no mute / block / hide / delete) and no ChatFlags interaction.
+-        item(key = "ayx_updates") {
+-            Row(Modifier.fillMaxWidth().clickable { onOpenAyxUpdates() }.padding(horizontal = 14.dp, vertical = 12.dp),
+-                verticalAlignment = Alignment.CenterVertically) {
+-                Image(painterResource(R.drawable.ayx_updates_avatar), "AyX updates",
+-                    Modifier.size(50.dp).clip(CircleShape), contentScale = ContentScale.Crop)
+-                Spacer(Modifier.width(12.dp))
+-                Column(Modifier.weight(1f)) {
+-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+-                        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+-                            Text("✦ AyX updates", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold,
+-                                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, false))
+-                        }
+-                        Text("", style = MaterialTheme.typography.labelSmall)
+-                    }
+-                    Text(ayxSnippet, style = MaterialTheme.typography.bodySmall,
+-                        maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+-                }
+-            }
+-            HorizontalDivider()
+-        }
+         if (groups.isEmpty() && hiddenCount == 0) {
+             item {
+                 Box(Modifier.fillMaxWidth().padding(top = 48.dp), contentAlignment = Alignment.Center) {
+@@ -3493,25 +3470,6 @@
+     val muted = groups.filter { StatusFlags.isMuted(it.key) }.sortedByDescending { e -> e.value.maxOf { it.ts } }
+ 
+     LazyColumn(Modifier.fillMaxSize(), contentPadding = contentPad) {
+-        // AyX Group system channel — locked ring, always on top. This is NOT a status
+-        // sender: StatusFlags mute/hide/lock do not apply, and there is no long-press menu.
+-        item(key = "ayx_updates_ring") {
+-            Row(Modifier.fillMaxWidth().clickable { onOpenAyxUpdates() }.padding(horizontal = 12.dp, vertical = 10.dp),
+-                verticalAlignment = Alignment.CenterVertically) {
+-                Box(Modifier.size(54.dp).border(2.dp, AYX_GREEN, CircleShape).padding(3.dp), contentAlignment = Alignment.Center) {
+-                    Image(painterResource(R.drawable.ayx_updates_avatar), "AyX updates",
+-                        Modifier.size(46.dp).clip(CircleShape), contentScale = ContentScale.Crop)
+-                }
+-                Spacer(Modifier.width(12.dp))
+-                Column(Modifier.weight(1f)) {
+-                    Text("✦ AyX", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold,
+-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+-                    Text("Official updates from AyX", style = MaterialTheme.typography.bodySmall,
+-                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+-                }
+-            }
+-            HorizontalDivider()
+-        }
+         item {
+             Text(if (StatusFlags.reveal) "My Status · showing hidden" else "My Status",
+                 style = MaterialTheme.typography.labelMedium, color = IOS_BLUE,
