@@ -148,7 +148,11 @@ object AyxGroupApi {
                     val errCode = runCatching {
                         JSONObject(text).optJSONObject("error")?.optString("code")
                     }.getOrNull()
-                    if (errCode == "installation_revoked") throw InstallationRevokedException()
+                    // Both revoked AND unknown tokens mean the installation is dead
+                    // (e.g. backend DB was reset). Wipe and re-register.
+                    if (errCode == "installation_revoked" || errCode == "invalid_token") {
+                        throw InstallationRevokedException()
+                    }
                     throw AyxApiException(401, "unauthorized")
                 }
                 code == 429 -> {
