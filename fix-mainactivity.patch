@@ -1,0 +1,11 @@
+--- /tmp/MainActivity_github.kt	2026-10-11 14:24:30.696703261 +0530
++++ /tmp/MainActivity_fixed.kt	2026-10-11 14:24:32.494703247 +0530
+@@ -1308,7 +1308,7 @@
+         Box(Modifier.fillMaxSize().consumeWindowInsets(pad)) {
+             when {
+                 // AyX Group system channel — independent of WhatsApp link state.
+-                showAyxUpdates -> Box(Modifier.padding(pad)) { AyxUpdatesScreen(onBack = { showAyxUpdates = false }, onOpenWebsite = { openUrl(ctx, "https://imayx.in") }) }
++                showAyxUpdates -> Box(Modifier.padding(pad)) { AyxUpdatesScreen(onBack = { showAyxUpdates = false }) }
+                 !status.registered -> Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode,
+                     onPair = { n -> scope.launch { try { notify("code: " + GatewayClient.pair(n)) } catch (e: Exception) { notify("pair error: ${e.message}") } } },
+                     onReset = { scope.launch { GatewayClient.logout(); SessionBackup.delete(ctx); notify("reset") } }) }
