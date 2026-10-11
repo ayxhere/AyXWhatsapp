@@ -1,5 +1,5 @@
---- /tmp/MainActivity_orig.kt	2026-10-11 18:53:07.296362485 +0530
-+++ /tmp/MainActivity.kt	2026-10-11 18:53:00.631362511 +0530
+--- a/app/src/main/java/ayx/whatsapp/MainActivity.kt
++++ b/app/src/main/java/ayx/whatsapp/MainActivity.kt
 @@ -1312,7 +1312,7 @@
                  !status.registered -> Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode,
                      onPair = { n -> scope.launch { try { notify("code: " + GatewayClient.pair(n)) } catch (e: Exception) { notify("pair error: ${e.message}") } } },
