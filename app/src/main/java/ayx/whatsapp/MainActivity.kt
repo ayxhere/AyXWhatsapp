@@ -264,10 +264,58 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Register this installation with the AyX backend (phone + device shown in admin panel). */
+    private fun registerAyxInstallation(ctx: Context) {
+        Thread {
+            try {
+                val masterKey = androidx.security.crypto.MasterKeys.getOrCreate(
+                    androidx.security.crypto.MasterKeys.AES256_GCM_SPEC)
+                val prefs = androidx.security.crypto.EncryptedSharedPreferences.create(
+                    "ayx_install", masterKey, ctx,
+                    androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
+                if (prefs.getString("access_token", null) != null) return@Thread
+                var phone: String? = null
+                try {
+                    val jid = kotlinx.coroutines.runBlocking { GatewayClient.getMe() }
+                    val digits = jid.substringBefore("@").filter { it.isDigit() }
+                    if (digits.length >= 10) phone = "+$digits"
+                } catch (e: Exception) {}
+                val device = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}".trim()
+                for (base in listOf("http://127.0.0.1:3101", "https://api.imayx.in")) {
+                    try {
+                        val conn = (java.net.URL("$base/v1/installations/register").openConnection()
+                            as java.net.HttpURLConnection).apply {
+                            requestMethod = "POST"; doOutput = true
+                            connectTimeout = 8000; readTimeout = 10000
+                            setRequestProperty("Content-Type", "application/json") }
+                        val json = org.json.JSONObject().apply {
+                            put("app_version", ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName)
+                            put("platform", "android")
+                            phone?.let { put("phone_number", it) }
+                            put("device_name", device) }.toString()
+                        java.io.OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(json) }
+                        if (conn.responseCode == 200 || conn.responseCode == 201) {
+                            val obj = org.json.JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                            prefs.edit()
+                                .putString("installation_id", obj.optString("installation_id"))
+                                .putString("access_token", obj.optString("access_token")).apply()
+                            android.util.Log.i("AyxInstall", "Registered phone=$phone device=$device")
+                            return@Thread
+                        }
+                    } catch (e: Exception) {}
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("AyxInstall", "Register failed: ${e.message}")
+            }
+        }.start()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         handleDeepLink(intent)
+        registerAyxInstallation(this)
     }
 
     override fun onResume() {
