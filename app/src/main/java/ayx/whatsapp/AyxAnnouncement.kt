@@ -140,9 +140,29 @@ object AnnouncementStore {
         }
     }
 
+    /** Check if the backend is reachable. */
+    suspend fun isBackendUp(): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val conn = (URL("$BACKEND_BASE/v1/health").openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"; connectTimeout = 3000; readTimeout = 5000
+            }
+            val ok = conn.responseCode == 200
+            Log.i(TAG, "Backend health check: ${conn.responseCode} (up=$ok)")
+            ok
+        } catch (e: Exception) {
+            Log.w(TAG, "Backend health check failed: ${e.message}")
+            false
+        }
+    }
+
     /** Fetch published announcements from the local backend. Returns unseen ones. */
     suspend fun fetchUnseen(ctx: Context): List<Announcement> = withContext(Dispatchers.IO) {
         try {
+            Log.i(TAG, "Fetching announcements from $BACKEND_BASE")
+            if (!isBackendUp()) {
+                Log.w(TAG, "Backend is not reachable, skipping announcement fetch")
+                return@withContext emptyList()
+            }
             val url = URL("$BACKEND_BASE/v1/announcements?limit=10")
             // Try with installation Bearer token if available, else try without auth
             // (backend is localhost-only, app is the only client)
