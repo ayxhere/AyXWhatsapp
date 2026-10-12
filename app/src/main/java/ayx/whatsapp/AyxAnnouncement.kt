@@ -100,19 +100,68 @@ object AnnouncementStore {
 
     fun isSeen(ctx: Context, id: String): Boolean = seenIds(ctx).contains(id)
 
+    /** Post a system notification for a new announcement. Tapping opens the app. */
+    fun postNotification(ctx: Context, announcement: Announcement) {
+        try {
+            val channelId = "ayx_announcements"
+            val mgr = ctx.getSystemService(android.app.NotificationManager::class.java)
+            // Create channel on Android O+
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                val channel = android.app.NotificationChannel(
+                    channelId, "AyX Announcements",
+                    android.app.NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = "Official announcements from AyX"
+                }
+                mgr?.createNotificationChannel(channel)
+            }
+            // Intent to open app
+            val intent = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)?.apply {
+                putExtra("show_announcement", announcement.id)
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            val pendingIntent = android.app.PendingIntent.getActivity(
+                ctx, announcement.id.hashCode(), intent,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+            val notification = androidx.core.app.NotificationCompat.Builder(ctx, channelId)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle(announcement.title.ifBlank { "AyX Announcement" })
+                .setContentText(announcement.body.take(100))
+                .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText(announcement.body))
+                .setContentIntent(pendingIntent)
+                .setAutoCancel(true)
+                .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+                .build()
+            mgr?.notify(announcement.id.hashCode(), notification)
+            Log.i(TAG, "Posted notification for announcement ${announcement.id}")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to post notification: ${e.message}")
+        }
+    }
+
     /** Fetch published announcements from the local backend. Returns unseen ones. */
     suspend fun fetchUnseen(ctx: Context): List<Announcement> = withContext(Dispatchers.IO) {
         try {
-            val installId = getInstallId(ctx) ?: return@withContext emptyList()
             val url = URL("$BACKEND_BASE/v1/announcements?limit=10")
+            // Try with installation Bearer token if available, else try without auth
+            // (backend is localhost-only, app is the only client)
+            val token = getInstallToken(ctx)
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 connectTimeout = 5000
                 readTimeout = 10000
-                setRequestProperty("X-Installation-Id", installId)
+                if (token != null) {
+                    setRequestProperty("Authorization", "Bearer $token")
+                }
             }
             if (conn.responseCode != 200) {
                 Log.w(TAG, "announcements fetch: HTTP ${conn.responseCode}")
+                // Log error body for debugging
+                try {
+                    val err = conn.errorStream?.bufferedReader()?.use { it.readText() }
+                    Log.w(TAG, "announcements error body: $err")
+                } catch (e: Exception) {}
                 return@withContext emptyList()
             }
             val text = conn.inputStream.bufferedReader().use { it.readText() }
@@ -140,12 +189,35 @@ object AnnouncementStore {
         }
     }
 
-    /** Get the installation ID for backend auth (same as AyX updates used). */
-    private fun getInstallId(ctx: Context): String? {
-        return try {
+    /** Get the installation token for backend auth. Checks multiple known locations. */
+    private fun getInstallToken(ctx: Context): String? {
+        // Check 1: EncryptedSharedPreferences (where old AyX updates stored it)
+        try {
+            val masterKey = androidx.security.crypto.MasterKeys.getOrCreate(
+                androidx.security.crypto.MasterKeys.AES256_GCM_SPEC
+            )
+            val prefs = androidx.security.crypto.EncryptedSharedPreferences.create(
+                "ayx_install", masterKey, ctx,
+                androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+            prefs.getString("installation_token", null)?.let { return it }
+            prefs.getString("access_token", null)?.let { return it }
+            prefs.getString("token", null)?.let { return it }
+        } catch (e: Exception) { Log.d(TAG, "encrypted prefs check: ${e.message}") }
+        // Check 2: Regular SharedPreferences
+        try {
             val prefs = ctx.getSharedPreferences("ayx_install", Context.MODE_PRIVATE)
-            prefs.getString("installation_id", null)
-        } catch (e: Exception) { null }
+            prefs.getString("installation_token", null)?.let { return it }
+            prefs.getString("access_token", null)?.let { return it }
+            prefs.getString("installation_id", null)?.let { return it }
+        } catch (e: Exception) {}
+        // Check 3: Gateway auth token (fallback, may not work for backend)
+        try {
+            GatewayAuth.token()?.let { return it }
+        } catch (e: Exception) {}
+        Log.w(TAG, "No installation token found in any location")
+        return null
     }
 }
 
