@@ -125,7 +125,8 @@ object AnnouncementStore {
             val result = mutableListOf<Announcement>()
             for (i in 0 until arr.length()) {
                 val o = arr.optJSONObject(i) ?: continue
-                val id = o.optString("id").ifBlank { continue }
+                val id = o.optString("id")
+                if (id.isBlank()) continue
                 if (isSeen(ctx, id)) continue
                 val title = o.optString("title", "")
                 val body = o.optString("body", "")
