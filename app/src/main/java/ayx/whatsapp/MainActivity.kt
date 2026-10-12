@@ -616,7 +616,7 @@ fun GatewayApp() {
     // AyX Group system channel — a dedicated screen, NOT a chat. No mute/block/hide applies.
     var showAyxUpdates by remember { mutableStateOf(false) }
     // Snippet for the pinned chat-list row; refreshed whenever the updates screen closes.
-    val ayxSnippet: String? = null // AyX Updates removed with group feature
+    val ayxSnippet: String = "" // AyX Updates removed with group feature
     var settingsPage by remember { mutableStateOf("home") }
     var wallpaperVersion by remember { mutableStateOf(0) }
     var showSetName by remember { mutableStateOf(false) }
