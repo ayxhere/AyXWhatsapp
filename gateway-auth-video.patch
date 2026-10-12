@@ -1,0 +1,13 @@
+--- a/app/src/main/java/ayx/whatsapp/MainActivity.kt
++++ b/app/src/main/java/ayx/whatsapp/MainActivity.kt
+@@ -1069,7 +1069,9 @@
+             Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+                 AndroidView(factory = { c ->
+                     VideoView(c).apply {
+-                        setVideoURI(Uri.parse(url))
++                        val _vh = HashMap<String, String>()
++                        GatewayAuth.token()?.let { _vh["X-Api-Token"] = it }
++                        setVideoURI(Uri.parse(url), _vh)
+                         val mc = MediaController(c); mc.setAnchorView(this); setMediaController(mc)
+                         setOnPreparedListener { it.start() }
+                     }
