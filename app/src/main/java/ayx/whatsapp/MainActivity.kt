@@ -899,34 +899,6 @@ fun GatewayApp() {
         }
     }
 
-    // Announcement popup dialog (replaces old AyX updates screen)
-    pendingAnnouncement?.let { ann ->
-        AnnouncementDialog(
-            announcement = ann,
-            onDismiss = {
-                AnnouncementStore.markSeen(ctx, ann.id)
-                pendingAnnouncement = null
-                scope.launch {
-                    val unseen = AnnouncementStore.fetchUnseen(ctx)
-                    if (unseen.isNotEmpty()) pendingAnnouncement = unseen.first()
-                }
-            }
-        )
-    }
-
-
-    storyView?.let { sender ->
-        StatusViewer(statuses, sender, dpCache,
-            onDownload = { st -> downloadMedia(scope, ctx, GatewayClient.Msg(st.sender, "", false, st.text, st.ts, st.mediaName, st.mediaType)) { m -> notify(m) } },
-            onReply = { jid, text -> scope.launch { runCatching { GatewayClient.sendToJid(jid, text) }.onSuccess { notify("reply sent") }.onFailure { notify("reply failed: " + it.message) } } },
-            onDeleteStatus = { id -> scope.launch {
-                        val res = StatusDl.deleteEverywhere(id)
-                        statuses = statuses.filterNot { it.id == id }
-                        notify(res.second)
-                    } },
-            onSeen = { st -> val sid = st.id
-                StatusData.markSeen(sid)                                   // local read-ordering: always track, regardless of the receipt setting
-                if (!settings.hideStatusRead && sid != null) scope.launch { GatewayClient.markStatusRead(sid, st.sender) } },
             onClose = { storyView = null })
     }
 
@@ -1465,6 +1437,20 @@ fun GatewayApp() {
                 )
             }
         }
+    }
+    // Announcement popup dialog (replaces old AyX updates screen)
+    pendingAnnouncement?.let { ann ->
+        AnnouncementDialog(
+            announcement = ann,
+            onDismiss = {
+                AnnouncementStore.markSeen(ctx, ann.id)
+                pendingAnnouncement = null
+                scope.launch {
+                    val unseen = AnnouncementStore.fetchUnseen(ctx)
+                    if (unseen.isNotEmpty()) pendingAnnouncement = unseen.first()
+                }
+            }
+        )
     }
 }
 
