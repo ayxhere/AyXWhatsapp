@@ -1,0 +1,143 @@
+--- a/app/src/main/java/ayx/whatsapp/MainActivity.kt
++++ b/app/src/main/java/ayx/whatsapp/MainActivity.kt
+@@ -614,7 +614,8 @@
+     var screen by remember { mutableStateOf("chats") }
+     var openChat by remember { mutableStateOf<String?>(null) }
+     // AyX Group system channel — a dedicated screen, NOT a chat. No mute/block/hide applies.
+-    var showAyxUpdates by remember { mutableStateOf(false) }
++    var showAyxUpdates by remember { mutableStateOf(false) } // legacy, unused - kept for compat
++    var pendingAnnouncement by remember { mutableStateOf<Announcement?>(null) }
+     // Snippet for the pinned chat-list row; refreshed whenever the updates screen closes.
+     val ayxSnippet: String = "" // AyX Updates removed with group feature
+     var settingsPage by remember { mutableStateOf("home") }
+@@ -808,10 +809,20 @@
+     // before WhatsApp is linked: AyX updates does not depend on the gateway).
+     LaunchedEffect(AppNav.pendingOpenAyxUpdates.value) {
+         if (AppNav.pendingOpenAyxUpdates.value) {
+-            showAyxUpdates = true
+             AppNav.pendingOpenAyxUpdates.value = false
++            // Announcements now show as popup dialogs, not a screen
++            scope.launch {
++                val unseen = AnnouncementStore.fetchUnseen(ctx)
++                if (unseen.isNotEmpty()) pendingAnnouncement = unseen.first()
++            }
+         }
+     }
++    // Check for new announcements on startup
++    LaunchedEffect(Unit) {
++        delay(3000) // let app settle
++        val unseen = AnnouncementStore.fetchUnseen(ctx)
++        if (unseen.isNotEmpty()) pendingAnnouncement = unseen.first()
++    }
+ 
+     LaunchedEffect(ChatStyle.runBackground.value) {
+         // node runs in-process regardless; the foreground service (silent notification) is only for background keep-alive
+@@ -878,9 +889,8 @@
+     }
+     LaunchedEffect(toast) { if (toast != null) { delay(2500); toast = null } }
+ 
+-    BackHandler(enabled = showAyxUpdates || viewImg != null || viewVideoUrl != null || openChat != null || screen == "settings" || screen == "newchat" || screen == "profile") {
++    BackHandler(enabled = viewImg != null || viewVideoUrl != null || openChat != null || screen == "settings" || screen == "newchat" || screen == "profile") {
+         when {
+-            showAyxUpdates -> showAyxUpdates = false
+             viewImg != null -> viewImg = null
+             viewVideoUrl != null -> viewVideoUrl = null
+             openChat != null -> openChat = null
+@@ -889,6 +899,21 @@
+         }
+     }
+ 
++    // Announcement popup dialog (replaces old AyX updates screen)
++    pendingAnnouncement?.let { ann ->
++        AnnouncementDialog(
++            announcement = ann,
++            onDismiss = {
++                AnnouncementStore.markSeen(ctx, ann.id)
++                pendingAnnouncement = null
++                scope.launch {
++                    val unseen = AnnouncementStore.fetchUnseen(ctx)
++                    if (unseen.isNotEmpty()) pendingAnnouncement = unseen.first()
++                }
++            }
++        )
++    }
++
+ 
+     storyView?.let { sender ->
+         StatusViewer(statuses, sender, dpCache,
+@@ -1139,7 +1164,7 @@
+ 
+     Scaffold(
+         floatingActionButton = {
+-            if (status.registered && openChat == null && !showAyxUpdates && screen == "chats") {
++            if (status.registered && openChat == null && screen == "chats") {
+                 if (chatsPage == 1) Box {
+                     FloatingActionButton(onClick = { statusFabMenu = true }) { Icon(Icons.Filled.PhotoCamera, "add status") }
+                     DropdownMenu(expanded = statusFabMenu, onDismissRequest = { statusFabMenu = false }) {
+@@ -1155,7 +1180,7 @@
+         bottomBar = {},   // Home/Status nav is a FLOATING rounded glass bar overlaid on the content (see below)
+         topBar = {
+             // Glass header: translucent so the list scrolls behind it. Chat screen has its own header.
+-            if (openChat == null && !showAyxUpdates) {
++            if (openChat == null) {
+             Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.80f), shadowElevation = 6.dp, tonalElevation = 0.dp,
+                 shape = RoundedCornerShape(bottomStart = 26.dp, bottomEnd = 26.dp), modifier = Modifier.fillMaxWidth()) {
+             CenterAlignedTopAppBar(
+@@ -1200,8 +1225,8 @@
+                         }))
+                 },
+                 navigationIcon = {
+-                    if (openChat != null || showAyxUpdates || screen == "settings" || screen == "newchat" || screen == "profile")
+-                        IconButton(onClick = { if (openChat != null) openChat = null else if (showAyxUpdates) showAyxUpdates = false else if (screen == "settings" && settingsPage != "home") settingsPage = settingsParent(settingsPage) else screen = "chats" },
++                    if (openChat != null || screen == "settings" || screen == "newchat" || screen == "profile")
++                        IconButton(onClick = { if (openChat != null) openChat = null if (screen == "settings" && settingsPage != "home") settingsPage = settingsParent(settingsPage) else screen = "chats" },
+                             modifier = Modifier.padding(start = 6.dp).clip(CircleShape).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))) {
+                             Icon(Icons.AutoMirrored.Filled.ArrowBack, "back")
+                         }
+@@ -1209,7 +1234,7 @@
+                         Box(Modifier.padding(start = 10.dp).clip(CircleShape).clickable { screen = "profile" }) { Avatar(myJid!!, "Me", dpCache, 34.dp) }
+                 },
+                 actions = {
+-                    if (status.registered && openChat == null && !showAyxUpdates && screen == "chats") {
++                    if (status.registered && openChat == null && screen == "chats") {
+                         if (searchMode) {
+                             IconButton(onClick = { searchMode = false; searchQuery = "" }) { Icon(Icons.Filled.Close, "close") }
+                         } else {
+@@ -1305,11 +1330,10 @@
+         Box(Modifier.fillMaxSize().consumeWindowInsets(pad)) {
+             when {
+                 // AyX Group system channel — independent of WhatsApp link state.
+-                showAyxUpdates -> Box(Modifier.padding(pad)) { /* AyX Updates removed */ }
+                 !status.registered -> Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode,
+                     onPair = { n -> scope.launch { try { notify("code: " + GatewayClient.pair(n)) } catch (e: Exception) { notify("pair error: ${e.message}") } } },
+                     onReset = { scope.launch { GatewayClient.logout(); SessionBackup.delete(ctx); notify("reset") } }) }
+-                screen == "settings" -> Box(Modifier.padding(pad)) { SettingsScreen(status, settings, page = settingsPage, onPage = { if (it == "ayx_updates") showAyxUpdates = true else settingsPage = it }, wallpaperVersion = wallpaperVersion,
++                screen == "settings" -> Box(Modifier.padding(pad)) { SettingsScreen(status, settings, page = settingsPage, onPage = { settingsPage = it }, wallpaperVersion = wallpaperVersion,
+                     onToggle = { patch -> scope.launch { settings = GatewayClient.patchSettings(patch) } },
+                     onRules = { r -> scope.launch { settings = GatewayClient.setRules(r) } },
+                     onLogout = { scope.launch { GatewayClient.logout(); SessionBackup.delete(ctx); notify("logged out") } }, ctx = ctx,
+@@ -1326,7 +1350,6 @@
+                     onSaveName = { n -> scope.launch { runCatching { GatewayClient.setProfileName(n) }.onSuccess { notify("name updated") }.onFailure { notify("name: ${it.message}") } } }) }
+                 else -> ChatsWithStatus(messages, statuses, dpCache, searchQuery, chatsPage, topInset = pad.calculateTopPadding(),
+                     ayxSnippet = ayxSnippet,
+-                    onOpenAyxUpdates = { showAyxUpdates = true },
+                     onPageChange = { chatsPage = it },
+                     onLoadStatuses = { scope.launch { val fresh = GatewayClient.getStatuses(); statuses = if (fresh.isNotEmpty()) StatusData.merge(fresh) else StatusData.load() } },
+                     onOpenStatus = { st ->
+@@ -1366,7 +1389,7 @@
+         }
+         }
+             // Floating rounded glass Home/Status navigation — overlaid so the list scrolls behind it.
+-            if (status.registered && openChat == null && !showAyxUpdates && screen == "chats") {
++            if (status.registered && openChat == null && screen == "chats") {
+                 val selC = MaterialTheme.colorScheme.primary; val dimC = MaterialTheme.colorScheme.onSurfaceVariant
+                 Surface(shape = RoundedCornerShape(30.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                     tonalElevation = 0.dp, shadowElevation = 14.dp, border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)),
+@@ -2397,7 +2420,6 @@
+         CategoryCard(Icons.Filled.Palette, CAT_APPEARANCE, "Appearance", "Theme and accent color") { onOpen("appearance") }
+         CategoryCard(Icons.Filled.Info, CAT_ABOUT, "About", "App information and reset") { onOpen("about") }
+         CategoryCard(Icons.Filled.Favorite, CAT_SUPPORT, "Support Development", "Donate via UPI or crypto to support AyX") { onOpen("support") }
+-        CategoryCard(Icons.Filled.Star, Color(0xFF7C3AED), "AyX updates", "Official announcements from AyX") { onOpen("ayx_updates") }
+         Spacer(Modifier.height(16.dp))
+     }
+ }
