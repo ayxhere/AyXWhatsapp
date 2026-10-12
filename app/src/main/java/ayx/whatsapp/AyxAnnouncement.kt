@@ -28,6 +28,9 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
+/** Top-level alias so MainActivity can use Announcement directly. */
+typealias Announcement = AnnouncementStore.Announcement
+
 /**
  * AyX Announcement popup dialog system.
  * Replaces the old AyX updates Settings screen.
