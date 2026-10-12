@@ -45,7 +45,14 @@ android {
             isMinifyEnabled = false
         }
         release {
-            isMinifyEnabled = false
+            // R8 ON for release. If the release APK misbehaves (missing classes at
+            // runtime), set this back to false and report — then tighten the keeps
+            // in proguard-rules.pro instead of shipping unshrunk.
+            isMinifyEnabled = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
             if (hasKeystore) signingConfig = signingConfigs.getByName("release")
         }
     }
@@ -104,5 +111,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("com.google.zxing:core:3.5.3")   // QR generation for Support Development
     implementation("androidx.emoji2:emoji2:1.5.0")   // consistent colour emoji (downloadable, no APK size)
+    implementation("androidx.security:security-crypto:1.0.0")       // EncryptedSharedPreferences for the AyX Group token
+    implementation("androidx.work:work-runtime-ktx:2.9.0")          // periodic AyX updates sync (no Firebase in this app)
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
