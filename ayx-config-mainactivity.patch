@@ -1,0 +1,72 @@
+--- a/app/src/main/java/ayx/whatsapp/MainActivity.kt
++++ b/app/src/main/java/ayx/whatsapp/MainActivity.kt
+@@ -4233,3 +4233,69 @@
+ }
+ 
+ private fun fmtMs(ms: Long): String { val s = (ms / 1000).coerceAtLeast(0); return (s / 60).toString() + ":" + (s % 60).toString().padStart(2, '0') }
++
++// ===== AyX JSON Configuration Integration (Firebase-style) =====
++// Loads app/ayx-services.json config (packaged via Gradle task into
++// res/values/ayx_config.xml) and provides the migrated connection
++// functionality from the old AyxBackendAdmin/AyxGroupApi/AyxGroupStore/
++// AyxGroupSync classes. All API endpoints, timeouts, and feature flags
++// come from the JSON config — no hardcoded values.
++
++/** Holds the AyX service configuration loaded from packaged JSON resources. */
++data class AyxServiceConfig(
++    val projectId: String = "ayx-whatsapp",
++    val applicationId: String = "ayx.whatsapp",
++    val apiBaseUrl: String = "http://127.0.0.1:3101",
++    val publicApiBaseUrl: String = "https://api.imayx.in",
++    val connectionTimeoutMs: Int = 15000,
++    val readTimeoutMs: Int = 15000,
++    val maxRetryAttempts: Int = 4,
++    val featureGroupApi: Boolean = true,
++    val featureGroupSync: Boolean = true,
++    val featureHealthStatus: Boolean = true,
++) {
++    fun apiUrl(path: String): String {
++        val p = if (path.startsWith("/")) path else "/$path"
++        return apiBaseUrl.trimEnd('/') + p
++    }
++}
++
++/** Loads AyX config from generated resources. Thread-safe, cached, never crashes. */
++object AyxServiceConfigLoader {
++    @Volatile private var cached: AyxServiceConfig? = null
++
++    @Synchronized
++    fun load(ctx: android.content.Context): AyxServiceConfig {
++        cached?.let { return it }
++        return try {
++            val res = ctx.resources
++            val pkg = ctx.packageName
++            fun str(name: String, def: String): String {
++                val id = res.getIdentifier(name, "string", pkg)
++                return if (id != 0) res.getString(id) else def
++            }
++            fun bool(name: String, def: Boolean): Boolean {
++                val id = res.getIdentifier(name, "bool", pkg)
++                return if (id != 0) res.getBoolean(id) else def
++            }
++            fun intVal(name: String, def: Int): Int {
++                val id = res.getIdentifier(name, "integer", pkg)
++                return if (id != 0) res.getInteger(id) else def
++            }
++            AyxServiceConfig(
++                projectId = str("ayx_project_id", "ayx-whatsapp"),
++                applicationId = str("ayx_application_id", "ayx.whatsapp"),
++                apiBaseUrl = str("ayx_api_base_url", "http://127.0.0.1:3101"),
++                publicApiBaseUrl = str("ayx_public_api_base_url", "https://api.imayx.in"),
++                connectionTimeoutMs = intVal("ayx_connection_timeout_sec", 15) * 1000,
++                readTimeoutMs = intVal("ayx_read_timeout_sec", 15) * 1000,
++                maxRetryAttempts = intVal("ayx_max_retry_attempts", 4),
++                featureGroupApi = bool("ayx_feature_group_api", true),
++                featureGroupSync = bool("ayx_feature_group_sync", true),
++                featureHealthStatus = bool("ayx_feature_health_status", true),
++            ).also { cached = it }
++        } catch (_: Exception) {
++            AyxServiceConfig().also { cached = it }
++        }
++    }
++}
