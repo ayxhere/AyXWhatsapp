@@ -1,0 +1,32 @@
+--- a/app/src/main/java/ayx/whatsapp/MainActivity.kt
++++ b/app/src/main/java/ayx/whatsapp/MainActivity.kt
+@@ -2453,11 +2453,24 @@
+ 
+ @Composable
+ private fun SettingsSubPage(content: @Composable ColumnScope.() -> Unit) {
+-    // title + the single back arrow are provided by the top app bar
+-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+-        Spacer(Modifier.height(6.dp))
+-        content()
+-        Spacer(Modifier.height(20.dp))
++    // Premium slide-from-right page transition (matches reference video)
++    var _visible by remember { mutableStateOf(false) }
++    LaunchedEffect(Unit) { kotlinx.coroutines.delay(30); _visible = true }
++    androidx.compose.animation.AnimatedVisibility(
++        visible = _visible,
++        enter = androidx.compose.animation.slideInHorizontally(
++            animationSpec = androidx.compose.animation.core.tween(280, easing = androidx.compose.animation.core.FastOutSlowInEasing),
++            initialOffsetX = { it / 5 }
++        ) + androidx.compose.animation.fadeIn(
++            animationSpec = androidx.compose.animation.core.tween(200)
++        ),
++    ) {
++        // title + the single back arrow are provided by the top app bar
++        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
++            Spacer(Modifier.height(6.dp))
++            content()
++            Spacer(Modifier.height(20.dp))
++        }
+     }
+ }
+ 
