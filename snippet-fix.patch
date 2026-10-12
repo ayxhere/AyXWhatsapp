@@ -1,0 +1,9 @@
+--- a/app/src/main/java/ayx/whatsapp/MainActivity.kt
++++ b/app/src/main/java/ayx/whatsapp/MainActivity.kt
+@@ -623,7 +623,7 @@
+     // AyX Group system channel — a dedicated screen, NOT a chat. No mute/block/hide applies.
+     var showAyxUpdates by remember { mutableStateOf(false) }
+     // Snippet for the pinned chat-list row; refreshed whenever the updates screen closes.
+-    val ayxSnippet: String? = null // AyX Updates removed with group feature
++    val ayxSnippet: String = "" // AyX Updates removed with group feature
+     var settingsPage by remember { mutableStateOf("home") }
