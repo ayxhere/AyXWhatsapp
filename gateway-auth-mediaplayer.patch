@@ -1,0 +1,13 @@
+--- a/app/src/main/java/ayx/whatsapp/MainActivity.kt
++++ b/app/src/main/java/ayx/whatsapp/MainActivity.kt
+@@ -454,7 +454,9 @@
+         try {
+             if (m.mediaType == "video") {
+                 val r = MediaMetadataRetriever()
+-                r.setDataSource(GatewayClient.mediaUrl(name), HashMap<String, String>())
++                val _headers = HashMap<String, String>()
++                GatewayAuth.token()?.let { _headers["X-Api-Token"] = it }
++                r.setDataSource(GatewayClient.mediaUrl(name), _headers)
+                 val bmp = r.getFrameAtTime(1_000_000L)
+                 r.release()
+                 bmp?.asImageBitmap()
