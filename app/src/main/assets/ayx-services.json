@@ -1,1 +1,36 @@
-{"configuration":{"app_verification_enabled":false,"config_version":1,"connection_timeout_seconds":15,"max_retry_attempts":4,"read_timeout_seconds":15,"remote_config_enabled":true,"retry_backoff_ms":[2000,4000,8000],"schema_version":1},"features":{"admin_bootstrap":true,"announcements":true,"group_api":true,"group_sync":true,"health_status":true,"remote_settings":false,"statuses":true,"user_messages":true},"project_info":{"api_base_url":"http://127.0.0.1:3101","application_id":"ayx.whatsapp","project_id":"ayx-whatsapp","project_name":"AyX WhatsApp","public_api_base_url":"https://api.imayx.in"},"sync":{"foreground_debounce_ms":300000,"media_cache_max_bytes":26214400,"worker_interval_minutes":15}}
+{
+  "configuration": {
+    "app_verification_enabled": false,
+    "config_version": 1,
+    "connection_timeout_seconds": 15,
+    "max_retry_attempts": 4,
+    "read_timeout_seconds": 15,
+    "remote_config_enabled": true,
+    "retry_backoff_ms": [
+      2000,
+      4000,
+      8000
+    ],
+    "schema_version": 1
+  },
+  "features": {
+    "admin_bootstrap": true,
+    "announcements": true,
+    "health_status": true,
+    "remote_settings": false,
+    "statuses": true,
+    "user_messages": true
+  },
+  "project_info": {
+    "api_base_url": "http://127.0.0.1:3101",
+    "application_id": "ayx.whatsapp",
+    "project_id": "ayx-whatsapp",
+    "project_name": "AyX WhatsApp",
+    "public_api_base_url": "https://api.imayx.in"
+  },
+  "sync": {
+    "foreground_debounce_ms": 300000,
+    "media_cache_max_bytes": 26214400,
+    "worker_interval_minutes": 15
+  }
+}
