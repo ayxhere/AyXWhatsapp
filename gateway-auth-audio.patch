@@ -1,0 +1,19 @@
+--- a/app/src/main/java/ayx/whatsapp/MainActivity.kt
++++ b/app/src/main/java/ayx/whatsapp/MainActivity.kt
+@@ -2141,12 +2141,14 @@
+     DisposableEffect(url) {
+         runCatching {
+             player.setAudioAttributes(android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_MEDIA).build())
+-            player.setDataSource(url)
++            val _ah = HashMap<String, String>()
++            GatewayAuth.token()?.let { _ah["X-Api-Token"] = it }
++            player.setDataSource(url, _ah)
+             player.setOnPreparedListener { ready = true; if (wantPlay) { runCatching { player.start(); playing = true } } }
+             player.setOnCompletionListener { playing = false; progress = 0f }
+             player.setOnErrorListener { mp, _, _ ->
+                 ready = false; playing = false
+-                if (!retried) { retried = true; runCatching { mp.reset(); mp.setDataSource(url); mp.prepareAsync() } }
++                if (!retried) { retried = true; runCatching { mp.reset(); val _ah2 = HashMap<String, String>(); GatewayAuth.token()?.let { _ah2["X-Api-Token"] = it }; mp.setDataSource(url, _ah2); mp.prepareAsync() } }
+                 true
+             }
+             player.prepareAsync()
