@@ -59,6 +59,7 @@ object AnnouncementStore {
     private const val PREFS = "ayx_announcements"
     private const val KEY_SEEN = "seen_ids"
     private const val BACKEND_BASE = "http://127.0.0.1:3101"
+    private const val BACKEND_PUBLIC = "https://api.imayx.in"
 
     private val urlRegex = Regex("""https?://[^\s<>"')\]]+""")
 
@@ -158,12 +159,27 @@ object AnnouncementStore {
     /** Fetch published announcements from the local backend. Returns unseen ones. */
     suspend fun fetchUnseen(ctx: Context): List<Announcement> = withContext(Dispatchers.IO) {
         try {
-            Log.i(TAG, "Fetching announcements from $BACKEND_BASE")
-            if (!isBackendUp()) {
-                Log.w(TAG, "Backend is not reachable, skipping announcement fetch")
-                return@withContext emptyList()
+            // Try local backend first, then public API (admin panel writes here via tunnel)
+            val bases = listOf(BACKEND_BASE, BACKEND_PUBLIC)
+            for (base in bases) {
+                Log.i(TAG, "Trying announcements from $base")
+                val result = fetchFromBase(ctx, base)
+                if (result.isNotEmpty()) {
+                    Log.i(TAG, "Got ${result.size} announcements from $base")
+                    return@withContext result
+                }
             }
-            val url = URL("$BACKEND_BASE/v1/announcements?limit=10")
+            Log.w(TAG, "No announcements from any backend")
+            return@withContext emptyList()
+        } catch (e: Exception) {
+            Log.w(TAG, "announcements fetch failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    private fun fetchFromBase(ctx: Context, base: String): List<Announcement> {
+        try {
+            val url = URL("$base/v1/announcements?limit=10")
             // Try with installation Bearer token if available, else try without auth
             // (backend is localhost-only, app is the only client)
             val token = getInstallToken(ctx)
@@ -182,7 +198,7 @@ object AnnouncementStore {
                     val err = conn.errorStream?.bufferedReader()?.use { it.readText() }
                     Log.w(TAG, "announcements error body: $err")
                 } catch (e: Exception) {}
-                return@withContext emptyList()
+                return emptyList()
             }
             val text = conn.inputStream.bufferedReader().use { it.readText() }
             val arr = try {
@@ -204,10 +220,12 @@ object AnnouncementStore {
             }
             result
         } catch (e: Exception) {
-            Log.w(TAG, "announcements fetch failed: ${e.message}")
+            Log.w(TAG, "fetch from $base failed: ${e.message}")
             emptyList()
         }
     }
+
+    /** Get the installation token
 
     /** Get the installation token for backend auth. Checks multiple known locations. */
     private fun getInstallToken(ctx: Context): String? {
