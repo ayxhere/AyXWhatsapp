@@ -2136,6 +2136,7 @@ private fun ChatGlassHeader(
 
 @Composable
 private fun AudioPlayer(url: String, tint: Color) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     var playing by remember(url) { mutableStateOf(false) }
     var progress by remember(url) { mutableStateOf(0f) }
     var ready by remember(url) { mutableStateOf(false) }
@@ -2147,12 +2148,12 @@ private fun AudioPlayer(url: String, tint: Color) {
             player.setAudioAttributes(android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_MEDIA).build())
             val _ah = HashMap<String, String>()
             GatewayAuth.token()?.let { _ah["X-Api-Token"] = it }
-            player.setDataSource(url, _ah)
+            player.setDataSource(ctx, android.net.Uri.parse(url), _ah)
             player.setOnPreparedListener { ready = true; if (wantPlay) { runCatching { player.start(); playing = true } } }
             player.setOnCompletionListener { playing = false; progress = 0f }
             player.setOnErrorListener { mp, _, _ ->
                 ready = false; playing = false
-                if (!retried) { retried = true; runCatching { mp.reset(); val _ah2 = HashMap<String, String>(); GatewayAuth.token()?.let { _ah2["X-Api-Token"] = it }; mp.setDataSource(url, _ah2); mp.prepareAsync() } }
+                if (!retried) { retried = true; runCatching { mp.reset(); val _ah2 = HashMap<String, String>(); GatewayAuth.token()?.let { _ah2["X-Api-Token"] = it }; mp.setDataSource(ctx, android.net.Uri.parse(url), _ah2); mp.prepareAsync() } }
                 true
             }
             player.prepareAsync()
