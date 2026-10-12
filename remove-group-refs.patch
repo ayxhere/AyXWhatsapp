@@ -1,0 +1,58 @@
+--- a/app/src/main/java/ayx/whatsapp/MainActivity.kt	2026-10-12 18:06:02.283770556 +0530
++++ b/app/src/main/java/ayx/whatsapp/MainActivity.kt	2026-10-12 18:06:11.549770916 +0530
+@@ -121,9 +121,6 @@
+ import androidx.compose.material.icons.filled.VisibilityOff
+ import androidx.compose.material.icons.filled.PushPin
+ import androidx.compose.ui.res.painterResource
+-import ayx.whatsapp.group.AyxGroupSync
+-import ayx.whatsapp.group.AyxUpdatesScreen
+-import ayx.whatsapp.group.AyxUpdatesWorker
+ import androidx.compose.material.icons.filled.Lock
+ import androidx.compose.material.icons.filled.LockOpen
+ import androidx.compose.material.icons.filled.Notifications
+@@ -275,8 +272,6 @@
+ 
+     override fun onResume() {
+         super.onResume()
+-        // AyX Group: debounced (5 min) foreground sync; the periodic worker covers the rest.
+-        AyxGroupSync.foregroundSync(applicationContext)
+     }
+ 
+     override fun onCreate(savedInstanceState: Bundle?) {
+@@ -288,8 +283,6 @@
+ 
+         handleDeepLink(intent)
+ 
+-        // AyX Group: schedule the periodic updates sync once (KEEP = no-op if already scheduled).
+-        AyxUpdatesWorker.enqueue(applicationContext)
+ 
+         StatusData.init(applicationContext)
+         StatusFlags.init(applicationContext)
+@@ -623,7 +616,7 @@
+     // AyX Group system channel — a dedicated screen, NOT a chat. No mute/block/hide applies.
+     var showAyxUpdates by remember { mutableStateOf(false) }
+     // Snippet for the pinned chat-list row; refreshed whenever the updates screen closes.
+-    val ayxSnippet = remember(showAyxUpdates) { AyxGroupSync.latestSnippet(ctx) }
++    val ayxSnippet: String? = null // AyX Updates removed with group feature
+     var settingsPage by remember { mutableStateOf("home") }
+     var wallpaperVersion by remember { mutableStateOf(0) }
+     var showSetName by remember { mutableStateOf(false) }
+@@ -1312,7 +1305,7 @@
+         Box(Modifier.fillMaxSize().consumeWindowInsets(pad)) {
+             when {
+                 // AyX Group system channel — independent of WhatsApp link state.
+-                showAyxUpdates -> Box(Modifier.padding(pad)) { AyxUpdatesScreen(onBack = { showAyxUpdates = false }) }
++                showAyxUpdates -> Box(Modifier.padding(pad)) { /* AyX Updates removed */ }
+                 !status.registered -> Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode,
+                     onPair = { n -> scope.launch { try { notify("code: " + GatewayClient.pair(n)) } catch (e: Exception) { notify("pair error: ${e.message}") } } },
+                     onReset = { scope.launch { GatewayClient.logout(); SessionBackup.delete(ctx); notify("reset") } }) }
+@@ -4244,8 +4237,7 @@
+ // ===== AyX JSON Configuration Integration (Firebase-style) =====
+ // Loads app/ayx-services.json config (packaged via Gradle task into
+ // res/values/ayx_config.xml) and provides the migrated connection
+-// functionality from the old AyxBackendAdmin/AyxGroupApi/AyxGroupStore/
+-// AyxGroupSync classes. All API endpoints, timeouts, and feature flags
++// functionality (AyX Group feature removed).
+ // come from the JSON config — no hardcoded values.
+ 
+ /** Holds the AyX service configuration loaded from packaged JSON resources. */
