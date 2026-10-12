@@ -113,6 +113,8 @@ dependencies {
 
 val ayxServicesJson = file("ayx-services.json")
 val ayxConfigXml = file("src/main/res/values/ayx_config.xml")
+// Capture at configuration time — 'android' doesn't resolve inside doLast
+val ayxExpectedAppId = android.defaultConfig.applicationId
 
 tasks.register("processAyxServicesJson") {
     description = "Validates app/ayx-services.json and generates ayx_config.xml resources"
@@ -146,11 +148,10 @@ tasks.register("processAyxServicesJson") {
         if (configAppId.isEmpty()) {
             throw GradleException("ayx-services.json: project_info.application_id is required")
         }
-        val manifestAppId = android.defaultConfig.applicationId
-        if (configAppId != manifestAppId) {
+        if (configAppId != ayxExpectedAppId) {
             throw GradleException(
                 "ayx-services.json application_id '$configAppId' does not match " +
-                "build applicationId '$manifestAppId'"
+                "build applicationId '$ayxExpectedAppId'"
             )
         }
 
