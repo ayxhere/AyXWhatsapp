@@ -615,7 +615,6 @@ fun GatewayApp() {
     var openChat by remember { mutableStateOf<String?>(null) }
     // AyX Group system channel — a dedicated screen, NOT a chat. No mute/block/hide applies.
     var showAyxUpdates by remember { mutableStateOf(false) } // legacy, unused - kept for compat
-    var pendingAnnouncement by remember { mutableStateOf<Announcement?>(null) }
     // Snippet for the pinned chat-list row; refreshed whenever the updates screen closes.
     val ayxSnippet: String = "" // AyX Updates removed with group feature
     var settingsPage by remember { mutableStateOf("home") }
@@ -807,22 +806,6 @@ fun GatewayApp() {
     }
     // AyX updates notification tap → open the system channel screen (works even
     // before WhatsApp is linked: AyX updates does not depend on the gateway).
-    LaunchedEffect(AppNav.pendingOpenAyxUpdates.value) {
-        if (AppNav.pendingOpenAyxUpdates.value) {
-            AppNav.pendingOpenAyxUpdates.value = false
-            // Announcements now show as popup dialogs, not a screen
-            scope.launch {
-                val unseen = AnnouncementStore.fetchUnseen(ctx)
-                if (unseen.isNotEmpty()) pendingAnnouncement = unseen.first()
-            }
-        }
-    }
-    // Check for new announcements on startup
-    LaunchedEffect(Unit) {
-        delay(3000) // let app settle
-        val unseen = AnnouncementStore.fetchUnseen(ctx)
-        if (unseen.isNotEmpty()) pendingAnnouncement = unseen.first()
-    }
 
     LaunchedEffect(ChatStyle.runBackground.value) {
         // node runs in-process regardless; the foreground service (silent notification) is only for background keep-alive
@@ -1437,20 +1420,6 @@ fun GatewayApp() {
                 )
             }
         }
-    }
-    // Announcement popup dialog (replaces old AyX updates screen)
-    pendingAnnouncement?.let { ann ->
-        AnnouncementDialog(
-            announcement = ann,
-            onDismiss = {
-                AnnouncementStore.markSeen(ctx, ann.id)
-                pendingAnnouncement = null
-                scope.launch {
-                    val unseen = AnnouncementStore.fetchUnseen(ctx)
-                    if (unseen.isNotEmpty()) pendingAnnouncement = unseen.first()
-                }
-            }
-        )
     }
 }
 
