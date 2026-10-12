@@ -81,6 +81,7 @@ object GatewayClient {
         try {
             val c = (URL("$base/qr.png").openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"; connectTimeout = 3000; readTimeout = 8000
+                GatewayAuth.token()?.let { setRequestProperty("X-Api-Token", it) }
             }
             if (c.responseCode == 200) c.inputStream.use { it.readBytes() } else null
         } catch (e: Exception) { null }
@@ -435,6 +436,7 @@ object GatewayClient {
             val enc = java.net.URLEncoder.encode(jid, "UTF-8")
             val c = (URL("$base/dp?jid=$enc").openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"; connectTimeout = 4000; readTimeout = 15000
+                GatewayAuth.token()?.let { setRequestProperty("X-Api-Token", it) }
             }
             if (c.responseCode == 200) c.inputStream.use { it.readBytes() } else null
         } catch (e: Exception) { null }
@@ -444,6 +446,7 @@ object GatewayClient {
         try {
             val c = (URL("$base/media/$name").openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"; connectTimeout = 4000; readTimeout = 20000
+                GatewayAuth.token()?.let { setRequestProperty("X-Api-Token", it) }
             }
             if (c.responseCode == 200) c.inputStream.use { it.readBytes() } else null
         } catch (e: Exception) { null }
@@ -521,6 +524,9 @@ object GatewayClient {
     private fun get(path: String): JSONObject {
         val c = (URL(base + path).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"; connectTimeout = 3000; readTimeout = 8000
+            // SECURITY: Gateway API authentication. Token is per-installation,
+            // never logged, never in URL. Gateway rejects requests without it.
+            GatewayAuth.token()?.let { setRequestProperty("X-Api-Token", it) }
         }
         return readJson(c)
     }
@@ -530,6 +536,7 @@ object GatewayClient {
             requestMethod = "POST"; doOutput = true
             connectTimeout = 3000; readTimeout = 20000
             setRequestProperty("Content-Type", "application/json")
+            GatewayAuth.token()?.let { setRequestProperty("X-Api-Token", it) }
         }
         c.outputStream.use { it.write(body.toString().toByteArray()) }
         return readJson(c)
