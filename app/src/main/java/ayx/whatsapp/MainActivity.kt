@@ -454,7 +454,9 @@ private suspend fun loadPreview(ctx: Context, m: GatewayClient.Msg): ImageBitmap
         try {
             if (m.mediaType == "video") {
                 val r = MediaMetadataRetriever()
-                r.setDataSource(GatewayClient.mediaUrl(name), HashMap<String, String>())
+                val _headers = HashMap<String, String>()
+                GatewayAuth.token()?.let { _headers["X-Api-Token"] = it }
+                r.setDataSource(GatewayClient.mediaUrl(name), _headers)
                 val bmp = r.getFrameAtTime(1_000_000L)
                 r.release()
                 bmp?.asImageBitmap()
@@ -1069,7 +1071,9 @@ fun GatewayApp() {
             Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
                 AndroidView(factory = { c ->
                     VideoView(c).apply {
-                        setVideoURI(Uri.parse(url))
+                        val _vh = HashMap<String, String>()
+                        GatewayAuth.token()?.let { _vh["X-Api-Token"] = it }
+                        setVideoURI(Uri.parse(url), _vh)
                         val mc = MediaController(c); mc.setAnchorView(this); setMediaController(mc)
                         setOnPreparedListener { it.start() }
                     }
@@ -2141,12 +2145,14 @@ private fun AudioPlayer(url: String, tint: Color) {
     DisposableEffect(url) {
         runCatching {
             player.setAudioAttributes(android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_MEDIA).build())
-            player.setDataSource(url)
+            val _ah = HashMap<String, String>()
+            GatewayAuth.token()?.let { _ah["X-Api-Token"] = it }
+            player.setDataSource(url, _ah)
             player.setOnPreparedListener { ready = true; if (wantPlay) { runCatching { player.start(); playing = true } } }
             player.setOnCompletionListener { playing = false; progress = 0f }
             player.setOnErrorListener { mp, _, _ ->
                 ready = false; playing = false
-                if (!retried) { retried = true; runCatching { mp.reset(); mp.setDataSource(url); mp.prepareAsync() } }
+                if (!retried) { retried = true; runCatching { mp.reset(); val _ah2 = HashMap<String, String>(); GatewayAuth.token()?.let { _ah2["X-Api-Token"] = it }; mp.setDataSource(url, _ah2); mp.prepareAsync() } }
                 true
             }
             player.prepareAsync()
@@ -4233,3 +4239,69 @@ private fun WaveformTrimmer(bars: FloatArray, durationMs: Long, startMs: Long, e
 }
 
 private fun fmtMs(ms: Long): String { val s = (ms / 1000).coerceAtLeast(0); return (s / 60).toString() + ":" + (s % 60).toString().padStart(2, '0') }
+
+// ===== AyX JSON Configuration Integration (Firebase-style) =====
+// Loads app/ayx-services.json config (packaged via Gradle task into
+// res/values/ayx_config.xml) and provides the migrated connection
+// functionality from the old AyxBackendAdmin/AyxGroupApi/AyxGroupStore/
+// AyxGroupSync classes. All API endpoints, timeouts, and feature flags
+// come from the JSON config — no hardcoded values.
+
+/** Holds the AyX service configuration loaded from packaged JSON resources. */
+data class AyxServiceConfig(
+    val projectId: String = "ayx-whatsapp",
+    val applicationId: String = "ayx.whatsapp",
+    val apiBaseUrl: String = "http://127.0.0.1:3101",
+    val publicApiBaseUrl: String = "https://api.imayx.in",
+    val connectionTimeoutMs: Int = 15000,
+    val readTimeoutMs: Int = 15000,
+    val maxRetryAttempts: Int = 4,
+    val featureGroupApi: Boolean = true,
+    val featureGroupSync: Boolean = true,
+    val featureHealthStatus: Boolean = true,
+) {
+    fun apiUrl(path: String): String {
+        val p = if (path.startsWith("/")) path else "/$path"
+        return apiBaseUrl.trimEnd('/') + p
+    }
+}
+
+/** Loads AyX config from generated resources. Thread-safe, cached, never crashes. */
+object AyxServiceConfigLoader {
+    @Volatile private var cached: AyxServiceConfig? = null
+
+    @Synchronized
+    fun load(ctx: android.content.Context): AyxServiceConfig {
+        cached?.let { return it }
+        return try {
+            val res = ctx.resources
+            val pkg = ctx.packageName
+            fun str(name: String, def: String): String {
+                val id = res.getIdentifier(name, "string", pkg)
+                return if (id != 0) res.getString(id) else def
+            }
+            fun bool(name: String, def: Boolean): Boolean {
+                val id = res.getIdentifier(name, "bool", pkg)
+                return if (id != 0) res.getBoolean(id) else def
+            }
+            fun intVal(name: String, def: Int): Int {
+                val id = res.getIdentifier(name, "integer", pkg)
+                return if (id != 0) res.getInteger(id) else def
+            }
+            AyxServiceConfig(
+                projectId = str("ayx_project_id", "ayx-whatsapp"),
+                applicationId = str("ayx_application_id", "ayx.whatsapp"),
+                apiBaseUrl = str("ayx_api_base_url", "http://127.0.0.1:3101"),
+                publicApiBaseUrl = str("ayx_public_api_base_url", "https://api.imayx.in"),
+                connectionTimeoutMs = intVal("ayx_connection_timeout_sec", 15) * 1000,
+                readTimeoutMs = intVal("ayx_read_timeout_sec", 15) * 1000,
+                maxRetryAttempts = intVal("ayx_max_retry_attempts", 4),
+                featureGroupApi = bool("ayx_feature_group_api", true),
+                featureGroupSync = bool("ayx_feature_group_sync", true),
+                featureHealthStatus = bool("ayx_feature_health_status", true),
+            ).also { cached = it }
+        } catch (_: Exception) {
+            AyxServiceConfig().also { cached = it }
+        }
+    }
+}
