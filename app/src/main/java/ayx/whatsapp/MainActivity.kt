@@ -1226,7 +1226,7 @@ fun GatewayApp() {
                 },
                 navigationIcon = {
                     if (openChat != null || screen == "settings" || screen == "newchat" || screen == "profile")
-                        IconButton(onClick = { if (openChat != null) openChat = null if (screen == "settings" && settingsPage != "home") settingsPage = settingsParent(settingsPage) else screen = "chats" },
+                        IconButton(onClick = { if (openChat != null) openChat = null else if (screen == "settings" && settingsPage != "home") settingsPage = settingsParent(settingsPage) else screen = "chats" },
                             modifier = Modifier.padding(start = 6.dp).clip(CircleShape).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, "back")
                         }
@@ -1604,7 +1604,7 @@ private fun HiddenReveal(label: String, revealed: Boolean, onClick: () -> Unit) 
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<String, ImageBitmap?>, query: String, contentPad: androidx.compose.foundation.layout.PaddingValues, ayxSnippet: String, onOpenAyxUpdates: () -> Unit, onToggleReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit) {
+private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<String, ImageBitmap?>, query: String, contentPad: androidx.compose.foundation.layout.PaddingValues, ayxSnippet: String, onToggleReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit) {
     val allKeys = messages.map { it.chat }.toSet()
     val hiddenCount = allKeys.count { ChatFlags.hidden[it] == true }
     val groups = messages.groupBy { it.chat }.entries
@@ -3462,7 +3462,7 @@ private fun NewChatScreen(contacts: List<DeviceContact>, loading: Boolean, dpCac
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, statuses: List<GatewayClient.StatusItem>, dpCache: MutableMap<String, ImageBitmap?>, query: String, page: Int, topInset: androidx.compose.ui.unit.Dp, ayxSnippet: String, onOpenAyxUpdates: () -> Unit, onPageChange: (Int) -> Unit, onLoadStatuses: () -> Unit, onOpenStatus: (GatewayClient.StatusItem) -> Unit, onToggleStatusReveal: () -> Unit, onToggleChatReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit) {
+private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, statuses: List<GatewayClient.StatusItem>, dpCache: MutableMap<String, ImageBitmap?>, query: String, page: Int, topInset: androidx.compose.ui.unit.Dp, ayxSnippet: String, onPageChange: (Int) -> Unit, onLoadStatuses: () -> Unit, onOpenStatus: (GatewayClient.StatusItem) -> Unit, onToggleStatusReveal: () -> Unit, onToggleChatReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit) {
     val pager = rememberPagerState(initialPage = page) { 2 }
     // content scrolls BEHIND the glass header (topInset) and the floating bottom nav (bottom)
     val contentPad = androidx.compose.foundation.layout.PaddingValues(top = topInset + 6.dp, bottom = 118.dp)
@@ -3473,14 +3473,14 @@ private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, statuses: List<Ga
         while (pager.currentPage == 1) { onLoadStatuses(); delay(5000) }
     }
     HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { pg ->
-        if (pg == 0) ChatList(messages, dpCache, query, contentPad, ayxSnippet, onOpenAyxUpdates, onToggleChatReveal, onDelete, onOpen)
-        else StatusScreen(statuses, contentPad, onOpenAyxUpdates, onOpenStatus, dpCache, onToggleStatusReveal)
+        if (pg == 0) ChatList(messages, dpCache, query, contentPad, ayxSnippet, onToggleChatReveal, onDelete, onOpen)
+        else StatusScreen(statuses, contentPad, onOpenStatus, dpCache, onToggleStatusReveal)
     }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun StatusScreen(statuses: List<GatewayClient.StatusItem>, contentPad: androidx.compose.foundation.layout.PaddingValues, onOpenAyxUpdates: () -> Unit, onOpen: (GatewayClient.StatusItem) -> Unit, dpCache: MutableMap<String, ImageBitmap?>, onToggleReveal: () -> Unit) {
+private fun StatusScreen(statuses: List<GatewayClient.StatusItem>, contentPad: androidx.compose.foundation.layout.PaddingValues, onOpen: (GatewayClient.StatusItem) -> Unit, dpCache: MutableMap<String, ImageBitmap?>, onToggleReveal: () -> Unit) {
     val version = StatusData.seenVersion.value            // recompose + reorder the moment a status is viewed
     val mine = statuses.filter { it.mine }
     val others = statuses.filter { !it.mine }
