@@ -85,9 +85,6 @@ android {
         noCompress += "zip"   // keep assets/nodejs-project.zip STORED, not deflated
     }
 
-    aaptOptions {
-        cruncherEnabled = false   // skip PNG crunching (avoids AAPT2 PNG compile flakiness)
-    }
 
     packaging {
         // Extract libnode.so to the filesystem (safer for the embedded runtime).
