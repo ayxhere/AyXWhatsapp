@@ -21,8 +21,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Fix AAPT2 launcher PNG compilation errors
-      - name: Normalize launcher PNG resources
+      # Repair launcher image resources before Android build
+      - name: Repair and normalize launcher PNG resources
         run: |
           set -e
           python3 -m pip install --quiet Pillow
@@ -30,7 +30,10 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           from PIL import Image
+          import base64
+          import io
           import os
+          import re
 
           root = Path("app/src/main/res")
           targets = list(root.glob("mipmap-*/ic_launcher*.png"))
@@ -40,23 +43,42 @@ jobs:
               raise SystemExit("No launcher PNG resources found")
 
           for path in targets:
-              temp = path.with_name(path.stem + ".normalized.png")
+              raw = path.read_bytes()
+              image_data = raw
+
               try:
-                  with Image.open(path) as source:
-                      source.load()
-                      source.convert("RGBA").save(
-                          temp, format="PNG", optimize=False
+                  image = Image.open(io.BytesIO(image_data))
+                  image.load()
+              except Exception:
+                  # Handle files that contain Base64-encoded image data.
+                  try:
+                      text = raw.decode("ascii").strip()
+                      text = re.sub(
+                          r"^data:image/[^;]+;base64,", "", text
+                      )
+                      decoded = base64.b64decode(
+                          text, validate=True
+                      )
+                      image = Image.open(io.BytesIO(decoded))
+                      image.load()
+                      print(f"Decoded Base64 image: {path}")
+                  except Exception as exc:
+                      raise SystemExit(
+                          f"Cannot decode {path}; replace this resource "
+                          f"with a valid PNG. Details: {exc}"
                       )
 
-                  os.replace(temp, path)
-                  print(f"Normalized: {path}")
+              temp = path.with_name(path.stem + ".fixed.png")
 
-              except Exception as exc:
+              try:
+                  image.convert("RGBA").save(
+                      temp, format="PNG", optimize=False
+                  )
+                  os.replace(temp, path)
+                  print(f"Repaired: {path}")
+              finally:
                   if temp.exists():
                       temp.unlink()
-                  raise SystemExit(
-                      f"Invalid launcher image {path}: {exc}"
-                  )
           PY
 
       - name: Set up JDK 17
