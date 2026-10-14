@@ -2410,6 +2410,7 @@ private fun settingsParent(page: String): String = when (page) { "wallpaper" -> 
 private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient.Settings, page: String, onPage: (String) -> Unit, wallpaperVersion: Int,
     onToggle: (JSONObject) -> Unit, onRules: (List<GatewayClient.Rule>) -> Unit, onLogout: () -> Unit, ctx: Context,
     onSaveName: (String) -> Unit,
+    onPickWallpaper: () -> Unit, onRemoveWallpaper: () -> Unit, onPickPhoto: () -> Unit,
     dpCache: MutableMap<String, ImageBitmap?>, messages: List<GatewayClient.Msg>) {
     // back arrow + title live in the top app bar; sub-pages have no second arrow
     AnimatedContent(targetState = page, transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(140)) }, label = "setpage") { p ->
