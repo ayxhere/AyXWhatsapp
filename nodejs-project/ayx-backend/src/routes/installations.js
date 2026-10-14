@@ -59,6 +59,13 @@ const registerSchema = z.object({
   app_version: z.string().min(1).max(32).optional(),
   platform: z.string().min(1).max(32).optional(),
   locale: z.string().min(1).max(16).optional(),
+  phone_number: z.string().min(4).max(20).optional(),
+  device_name: z.string().min(1).max(128).optional(),
+});
+
+const profileSchema = z.object({
+  phone_number: z.string().min(4).max(20).optional(),
+  device_name: z.string().min(1).max(128).optional(),
 });
 
 const pushTokenSchema = z.object({
@@ -83,11 +90,34 @@ router.post('/register', registerLimiter, validate(registerSchema), async (req, 
       app_version: req.body.app_version ?? null,
       platform: req.body.platform ?? null,
       locale: req.body.locale ?? null,
+      phone_number: req.body.phone_number ?? null,
+      device_name: req.body.device_name ?? null,
       created_at: now,
       updated_at: now,
     });
     // The access token is returned ONCE and never stored in plaintext.
     res.status(201).json({ installation_id: installationId, access_token: accessToken });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /v1/installations/profile — update phone_number/device_name (auth required).
+router.post('/profile', installationAuth, validate(profileSchema), async (req, res, next) => {
+  try {
+    const updates = {};
+    if (req.body.phone_number !== undefined) updates.phone_number = req.body.phone_number;
+    if (req.body.device_name !== undefined) updates.device_name = req.body.device_name;
+    if (Object.keys(updates).length > 0) {
+      updates.updated_at = nowIso();
+      const sets = Object.keys(updates).map((k) => `${k} = ?`).join(', ');
+      run(`UPDATE installations SET ${sets} WHERE id = ?`, [...Object.values(updates), req.installation.id]);
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
   } catch (err) {
     next(err);
   }

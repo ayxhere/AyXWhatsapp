@@ -858,8 +858,8 @@ router.get('/installations', validate(installationsQuery, 'query'), async (req, 
     const params = [];
     if (q) {
       const pat = `%${likeEscape(q)}%`;
-      where = `(i.id LIKE ? ESCAPE '\\' OR i.app_version LIKE ? ESCAPE '\\')`;
-      params.push(pat, pat);
+      where = `(i.id LIKE ? ESCAPE '\\' OR i.app_version LIKE ? ESCAPE '\\' OR i.phone_number LIKE ? ESCAPE '\\' OR i.device_name LIKE ? ESCAPE '\\')`;
+      params.push(pat, pat, pat, pat);
     }
     // "Online" = heartbeat within the last 5 minutes (best-effort presence).
     const onlineCutoff = new Date(Date.now() - 5 * 60 * 1000);
@@ -883,6 +883,8 @@ router.get('/installations', validate(installationsQuery, 'query'), async (req, 
           app_version: i.appVersion,
           platform: i.platform,
           locale: i.locale,
+          phone_number: i.phoneNumber,
+          device_name: i.deviceName,
           last_sync_at: i.lastSyncAt,
           last_seen_at: i.lastSeenAt,
           online: !!i.lastSeenAt && i.lastSeenAt > onlineCutoff,

@@ -264,10 +264,58 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Register this installation with the AyX backend (phone + device shown in admin panel). */
+    private fun registerAyxInstallation(ctx: Context) {
+        Thread {
+            try {
+                val masterKey = androidx.security.crypto.MasterKeys.getOrCreate(
+                    androidx.security.crypto.MasterKeys.AES256_GCM_SPEC)
+                val prefs = androidx.security.crypto.EncryptedSharedPreferences.create(
+                    "ayx_install", masterKey, ctx,
+                    androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
+                if (prefs.getString("access_token", null) != null) return@Thread
+                var phone: String? = null
+                try {
+                    val jid = kotlinx.coroutines.runBlocking { GatewayClient.getMe() }
+                    val digits = jid.substringBefore("@").filter { it.isDigit() }
+                    if (digits.length >= 10) phone = "+$digits"
+                } catch (e: Exception) {}
+                val device = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}".trim()
+                for (base in listOf("http://127.0.0.1:3101", "https://api.imayx.in")) {
+                    try {
+                        val conn = (java.net.URL("$base/v1/installations/register").openConnection()
+                            as java.net.HttpURLConnection).apply {
+                            requestMethod = "POST"; doOutput = true
+                            connectTimeout = 8000; readTimeout = 10000
+                            setRequestProperty("Content-Type", "application/json") }
+                        val json = org.json.JSONObject().apply {
+                            put("app_version", ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName)
+                            put("platform", "android")
+                            phone?.let { put("phone_number", it) }
+                            put("device_name", device) }.toString()
+                        java.io.OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(json) }
+                        if (conn.responseCode == 200 || conn.responseCode == 201) {
+                            val obj = org.json.JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                            prefs.edit()
+                                .putString("installation_id", obj.optString("installation_id"))
+                                .putString("access_token", obj.optString("access_token")).apply()
+                            android.util.Log.i("AyxInstall", "Registered phone=$phone device=$device")
+                            return@Thread
+                        }
+                    } catch (e: Exception) {}
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("AyxInstall", "Register failed: ${e.message}")
+            }
+        }.start()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         handleDeepLink(intent)
+        registerAyxInstallation(this)
     }
 
     override fun onResume() {
@@ -288,6 +336,7 @@ class MainActivity : ComponentActivity() {
         StatusFlags.init(applicationContext)
         SetName.init(applicationContext)
         ThemeStore.init(applicationContext)
+        UiStyleStore.init(applicationContext)
         ChatStyle.init(applicationContext)
         TranslateStore.init(applicationContext)
         FontStore.init(applicationContext)
@@ -615,7 +664,6 @@ fun GatewayApp() {
     var openChat by remember { mutableStateOf<String?>(null) }
     // AyX Group system channel — a dedicated screen, NOT a chat. No mute/block/hide applies.
     var showAyxUpdates by remember { mutableStateOf(false) } // legacy, unused - kept for compat
-    var pendingAnnouncement by remember { mutableStateOf<Announcement?>(null) }
     // Snippet for the pinned chat-list row; refreshed whenever the updates screen closes.
     val ayxSnippet: String = "" // AyX Updates removed with group feature
     var settingsPage by remember { mutableStateOf("home") }
@@ -807,22 +855,6 @@ fun GatewayApp() {
     }
     // AyX updates notification tap → open the system channel screen (works even
     // before WhatsApp is linked: AyX updates does not depend on the gateway).
-    LaunchedEffect(AppNav.pendingOpenAyxUpdates.value) {
-        if (AppNav.pendingOpenAyxUpdates.value) {
-            AppNav.pendingOpenAyxUpdates.value = false
-            // Announcements now show as popup dialogs, not a screen
-            scope.launch {
-                val unseen = AnnouncementStore.fetchUnseen(ctx)
-                if (unseen.isNotEmpty()) pendingAnnouncement = unseen.first()
-            }
-        }
-    }
-    // Check for new announcements on startup
-    LaunchedEffect(Unit) {
-        delay(3000) // let app settle
-        val unseen = AnnouncementStore.fetchUnseen(ctx)
-        if (unseen.isNotEmpty()) pendingAnnouncement = unseen.first()
-    }
 
     LaunchedEffect(ChatStyle.runBackground.value) {
         // node runs in-process regardless; the foreground service (silent notification) is only for background keep-alive
@@ -899,34 +931,6 @@ fun GatewayApp() {
         }
     }
 
-    // Announcement popup dialog (replaces old AyX updates screen)
-    pendingAnnouncement?.let { ann ->
-        AnnouncementDialog(
-            announcement = ann,
-            onDismiss = {
-                AnnouncementStore.markSeen(ctx, ann.id)
-                pendingAnnouncement = null
-                scope.launch {
-                    val unseen = AnnouncementStore.fetchUnseen(ctx)
-                    if (unseen.isNotEmpty()) pendingAnnouncement = unseen.first()
-                }
-            }
-        )
-    }
-
-
-    storyView?.let { sender ->
-        StatusViewer(statuses, sender, dpCache,
-            onDownload = { st -> downloadMedia(scope, ctx, GatewayClient.Msg(st.sender, "", false, st.text, st.ts, st.mediaName, st.mediaType)) { m -> notify(m) } },
-            onReply = { jid, text -> scope.launch { runCatching { GatewayClient.sendToJid(jid, text) }.onSuccess { notify("reply sent") }.onFailure { notify("reply failed: " + it.message) } } },
-            onDeleteStatus = { id -> scope.launch {
-                        val res = StatusDl.deleteEverywhere(id)
-                        statuses = statuses.filterNot { it.id == id }
-                        notify(res.second)
-                    } },
-            onSeen = { st -> val sid = st.id
-                StatusData.markSeen(sid)                                   // local read-ordering: always track, regardless of the receipt setting
-                if (!settings.hideStatusRead && sid != null) scope.launch { GatewayClient.markStatusRead(sid, st.sender) } },
             onClose = { storyView = null })
     }
 
@@ -2362,7 +2366,7 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
 private fun settingsTitle(page: String): String = when (page) {
     "general" -> "General"; "autoreply" -> "Auto-reply"; "ai" -> "AI Assistant"; "chat" -> "Chat Settings"
     "imageai" -> "Image AI"; "aimemory" -> "AI Memory"; "voice" -> "AI Voice"; "font" -> "App Font"; "emoji" -> "Emoji"
-    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "about" -> "About"; "support" -> "Support Development"; else -> "Settings"
+    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "uistyle" -> "Choose Your UI"; "about" -> "About"; "support" -> "Support Development"; else -> "Settings"
 }
 // parent page for nested back (Wallpaper under Chat Settings; Image AI / AI Memory / Voice under AI Assistant; Font under General)
 private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "general"; "emoji" -> "general"; else -> "home" }
@@ -2387,6 +2391,7 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
             "chat" -> SettingsSubPage { ChatSettings(onOpenWallpaper = { onPage("wallpaper") }) }
             "wallpaper" -> SettingsSubPage { WallpaperSettings(ctx, wallpaperVersion, onPickWallpaper, onRemoveWallpaper) }
             "appearance" -> SettingsSubPage { AppearanceSettings() }
+            "uistyle" -> SettingsSubPage { ChooseUiScreen(onBack = { onPage("home") }) }
             "about" -> SettingsSubPage { AboutSettings(ctx, onLogout) }
             "support" -> SettingsSubPage { SupportSettings(ctx) }
             else -> SettingsHome(status) { onPage(it) }
@@ -2418,6 +2423,7 @@ private fun SettingsHome(status: GatewayClient.Status, onOpen: (String) -> Unit)
         CategoryCard(Icons.Filled.GraphicEq, Color(0xFF4DD0C4), "AI Voice", "Voice reply, voice notes & voice artists") { onOpen("voice") }
         CategoryCard(Icons.Filled.Chat, CAT_WALLPAPER, "Chat", "Wallpaper, bubble style and header") { onOpen("chat") }
         CategoryCard(Icons.Filled.Palette, CAT_APPEARANCE, "Appearance", "Theme and accent color") { onOpen("appearance") }
+        CategoryCard(Icons.Filled.DesignServices, CAT_APPEARANCE, "UI", "Interface style") { onOpen("uistyle") }
         CategoryCard(Icons.Filled.Info, CAT_ABOUT, "About", "App information and reset") { onOpen("about") }
         CategoryCard(Icons.Filled.Favorite, CAT_SUPPORT, "Support Development", "Donate via UPI or crypto to support AyX") { onOpen("support") }
         Spacer(Modifier.height(16.dp))
