@@ -1,7 +1,6 @@
 package ayx.whatsapp
 
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.runtime.Composable
 
 /**
  * Maps a hardcoded corner size to the active UI style's equivalent.
@@ -13,11 +12,12 @@ import androidx.compose.runtime.Composable
  *   Medium (12-18dp) → style's button corner
  *   Small (<12dp)  → style's chip corner
  *
- * Must be called from a @Composable context.
+ * Reads UiStyleStore directly (not a @Composable) so it works from
+ * any context. In @Composable callers, reading the state value
+ * subscribes to changes and recomposes on style switch.
  */
-@Composable
 fun uiShapeFor(originalDp: Int): RoundedCornerShape {
-    val style = UiStyleProvider.current
+    val style = uiStyleById(UiStyleStore.uiStyle.value)
     return when {
         originalDp >= 20 -> RoundedCornerShape(style.cardCorner)
         originalDp >= 12 -> RoundedCornerShape(style.buttonCorner)
