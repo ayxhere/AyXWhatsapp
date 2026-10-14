@@ -1784,7 +1784,7 @@ private fun ChatDetail(
     onAttach: () -> Unit,
     onPickChatPhoto: () -> Unit,
     onPickChatVideo: () -> Unit,
-    onCamera: () -> Unit
+    onCamera: () -> Unit,
     onReplySend: (String, String, String) -> Unit,
     onEditMsg: (GatewayClient.Msg, String) -> Unit,
     onForward: (GatewayClient.Msg) -> Unit,
