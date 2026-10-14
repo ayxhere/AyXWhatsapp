@@ -1655,7 +1655,7 @@ private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<Stri
                         maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            if (ui.isDefault) HorizontalDivider()
+            // // HIDDEN
         }
         }
     }
