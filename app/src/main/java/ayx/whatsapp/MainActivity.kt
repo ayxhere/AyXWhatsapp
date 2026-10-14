@@ -116,6 +116,7 @@ import androidx.compose.material.icons.filled.QuestionAnswer
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.DesignServices
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
