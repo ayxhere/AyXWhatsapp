@@ -4037,6 +4037,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
 
 
 @Composable
+private fun ProfileScreen(myJid: String?, dpCache: MutableMap<String, ImageBitmap?>, onPickPhoto: () -> Unit, onSaveName: (String) -> Unit) {
     var name by remember { mutableStateOf("") }
     val number = myJid?.substringBefore("@")?.let { if (it.isNotEmpty() && it.all(Char::isDigit)) "+$it" else it } ?: ""
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
