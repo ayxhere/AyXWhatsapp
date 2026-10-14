@@ -64,6 +64,14 @@ object SarvamTts {
     fun hasApiKey(): Boolean = !apiKey.isNullOrBlank()
 
     /**
+     * Use the existing aiSarvamKey from app settings.
+     * Pass settings.optString("aiSarvamKey", "") from MainActivity.
+     */
+    fun useSettingsKey(key: String) {
+        if (key.isNotBlank()) apiKey = key
+    }
+
+    /**
      * Returns true if the message is a .vv voice command.
      * Format: ".vv <text>" or ".vv<text>"
      */
