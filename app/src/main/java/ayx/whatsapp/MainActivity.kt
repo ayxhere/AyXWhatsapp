@@ -1045,7 +1045,6 @@ fun GatewayApp() {
         )
     }
 
-    }
 
     // image viewer (full screen)
     viewImg?.let { img ->
@@ -1280,7 +1279,8 @@ fun GatewayApp() {
                                 val mbytes = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(muri)?.use { it.readBytes() } }
                                 if (mbytes == null) { notify("can't read file"); return@launch }
                                 notify("sending…")
-                                GatewayClient.sendMedia(mjid, Base64.encodeToString(mbytes, Base64.NO_WRAP), "document", queryName(ctx, muri) ?: "file", mcap)
+                                // images/videos go as real inline media (original bytes, no re-compression = high quality by default); other files as documents
+                                GatewayClient.sendMedia(mjid, Base64.encodeToString(mbytes, Base64.NO_WRAP), mtypeSend, queryName(ctx, muri) ?: "file", mcap)
                                 notify("sent")
                             } catch (e: Exception) { notify("send failed: " + e.message) }
                         }
@@ -1897,18 +1897,38 @@ private fun ChatDetail(
                 IconButton(onClick = { replyTo = null }) { Icon(Icons.Filled.Close, "cancel reply") }
             }
         }
+        // Inline attachment preview inside the composer (thumbnail card with an X) — same feel as WhatsApp / Claude.
         pendingMedia?.let { pm ->
             val puri = pm.first; val pmtype = pm.second
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (pmtype == "image") {
-                    val pbmp = remember(puri) { runCatching { ctx.contentResolver.openInputStream(puri)?.use { BitmapFactory.decodeStream(it)?.asImageBitmap() } }.getOrNull() }
-                    pbmp?.let { Image(it, null, Modifier.size(48.dp).clip(uiShapeFor(8)), contentScale = ContentScale.Crop) }
-                } else {
-                    Icon(Icons.Filled.InsertDriveFile, null, Modifier.size(40.dp), tint = MaterialTheme.colorScheme.primary)
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(96.dp).clip(uiShapeFor(16)).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+                    if (pmtype == "image" || pmtype == "video") {
+                        // decode a down-sampled thumbnail only (the original bytes are what get sent → full quality)
+                        val pbmp = remember(puri) {
+                            runCatching {
+                                if (pmtype == "image") {
+                                    val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                                    ctx.contentResolver.openInputStream(puri)?.use { BitmapFactory.decodeStream(it, null, o) }
+                                    var ss = 1
+                                    while (o.outWidth / ss > 600 || o.outHeight / ss > 600) ss *= 2
+                                    val o2 = BitmapFactory.Options().apply { inSampleSize = ss }
+                                    ctx.contentResolver.openInputStream(puri)?.use { BitmapFactory.decodeStream(it, null, o2)?.asImageBitmap() }
+                                } else {
+                                    val mmr = android.media.MediaMetadataRetriever()
+                                    try { mmr.setDataSource(ctx, puri); mmr.getFrameAtTime(0)?.asImageBitmap() } finally { runCatching { mmr.release() } }
+                                }
+                            }.getOrNull()
+                        }
+                        if (pbmp != null) Image(pbmp, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                        if (pmtype == "video") Icon(Icons.Filled.PlayArrow, null, tint = Color.White, modifier = Modifier.size(34.dp).background(Color.Black.copy(alpha = 0.45f), CircleShape))
+                    } else {
+                        Icon(Icons.Filled.InsertDriveFile, null, Modifier.size(40.dp), tint = MaterialTheme.colorScheme.primary)
+                    }
+                    IconButton(onClick = onClearPendingMedia, modifier = Modifier.align(Alignment.TopEnd).size(30.dp).padding(4.dp)
+                        .background(Color.Black.copy(alpha = 0.55f), CircleShape)) { Icon(Icons.Filled.Close, "remove", tint = Color.White, modifier = Modifier.size(16.dp)) }
                 }
-                Spacer(Modifier.width(8.dp))
-                Text(queryName(ctx, puri) ?: pmtype, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                IconButton(onClick = onClearPendingMedia) { Icon(Icons.Filled.Close, "remove") }
+                Spacer(Modifier.width(10.dp))
+                Text(queryName(ctx, puri) ?: pmtype, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             }
         }
         Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)).padding(horizontal = 6.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically,
@@ -1925,12 +1945,14 @@ private fun ChatDetail(
             OutlinedTextField(input, { input = it }, placeholder = { Text("Message") },
                 shape = uiShapeFor(24), maxLines = 4, modifier = Modifier.weight(1f))
             FilledIconButton(onClick = {
-                if (input.isNotBlank()) {
+                if (pendingMedia != null) {
+                    onSend(input.trim()); input = ""; replyTo = null   // caption is optional when an attachment is staged
+                } else if (input.isNotBlank()) {
                     val rt = replyTo
                     if (rt?.id != null) onReplySend(input.trim(), rt.id!!, rt.text) else onSend(input.trim())
                     input = ""; replyTo = null
                 }
-            }, enabled = input.isNotBlank() && canSend) { Icon(Icons.AutoMirrored.Filled.Send, "send") }
+            }, enabled = (input.isNotBlank() || pendingMedia != null) && canSend) { Icon(Icons.AutoMirrored.Filled.Send, "send") }
         }
         }
       }
