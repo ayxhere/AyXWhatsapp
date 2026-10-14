@@ -592,20 +592,20 @@ private fun queryName(ctx: Context, uri: Uri): String? =
 fun PrivacyGate(onAgree: () -> Unit) {
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Spacer(Modifier.height(26.dp))
-        Box(Modifier.size(64.dp).clip(RoundedCornerShape(20.dp)).background(AYX_GREEN.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(64.dp).clip(uiShapeFor(20)).background(AYX_GREEN.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
             Icon(Icons.Filled.Shield, null, tint = AYX_GREEN, modifier = Modifier.size(34.dp))
         }
         Spacer(Modifier.height(12.dp))
         Text("Privacy Policy", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Text("Your data never leaves your device", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(16.dp))
-        Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f), modifier = Modifier.fillMaxWidth().weight(1f)) {
+        Surface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f), modifier = Modifier.fillMaxWidth().weight(1f)) {
             Column(Modifier.verticalScroll(rememberScrollState()).padding(18.dp)) {
                 Text(PRIVACY_TEXT, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
             }
         }
         Spacer(Modifier.height(16.dp))
-        Button(onClick = onAgree, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(14.dp)) {
+        Button(onClick = onAgree, modifier = Modifier.fillMaxWidth().height(52.dp), shape = uiShapeFor(14)) {
             Icon(Icons.Filled.CheckCircle, null, modifier = Modifier.size(19.dp)); Spacer(Modifier.width(8.dp)); Text("I Agree & Continue", fontWeight = FontWeight.SemiBold)
         }
         Spacer(Modifier.height(18.dp))
@@ -630,7 +630,7 @@ private fun SplashScreen(dark: Boolean, onDone: () -> Unit) {
                 Box(Modifier.size(154.dp).graphicsLayer { alpha = glow * appear }
                     .background(Brush.radialGradient(listOf(AYX_GREEN.copy(alpha = 0.55f), Color.Transparent)), CircleShape))
                 Box(Modifier.size(92.dp).graphicsLayer { scaleX = scale; scaleY = scale; alpha = appear }
-                    .clip(RoundedCornerShape(28.dp)).background(Brush.linearGradient(listOf(AYX_GREEN, IOS_BLUE))),
+                    .clip(uiShapeFor(28)).background(Brush.linearGradient(listOf(AYX_GREEN, IOS_BLUE))),
                     contentAlignment = Alignment.Center) {
                     Text("AyX", color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false, style = MaterialTheme.typography.headlineMedium)
                 }
@@ -1002,18 +1002,18 @@ fun GatewayApp() {
         AlertDialog(
             onDismissRequest = { textStatusDlg = false },
             containerColor = dialogBg(),
-            shape = RoundedCornerShape(24.dp),
+            shape = uiShapeFor(24),
             icon = { Icon(Icons.Filled.TextFields, null, tint = AYX_GREEN) },
             title = { Text("Text status") },
             text = {
                 Column {
                     // live preview on the chosen background colour
-                    Box(Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(16.dp)).background(Color(bgColors[bgIdx])), contentAlignment = Alignment.Center) {
+                    Box(Modifier.fillMaxWidth().height(150.dp).clip(uiShapeFor(16)).background(Color(bgColors[bgIdx])), contentAlignment = Alignment.Center) {
                         Text(vtext.ifBlank { "Type your status…" }, color = Color.White, textAlign = TextAlign.Center, fontWeight = FontWeight.SemiBold,
                             style = MaterialTheme.typography.titleMedium, maxLines = 6, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(18.dp))
                     }
                     Spacer(Modifier.height(12.dp))
-                    OutlinedTextField(vtext, { vtext = it }, placeholder = { Text("Type your status…") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), maxLines = 4)
+                    OutlinedTextField(vtext, { vtext = it }, placeholder = { Text("Type your status…") }, modifier = Modifier.fillMaxWidth(), shape = uiShapeFor(14), maxLines = 4)
                     Spacer(Modifier.height(10.dp))
                     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         bgColors.forEachIndexed { i, c ->
@@ -1044,7 +1044,7 @@ fun GatewayApp() {
         var cap by remember(uri) { mutableStateOf("") }
         var original by remember(uri) { mutableStateOf(false) }
         Dialog(onDismissRequest = { pendingMedia = null }) {
-            Surface(shape = RoundedCornerShape(16.dp), color = dialogBg()) {
+            Surface(shape = uiShapeFor(16), color = dialogBg()) {
                 Column(Modifier.padding(16.dp).widthIn(max = 340.dp)) {
                     Text("Send " + mtype, style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(8.dp))
@@ -1141,7 +1141,7 @@ fun GatewayApp() {
         var csearch by remember { mutableStateOf("") }
         LaunchedEffect(Unit) { cts = GatewayClient.getContacts() }
         Dialog(onDismissRequest = { showNewChat = false }) {
-            Surface(shape = RoundedCornerShape(16.dp), color = dialogBg()) {
+            Surface(shape = uiShapeFor(16), color = dialogBg()) {
                 Column(Modifier.padding(16.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("New chat", style = MaterialTheme.typography.titleLarge)
                     OutlinedTextField(num, { num = it.filter(Char::isDigit) }, label = { Text("Number with country code") },
@@ -1194,7 +1194,7 @@ fun GatewayApp() {
                 title = {
                     if (searchMode && openChat == null && screen == "chats") {
                         OutlinedTextField(searchQuery, { searchQuery = it }, placeholder = { Text("Search chats") },
-                            leadingIcon = { Icon(Icons.Filled.Search, null, tint = IOS_BLUE) }, singleLine = true, shape = RoundedCornerShape(24.dp),
+                            leadingIcon = { Icon(Icons.Filled.Search, null, tint = IOS_BLUE) }, singleLine = true, shape = uiShapeFor(24),
                             colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent,
                                 focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant, unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant),
                             modifier = Modifier.fillMaxWidth())
@@ -1244,7 +1244,7 @@ fun GatewayApp() {
                         if (searchMode) {
                             IconButton(onClick = { searchMode = false; searchQuery = "" }) { Icon(Icons.Filled.Close, "close") }
                         } else {
-                            Row(Modifier.padding(end = 4.dp).clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))) {
+                            Row(Modifier.padding(end = 4.dp).clip(uiShapeFor(22)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))) {
                                 IconButton(onClick = { searchMode = true }) { Icon(Icons.Filled.Search, "search") }
                                 IconButton(onClick = { settingsPage = "home"; screen = "settings" }) { Icon(Icons.Filled.Settings, "settings") }
                             }
@@ -1254,7 +1254,7 @@ fun GatewayApp() {
                         var menu by remember { mutableStateOf(false) }
                         val ocb = openChat
                         val isBlocked = ocb != null && ocb in blockedJids
-                        Row(Modifier.padding(end = 4.dp).clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))) {
+                        Row(Modifier.padding(end = 4.dp).clip(uiShapeFor(22)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))) {
                             IconButton(onClick = { showSetName = true }) { Icon(Icons.Filled.Edit, "set name") }
                             IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "menu") }
                         }
@@ -1397,15 +1397,15 @@ fun GatewayApp() {
             // Floating rounded glass Home/Status navigation — overlaid so the list scrolls behind it.
             if (status.registered && openChat == null && screen == "chats") {
                 val selC = MaterialTheme.colorScheme.primary; val dimC = MaterialTheme.colorScheme.onSurfaceVariant
-                Surface(shape = RoundedCornerShape(30.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                Surface(shape = uiShapeFor(30), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
                     tonalElevation = 0.dp, shadowElevation = 14.dp, border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)),
                     modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 12.dp)) {
                     Row(Modifier.padding(horizontal = 6.dp).height(60.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.width(104.dp).fillMaxHeight().clip(RoundedCornerShape(24.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { chatsPage = 0 }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                        Column(Modifier.width(104.dp).fillMaxHeight().clip(uiShapeFor(24)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { chatsPage = 0 }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                             Icon(Icons.Filled.Home, "Home", tint = if (chatsPage == 0) selC else dimC, modifier = Modifier.size(22.dp))
                             Spacer(Modifier.height(2.dp)); Text("Home", color = if (chatsPage == 0) selC else dimC, style = MaterialTheme.typography.labelSmall, fontWeight = if (chatsPage == 0) FontWeight.SemiBold else FontWeight.Normal)
                         }
-                        Column(Modifier.width(104.dp).fillMaxHeight().clip(RoundedCornerShape(24.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { chatsPage = 1 }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                        Column(Modifier.width(104.dp).fillMaxHeight().clip(uiShapeFor(24)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { chatsPage = 1 }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                             Icon(Icons.Filled.DonutLarge, "Status", tint = if (chatsPage == 1) selC else dimC, modifier = Modifier.size(22.dp))
                             Spacer(Modifier.height(2.dp)); Text("Status", color = if (chatsPage == 1) selC else dimC, style = MaterialTheme.typography.labelSmall, fontWeight = if (chatsPage == 1) FontWeight.SemiBold else FontWeight.Normal)
                         }
@@ -1413,7 +1413,7 @@ fun GatewayApp() {
                 }
             }
             toast?.let {
-                Surface(color = MaterialTheme.colorScheme.inverseSurface, shape = RoundedCornerShape(8.dp),
+                Surface(color = MaterialTheme.colorScheme.inverseSurface, shape = uiShapeFor(8),
                     modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 90.dp)) {
                     Text(it, Modifier.padding(12.dp, 8.dp), color = MaterialTheme.colorScheme.inverseOnSurface)
                 }
@@ -1425,7 +1425,7 @@ fun GatewayApp() {
                 AlertDialog(
                     onDismissRequest = { showSetName = false },
                     containerColor = dialogBg(),
-                    shape = RoundedCornerShape(24.dp),
+                    shape = uiShapeFor(24),
                     icon = { Icon(Icons.Filled.Edit, null, tint = AYX_GREEN) },
                     title = { Text("Set name") },
                     text = {
@@ -1434,7 +1434,7 @@ fun GatewayApp() {
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(Modifier.height(12.dp))
                             OutlinedTextField(nameInput, { nameInput = it }, singleLine = true,
-                                placeholder = { Text("Custom name") }, shape = RoundedCornerShape(14.dp),
+                                placeholder = { Text("Custom name") }, shape = uiShapeFor(14),
                                 trailingIcon = { if (nameInput.isNotEmpty()) IconButton(onClick = { nameInput = "" }) { Icon(Icons.Filled.Clear, "clear") } },
                                 modifier = Modifier.fillMaxWidth())
                         }
@@ -1490,7 +1490,7 @@ private fun ForwardPicker(messages: List<GatewayClient.Msg>, dpCache: MutableMap
     }
     val filtered = chats.filter { query.isBlank() || chatTitleOf(messages, it).contains(query, true) || it.contains(query) }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(shape = RoundedCornerShape(24.dp), color = dialogBg(),
+        Surface(shape = uiShapeFor(24), color = dialogBg(),
             modifier = Modifier.fillMaxWidth(0.94f).fillMaxHeight(0.8f)) {
             Column(Modifier.fillMaxSize().padding(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1502,13 +1502,13 @@ private fun ForwardPicker(messages: List<GatewayClient.Msg>, dpCache: MutableMap
                 }
                 Spacer(Modifier.height(10.dp))
                 OutlinedTextField(query, { query = it }, placeholder = { Text("Search chats") }, singleLine = true,
-                    leadingIcon = { Icon(Icons.Filled.Search, null) }, shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth())
+                    leadingIcon = { Icon(Icons.Filled.Search, null) }, shape = uiShapeFor(24), modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(8.dp))
                 LazyColumn(Modifier.weight(1f)) {
                     itemsIndexed(filtered, key = { _, jid -> jid }) { _, jid ->
                         val name = chatTitleOf(messages, jid)
                         val isSel = jid in selected
-                        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                        Row(Modifier.fillMaxWidth().clip(uiShapeFor(14))
                             .clickable { if (isSel) selected.remove(jid) else selected.add(jid) }
                             .padding(horizontal = 6.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Avatar(jid, name, dpCache, 44.dp)
@@ -1689,7 +1689,7 @@ private fun ChatActionSheet(name: String, jid: String, preview: String, dpCache:
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Box(Modifier.fillMaxSize().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Surface(shape = RoundedCornerShape(20.dp), color = dialogBg().copy(alpha = 0.98f), shadowElevation = 10.dp,
+                Surface(shape = uiShapeFor(20), color = dialogBg().copy(alpha = 0.98f), shadowElevation = 10.dp,
                     border = androidx.compose.foundation.BorderStroke(1.dp, onSurf.copy(alpha = 0.08f)), modifier = Modifier.fillMaxWidth()) {
                     Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                         Avatar(jid, name, dpCache, 48.dp)
@@ -1700,7 +1700,7 @@ private fun ChatActionSheet(name: String, jid: String, preview: String, dpCache:
                         }
                     }
                 }
-                Surface(shape = RoundedCornerShape(20.dp), color = dialogBg().copy(alpha = 0.98f), shadowElevation = 12.dp,
+                Surface(shape = uiShapeFor(20), color = dialogBg().copy(alpha = 0.98f), shadowElevation = 12.dp,
                     border = androidx.compose.foundation.BorderStroke(1.dp, onSurf.copy(alpha = 0.08f)), modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(vertical = 6.dp)) {
                         if (muted) ActionSheetItem(Icons.Filled.Notifications, "Unmute chat", AYX_GREEN, onUnmute)
@@ -1726,9 +1726,9 @@ private fun MuteTimerDialog(onDismiss: () -> Unit, onPick: (Long) -> Unit) {
         "Permanently" to ChatFlags.MUTE_FOREVER,
     )
     Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(24.dp), color = dialogBg().copy(alpha = 0.97f),
+        Surface(shape = uiShapeFor(24), color = dialogBg().copy(alpha = 0.97f),
             tonalElevation = 6.dp, shadowElevation = 12.dp,
-            modifier = Modifier.fillMaxWidth().border(1.dp, onSurf.copy(alpha = 0.10f), RoundedCornerShape(24.dp))) {
+            modifier = Modifier.fillMaxWidth().border(1.dp, onSurf.copy(alpha = 0.10f), uiShapeFor(24))) {
             Column(Modifier.padding(vertical = 8.dp)) {
                 Text("Mute for…", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
@@ -1865,7 +1865,7 @@ private fun ChatDetail(
         }
         replyTo?.let { rt ->
             Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 6.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.width(3.dp).height(34.dp).background(IOS_BLUE, RoundedCornerShape(2.dp)))
+                Box(Modifier.width(3.dp).height(34.dp).background(IOS_BLUE, uiShapeFor(2)))
                 Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f)) {
                     Text(if (rt.fromMe) "You" else rt.name.ifBlank { "Reply" }, style = MaterialTheme.typography.labelMedium, color = IOS_BLUE, maxLines = 1)
@@ -1879,7 +1879,7 @@ private fun ChatDetail(
             IconButton(onClick = onAttach) { Icon(Icons.Filled.AttachFile, "attach") }
             IconButton(onClick = onCamera) { Icon(Icons.Filled.PhotoCamera, "camera") }
             OutlinedTextField(input, { input = it }, placeholder = { Text("Message") },
-                shape = RoundedCornerShape(24.dp), maxLines = 4, modifier = Modifier.weight(1f))
+                shape = uiShapeFor(24), maxLines = 4, modifier = Modifier.weight(1f))
             FilledIconButton(onClick = {
                 if (input.isNotBlank()) {
                     val rt = replyTo
@@ -1912,7 +1912,7 @@ private fun TranslateLangDialog(onDismiss: () -> Unit, onPick: (String) -> Unit)
     val langs = listOf("English", "Hindi", "Roman Hindi (Hinglish)", "Bangla", "Roman Bangla", "Spanish", "French", "Arabic", "Urdu", "Tamil", "Telugu")
     var custom by remember { mutableStateOf("") }
     Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(24.dp), color = dialogBg(), tonalElevation = 6.dp, shadowElevation = 12.dp,
+        Surface(shape = uiShapeFor(24), color = dialogBg(), tonalElevation = 6.dp, shadowElevation = 12.dp,
             modifier = Modifier.fillMaxWidth().fillMaxHeight(0.82f)) {
             Column(Modifier.padding(vertical = 8.dp)) {
                 Text("Translate messages to…", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 10.dp))
@@ -1929,7 +1929,7 @@ private fun TranslateLangDialog(onDismiss: () -> Unit, onPick: (String) -> Unit)
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                 Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(custom, { custom = it }, label = { Text("Other language") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f))
+                    OutlinedTextField(custom, { custom = it }, label = { Text("Other language") }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.weight(1f))
                     Spacer(Modifier.width(8.dp))
                     FilledTonalButton(onClick = { if (custom.isNotBlank()) onPick(custom.trim()) }, enabled = custom.isNotBlank()) { Text("Use") }
                 }
@@ -1942,7 +1942,7 @@ private fun TranslateLangDialog(onDismiss: () -> Unit, onPick: (String) -> Unit)
 @Composable
 private fun FontPickerDialog(ctx: Context, current: String, onDismiss: () -> Unit, onPick: (String) -> Unit) {
     Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(24.dp), color = dialogBg(), tonalElevation = 6.dp, shadowElevation = 12.dp,
+        Surface(shape = uiShapeFor(24), color = dialogBg(), tonalElevation = 6.dp, shadowElevation = 12.dp,
             modifier = Modifier.fillMaxWidth().fillMaxHeight(0.8f)) {
             Column(Modifier.padding(vertical = 8.dp)) {
                 Text("App font", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
@@ -1987,7 +1987,7 @@ private fun MessageActionSheet(
             Column(Modifier.fillMaxWidth().statusBarsPadding().navigationBarsPadding().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()),
                 horizontalAlignment = side) {
                 // reaction pill
-                Surface(shape = RoundedCornerShape(28.dp), color = dialogBg().copy(alpha = 0.98f), shadowElevation = 10.dp,
+                Surface(shape = uiShapeFor(28), color = dialogBg().copy(alpha = 0.98f), shadowElevation = 10.dp,
                     border = androidx.compose.foundation.BorderStroke(1.dp, onSurf.copy(alpha = 0.08f))) {
                     Row(Modifier.padding(horizontal = 6.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                         listOf("👍", "❤️", "😂", "😮", "😢", "🙏").forEach { e ->
@@ -2006,7 +2006,7 @@ private fun MessageActionSheet(
                 }
                 Spacer(Modifier.height(10.dp))
                 // action box — same side as the message
-                Surface(shape = RoundedCornerShape(20.dp), color = dialogBg().copy(alpha = 0.98f), shadowElevation = 12.dp,
+                Surface(shape = uiShapeFor(20), color = dialogBg().copy(alpha = 0.98f), shadowElevation = 12.dp,
                     border = androidx.compose.foundation.BorderStroke(1.dp, onSurf.copy(alpha = 0.08f)),
                     modifier = Modifier.widthIn(min = 230.dp, max = 300.dp)) {
                     Column(Modifier.padding(vertical = 6.dp)) {
@@ -2044,14 +2044,14 @@ private fun EditMessageDialog(m: GatewayClient.Msg, onDismiss: () -> Unit, onSav
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = dialogBg(),
-        shape = RoundedCornerShape(24.dp),
+        shape = uiShapeFor(24),
         icon = { Icon(Icons.Filled.Edit, null, tint = AYX_GREEN) },
         title = { Text("Edit message") },
         text = {
             Column {
                 OutlinedTextField(
                     newText, { newText = it }, modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("Message") }, shape = RoundedCornerShape(14.dp), maxLines = 6,
+                    placeholder = { Text("Message") }, shape = uiShapeFor(14), maxLines = 6,
                     trailingIcon = { if (newText.isNotEmpty()) IconButton(onClick = { newText = "" }) { Icon(Icons.Filled.Clear, "clear") } }
                 )
                 Text("${newText.length} chars", style = MaterialTheme.typography.labelSmall,
@@ -2076,7 +2076,7 @@ private fun MessageInfoDialog(m: GatewayClient.Msg, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = dialogBg(),
-        shape = RoundedCornerShape(24.dp),
+        shape = uiShapeFor(24),
         icon = { Icon(Icons.Filled.Info, null, tint = AYX_GREEN) },
         title = { Text("Message info") },
         text = {
@@ -2126,7 +2126,7 @@ private fun ChatGlassHeader(
     val pill = MaterialTheme.colorScheme.surface.copy(alpha = frost)
     val onPill = MaterialTheme.colorScheme.onSurface
     val borderCol = onPill.copy(alpha = 0.12f)
-    val pillShape = RoundedCornerShape(24.dp)
+    val pillShape = uiShapeFor(24)
     var menu by remember { mutableStateOf(false) }
 
     // ONE floating frosted card: back + avatar + name/presence + edit + menu (original WhatsApp layout, no separate arrow chip)
@@ -2230,14 +2230,14 @@ private fun styleSpec(fromMe: Boolean, dark: Boolean, recvGrey: Color, recvText:
             if (fromMe) Triple(if (dark) Color(0xFF005C4B) else Color(0xFFD9FDD3), if (dark) Color.White else Color.Black, RoundedCornerShape(8.dp, 8.dp, 2.dp, 8.dp))
             else Triple(if (dark) Color(0xFF202C33) else Color.White, recvText, RoundedCornerShape(8.dp, 8.dp, 8.dp, 2.dp))
         "material" ->
-            if (fromMe) Triple(ThemeStore.accentColor(), Color.Black, RoundedCornerShape(14.dp))
-            else Triple(if (dark) Color(0xFF2A2A2E) else Color(0xFFE7E0EC), recvText, RoundedCornerShape(14.dp))
+            if (fromMe) Triple(ThemeStore.accentColor(), Color.Black, uiShapeFor(14))
+            else Triple(if (dark) Color(0xFF2A2A2E) else Color(0xFFE7E0EC), recvText, uiShapeFor(14))
         "rounded" ->
-            if (fromMe) Triple(IOS_BLUE, Color.White, RoundedCornerShape(22.dp))
-            else Triple(recvGrey, recvText, RoundedCornerShape(22.dp))
+            if (fromMe) Triple(IOS_BLUE, Color.White, uiShapeFor(22))
+            else Triple(recvGrey, recvText, uiShapeFor(22))
         "compact" ->
-            if (fromMe) Triple(IOS_BLUE, Color.White, RoundedCornerShape(9.dp))
-            else Triple(recvGrey, recvText, RoundedCornerShape(9.dp))
+            if (fromMe) Triple(IOS_BLUE, Color.White, uiShapeFor(9))
+            else Triple(recvGrey, recvText, uiShapeFor(9))
         "gb" ->
             if (fromMe) Triple(Color(0xFF128C7E), Color.White, RoundedCornerShape(14.dp, 14.dp, 4.dp, 14.dp))
             else Triple(if (dark) Color(0xFF1F2C34) else Color(0xFFEAEAEA), recvText, RoundedCornerShape(14.dp, 14.dp, 14.dp, 4.dp))
@@ -2301,7 +2301,7 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                 }
                 if (!m.quotedText.isNullOrBlank()) {
                     Row(Modifier.padding(horizontal = 6.dp, vertical = 2.dp)) {
-                        Box(Modifier.width(3.dp).height(30.dp).background(if (m.fromMe) Color.White.copy(alpha = 0.7f) else IOS_BLUE, RoundedCornerShape(2.dp)))
+                        Box(Modifier.width(3.dp).height(30.dp).background(if (m.fromMe) Color.White.copy(alpha = 0.7f) else IOS_BLUE, uiShapeFor(2)))
                         Spacer(Modifier.width(6.dp))
                         Text(m.quotedText!!, style = MaterialTheme.typography.bodySmall,
                             color = if (m.fromMe) Color.White.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2313,7 +2313,7 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                         modifier = Modifier.padding(horizontal = 8.dp))
                 }
                 if (hasMedia && preview != null) {
-                    Box(Modifier.clip(RoundedCornerShape(14.dp)).clickable { onMedia(m) }, contentAlignment = Alignment.Center) {
+                    Box(Modifier.clip(uiShapeFor(14)).clickable { onMedia(m) }, contentAlignment = Alignment.Center) {
                         Image(preview, "media", Modifier.widthIn(min = 220.dp, max = 280.dp).heightIn(max = 340.dp), contentScale = ContentScale.Crop)
                         if (isVideo) Box(Modifier.size(52.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape), contentAlignment = Alignment.Center) {
                             Icon(Icons.Filled.PlayArrow, "play", tint = Color.White, modifier = Modifier.size(34.dp))
@@ -2436,7 +2436,7 @@ private fun SettingsHome(status: GatewayClient.Status, onOpen: (String) -> Unit)
 private fun StatusCard(status: GatewayClient.Status) {
     val connected = status.registered && status.connection == "open"
     val dot = when { connected -> OK_GREEN; status.connection == "connecting" -> WARN_AMBER; else -> ERR_RED }
-    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f), modifier = Modifier.fillMaxWidth()) {
+    Surface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f), modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             PulseDot(dot)
             Spacer(Modifier.width(12.dp))
@@ -2461,7 +2461,7 @@ private fun PulseDot(color: Color) {
 
 @Composable
 private fun CategoryCard(icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color, title: String, desc: String, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+    Surface(onClick = onClick, shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(14.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             IconChip(icon, tint)
             Spacer(Modifier.width(14.dp))
@@ -2476,7 +2476,7 @@ private fun CategoryCard(icon: androidx.compose.ui.graphics.vector.ImageVector, 
 
 @Composable
 private fun IconChip(icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color) {
-    Box(Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(tint.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
+    Box(Modifier.size(40.dp).clip(uiShapeFor(12)).background(tint.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
         Icon(icon, null, tint = tint, modifier = Modifier.size(21.dp))
     }
 }
@@ -2495,7 +2495,7 @@ private fun SettingsSubPage(content: @Composable ColumnScope.() -> Unit) {
 private fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(title.uppercase(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp, bottom = 2.dp))
-        Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+        Surface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(vertical = 4.dp, horizontal = 12.dp), content = content)
         }
     }
@@ -2536,7 +2536,7 @@ private fun FontSettings(ctx: Context) {
     SettingsGroup("App font") {
         FontStore.fonts.keys.forEach { name ->
             val fam = FontStore.family(ctx, name)
-            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { FontStore.chooseFont(name); current = name }.padding(horizontal = 6.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().clip(uiShapeFor(12)).clickable { FontStore.chooseFont(name); current = name }.padding(horizontal = 6.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(name, Modifier.weight(1f), fontFamily = fam, style = MaterialTheme.typography.bodyLarge)
                 if (name == current) Icon(Icons.Filled.CheckCircle, "selected", tint = AYX_GREEN)
             }
@@ -2598,7 +2598,7 @@ private fun EmojiStylePicker(ctx: Context, scope: CoroutineScope) {
 
 @Composable
 private fun EmojiStyleRow(name: String, sub: String, selectedNow: Boolean, downloaded: Boolean, loading: Boolean, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(enabled = !loading) { onClick() }.padding(horizontal = 8.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().clip(uiShapeFor(12)).clickable(enabled = !loading) { onClick() }.padding(horizontal = 8.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(name, style = MaterialTheme.typography.bodyLarge)
             Text(sub, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -2649,7 +2649,7 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
         var tlang by remember { mutableStateOf(TranslateStore.lang) }
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(tlang, { tlang = it }, label = { Text("Translate to") }, singleLine = true,
-            placeholder = { Text("e.g. English, Hindi, Roman Hindi, Bangla") }, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+            placeholder = { Text("e.g. English, Hindi, Roman Hindi, Bangla") }, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
             FilledTonalButton(onClick = { TranslateStore.chooseLang(tlang.trim().ifBlank { "English" }); Toast.makeText(ctx, "Translate language saved", Toast.LENGTH_SHORT).show() }) { Text("Save") }
         }
@@ -2697,7 +2697,7 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
         AlertDialog(
             onDismissRequest = { confirmClearData = false },
             containerColor = dialogBg(),
-            shape = RoundedCornerShape(24.dp),
+            shape = uiShapeFor(24),
             icon = { Icon(Icons.Filled.Delete, null, tint = ERR_RED) },
             title = { Text("Clear app data?") },
             text = {
@@ -2739,7 +2739,7 @@ private fun StorageRow(icon: androidx.compose.ui.graphics.vector.ImageVector, ti
 // tappable settings row (opens something) — same look as SettingRow but with a chevron
 @Composable
 private fun ActionRow(icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color, title: String, desc: String?, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { onClick() }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().clip(uiShapeFor(14)).clickable { onClick() }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
         IconChip(icon, tint)
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
@@ -2753,7 +2753,7 @@ private fun ActionRow(icon: androidx.compose.ui.graphics.vector.ImageVector, tin
 @Composable
 private fun EmptyState(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, desc: String) {
     Column(Modifier.fillMaxWidth().padding(vertical = 26.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Box(Modifier.size(56.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(56.dp).clip(uiShapeFor(16)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)), contentAlignment = Alignment.Center) {
             Icon(icon, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(26.dp))
         }
         Text(title, style = MaterialTheme.typography.titleSmall)
@@ -2774,13 +2774,13 @@ private fun AutoReplySection(settings: GatewayClient.Settings, onToggle: (JSONOb
         EmptyState(Icons.Filled.QuestionAnswer, "No auto-reply rules", "Create a keyword rule to automatically respond to messages.")
     } else {
         settings.rules.forEachIndexed { i, r ->
-            Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+            Surface(shape = uiShapeFor(16), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
                 Row(Modifier.padding(14.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(r.match, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, false))
                             Spacer(Modifier.width(8.dp))
-                            Surface(shape = RoundedCornerShape(8.dp), color = CAT_AUTOREPLY.copy(alpha = 0.18f)) {
+                            Surface(shape = uiShapeFor(8), color = CAT_AUTOREPLY.copy(alpha = 0.18f)) {
                                 Text(r.mode, style = MaterialTheme.typography.labelSmall, color = CAT_AUTOREPLY, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp))
                             }
                         }
@@ -2791,11 +2791,11 @@ private fun AutoReplySection(settings: GatewayClient.Settings, onToggle: (JSONOb
             }
         }
     }
-    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+    Surface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("New rule", style = MaterialTheme.typography.titleSmall)
-            OutlinedTextField(match, { match = it }, label = { Text("If message contains…") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(reply, { reply = it }, label = { Text("Reply with…") }, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(match, { match = it }, label = { Text("If message contains…") }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(reply, { reply = it }, label = { Text("Reply with…") }, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("contains", "exact", "starts").forEach { md ->
                     FilterChip(selected = mode == md, onClick = { mode = md }, label = { Text(md) })
@@ -2850,7 +2850,7 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
             var lang by remember(settings.aiReplyLang) { mutableStateOf(settings.aiReplyLang) }
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(lang, { lang = it }, placeholder = { Text("e.g. Reply only in Roman Bangla, English letters") },
-                shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+                shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 FilledTonalButton(onClick = { onToggle(JSONObject().put("aiReplyLang", lang.trim())); Toast.makeText(ctx, "Language saved", Toast.LENGTH_SHORT).show() }) { Text("Save") }
             }
@@ -2890,7 +2890,7 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
             .put("aiSystemPrompt", sys))
         Toast.makeText(ctx, "AI settings saved", Toast.LENGTH_SHORT).show()
     }
-    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+    Surface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             // header row: title left, Save button on the right
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -2898,13 +2898,13 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
                 FilledTonalButton(onClick = { saveApi() }) { Text("Save") }
             }
             LinkRow(Icons.Filled.Language, Color(0xFF4DD07A), "Get Groq key", "console.groq.com → tap to create key") { openUrl(ctx, "https://console.groq.com/keys") }
-            OutlinedTextField(url, { url = it }, label = { Text("API URL (text/voice)") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(key, { key = it }, label = { Text("API key") }, singleLine = true, shape = RoundedCornerShape(14.dp),
+            OutlinedTextField(url, { url = it }, label = { Text("API URL (text/voice)") }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(key, { key = it }, label = { Text("API key") }, singleLine = true, shape = uiShapeFor(14),
                 visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
                 trailingIcon = { IconButton(onClick = { showKey = !showKey }) { Icon(if (showKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, "toggle key") } },
                 modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(model, { model = it }, label = { Text("Model (text)") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(sys, { sys = it }, label = { Text("System prompt (optional)") }, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(model, { model = it }, label = { Text("Model (text)") }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(sys, { sys = it }, label = { Text("System prompt (optional)") }, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
         }
     }
 }
@@ -2949,7 +2949,7 @@ private fun ImageAiSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
             .put("aiVisionModel2", vision2.trim()).put("aiVisionApiUrl2", vision2Url.trim()).put("aiVisionApiKey2", vision2Key.trim()))
         Toast.makeText(ctx, "Image AI saved", Toast.LENGTH_SHORT).show()
     }
-    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+    Surface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("Image AI", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
@@ -2977,9 +2977,9 @@ private fun ImageAiSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
                 vision = "gemini-flash-latest, gemini-3-flash, gemini-2.5-flash, gemini-2.0-flash"
                 Toast.makeText(ctx, "Gemini filled — paste your key and Save", Toast.LENGTH_LONG).show()
             }) { Text("Use Gemini (free)") }
-            OutlinedTextField(vision, { vision = it }, label = { Text("Vision model(s) — comma se multiple") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(visionUrl, { visionUrl = it }, label = { Text("Vision API URL") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(visionKey, { visionKey = it }, label = { Text("Vision API key") }, singleLine = true, shape = RoundedCornerShape(14.dp),
+            OutlinedTextField(vision, { vision = it }, label = { Text("Vision model(s) — comma se multiple") }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(visionUrl, { visionUrl = it }, label = { Text("Vision API URL") }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(visionKey, { visionKey = it }, label = { Text("Vision API key") }, singleLine = true, shape = uiShapeFor(14),
                 visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
                 trailingIcon = { IconButton(onClick = { showKey = !showKey }) { Icon(if (showKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, "toggle key") } },
                 modifier = Modifier.fillMaxWidth())
@@ -2992,9 +2992,9 @@ private fun ImageAiSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
                 vision2 = "google/gemini-2.0-flash-exp:free, qwen/qwen2.5-vl-72b-instruct:free, meta-llama/llama-3.2-11b-vision-instruct:free"
                 Toast.makeText(ctx, "OpenRouter filled — paste your key and Save", Toast.LENGTH_LONG).show()
             }) { Text("Use OpenRouter (free)") }
-            OutlinedTextField(vision2, { vision2 = it }, label = { Text("Fallback model(s) — comma se multiple") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(vision2Url, { vision2Url = it }, label = { Text("Fallback API URL") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(vision2Key, { vision2Key = it }, label = { Text("Fallback API key") }, singleLine = true, shape = RoundedCornerShape(14.dp),
+            OutlinedTextField(vision2, { vision2 = it }, label = { Text("Fallback model(s) — comma se multiple") }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(vision2Url, { vision2Url = it }, label = { Text("Fallback API URL") }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(vision2Key, { vision2Key = it }, label = { Text("Fallback API key") }, singleLine = true, shape = uiShapeFor(14),
                 visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
 
             HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
@@ -3020,14 +3020,14 @@ private fun WallpaperSettings(ctx: Context, version: Int, onPickWallpaper: () ->
     // decode keyed on `version` so the preview refreshes instantly after set/remove (no leave & reopen)
     val wp = remember(version) { runCatching { val f = File(ctx.filesDir, "wallpaper.jpg"); if (f.exists()) BitmapFactory.decodeFile(f.absolutePath)?.asImageBitmap() else null }.getOrNull() }
     Text("PREVIEW", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
-    Box(Modifier.fillMaxWidth().height(200.dp).clip(RoundedCornerShape(20.dp)).background(if (wp == null) Color(0xFF0E1621) else Color.Black)) {
+    Box(Modifier.fillMaxWidth().height(200.dp).clip(uiShapeFor(20)).background(if (wp == null) Color(0xFF0E1621) else Color.Black)) {
         if (wp != null) Image(wp, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         Column(Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Surface(shape = RoundedCornerShape(14.dp), color = Color(0xFF2C2C2E)) {
+            Surface(shape = uiShapeFor(14), color = Color(0xFF2C2C2E)) {
                 Text("Hey! 👋", color = Color.White, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                Surface(shape = RoundedCornerShape(14.dp), color = IOS_BLUE) {
+                Surface(shape = uiShapeFor(14), color = IOS_BLUE) {
                     Text("This is your wallpaper", color = Color.White, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
                 }
             }
@@ -3043,7 +3043,7 @@ private fun ChatSettings(onOpenWallpaper: () -> Unit) {
     val dark = isSystemInDarkTheme()
 
     SettingsGroup("Wallpaper") {
-        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { onOpenWallpaper() }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().clip(uiShapeFor(14)).clickable { onOpenWallpaper() }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             IconChip(Icons.Filled.Wallpaper, CAT_WALLPAPER)
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
@@ -3181,7 +3181,7 @@ private fun SupportSettings(ctx: Context) {
     PayCard("USDT · TRC20", "Tron network", trc20, trc20, onCopy = { copy(trc20) })
     PayCard("USDT · ERC20", "Ethereum network", erc20, erc20, onCopy = { copy(erc20) })
 
-    Surface(onClick = { openUrl(ctx, binUrl) }, shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+    Surface(onClick = { openUrl(ctx, binUrl) }, shape = uiShapeFor(16), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(14.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             IconChip(Icons.Filled.Bolt, WARN_AMBER)
             Spacer(Modifier.width(14.dp))
@@ -3203,17 +3203,17 @@ private fun SupportSettings(ctx: Context) {
 private fun PayCard(title: String, subtitle: String, qrContent: String, address: String,
                     actionLabel: String? = null, onAction: (() -> Unit)? = null, onCopy: () -> Unit) {
     val qr = remember(qrContent) { QrGen.make(qrContent) }
-    Surface(shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f), modifier = Modifier.fillMaxWidth()) {
+    Surface(shape = uiShapeFor(22), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(18.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Box(Modifier.clip(RoundedCornerShape(18.dp)).background(Color.White).padding(12.dp)) {
+            Box(Modifier.clip(uiShapeFor(18)).background(Color.White).padding(12.dp)) {
                 if (qr != null) Image(qr, "qr", Modifier.size(200.dp), filterQuality = FilterQuality.None)
                 else Box(Modifier.size(200.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             }
-            Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f), modifier = Modifier.fillMaxWidth()) {
+            Surface(shape = uiShapeFor(16), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f), modifier = Modifier.fillMaxWidth()) {
                 Row(Modifier.padding(start = 14.dp, end = 4.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(address, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f), maxLines = 3, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
                     IconButton(onClick = onCopy) { Icon(Icons.Filled.ContentCopy, "copy", tint = MaterialTheme.colorScheme.primary) }
@@ -3230,7 +3230,7 @@ private fun PayCard(title: String, subtitle: String, qrContent: String, address:
 
 @Composable
 private fun LinkRow(icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color, title: String, sub: String?, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+    Surface(onClick = onClick, shape = uiShapeFor(16), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(14.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             IconChip(icon, tint)
             Spacer(Modifier.width(14.dp))
@@ -3246,9 +3246,9 @@ private fun LinkRow(icon: androidx.compose.ui.graphics.vector.ImageVector, tint:
 // Like LinkRow, but the leading icon is any composable (used for the real brand glyphs below).
 @Composable
 private fun LinkRowSlot(leading: @Composable () -> Unit, title: String, sub: String?, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+    Surface(onClick = onClick, shape = uiShapeFor(16), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(14.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)), contentAlignment = Alignment.Center) { leading() }
+            Box(Modifier.size(40.dp).clip(uiShapeFor(12)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)), contentAlignment = Alignment.Center) { leading() }
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.bodyLarge)
@@ -3307,7 +3307,7 @@ private fun AboutSettings(ctx: Context, onLogout: () -> Unit) {
     val artId = remember { ctx.resources.getIdentifier("about_art", "drawable", ctx.packageName) }
     val art = remember(artId) { if (artId != 0) runCatching { BitmapFactory.decodeResource(ctx.resources, artId)?.asImageBitmap() }.getOrNull() else null }
 
-    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+    Surface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(APP_NAME, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text("Version " + ver, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -3316,9 +3316,9 @@ private fun AboutSettings(ctx: Context, onLogout: () -> Unit) {
         }
     }
 
-    if (art != null) Image(art, null, Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)), contentScale = ContentScale.FillWidth)
+    if (art != null) Image(art, null, Modifier.fillMaxWidth().clip(uiShapeFor(20)), contentScale = ContentScale.FillWidth)
 
-    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+    Surface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(AyxHere.aboutHey, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Text("If you love my project, please give me a ⭐ on my GitHub project.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -3347,7 +3347,7 @@ private fun AboutSettings(ctx: Context, onLogout: () -> Unit) {
     if (showPrivacy) {
         AlertDialog(onDismissRequest = { showPrivacy = false },
             containerColor = dialogBg(),
-            shape = RoundedCornerShape(22.dp),
+            shape = uiShapeFor(22),
             icon = { Icon(Icons.Filled.Shield, null, tint = AYX_GREEN) },
             title = { Text("Privacy Policy") },
             text = { Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) { Text(PRIVACY_TEXT, style = MaterialTheme.typography.bodySmall) } },
@@ -3376,7 +3376,7 @@ private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
 private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) -> Unit, onReset: () -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Spacer(Modifier.height(44.dp))
-        Box(Modifier.size(76.dp).clip(RoundedCornerShape(22.dp)).background(Brush.linearGradient(listOf(AYX_GREEN, IOS_BLUE))), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(76.dp).clip(uiShapeFor(22)).background(Brush.linearGradient(listOf(AYX_GREEN, IOS_BLUE))), contentAlignment = Alignment.Center) {
             Icon(Icons.Filled.QrCode2, null, tint = Color.White, modifier = Modifier.size(40.dp))
         }
         Spacer(Modifier.height(16.dp))
@@ -3384,9 +3384,9 @@ private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) 
         Text("Link your WhatsApp to get started", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(24.dp))
         // QR card (scan this from WhatsApp on your phone)
-        Surface(shape = RoundedCornerShape(26.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.40f), modifier = Modifier.fillMaxWidth()) {
+        Surface(shape = uiShapeFor(26), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.40f), modifier = Modifier.fillMaxWidth()) {
             Box(Modifier.padding(18.dp), contentAlignment = Alignment.Center) {
-                Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(18.dp)).background(Color.White), contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(uiShapeFor(18)).background(Color.White), contentAlignment = Alignment.Center) {
                     if (qr != null) Image(qr, "QR", Modifier.fillMaxSize().padding(16.dp), contentScale = ContentScale.Fit)
                     else Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         CircularProgressIndicator(color = AYX_GREEN, strokeWidth = 3.dp)
@@ -3396,7 +3396,7 @@ private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) 
             }
         }
         Spacer(Modifier.height(20.dp))
-        Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f), modifier = Modifier.fillMaxWidth()) {
+        Surface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f), modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 LinkStep("1", "Open WhatsApp on your phone")
                 LinkStep("2", "Tap Settings → Linked devices")
@@ -3431,7 +3431,7 @@ private fun NewChatScreen(contacts: List<DeviceContact>, loading: Boolean, dpCac
         Spacer(Modifier.height(10.dp))
         OutlinedTextField(q, { q = it }, placeholder = { Text("Search name or number") },
             leadingIcon = { Icon(Icons.Filled.Search, null, tint = IOS_BLUE) },
-            singleLine = true, shape = RoundedCornerShape(28.dp),
+            singleLine = true, shape = uiShapeFor(28),
             colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent,
                 focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
@@ -3647,7 +3647,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                     Text("New status", color = Color.White, fontWeight = FontWeight.Bold)
                     TextButton(onClick = { pickAudience = true }) { Text(audLabel, color = IOS_BLUE) }
                 }
-                Box(Modifier.weight(1f).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xFF111111)), contentAlignment = Alignment.Center) {
+                Box(Modifier.weight(1f).fillMaxWidth().clip(uiShapeFor(14)).background(Color(0xFF111111)), contentAlignment = Alignment.Center) {
                     if (type == "image") {
                         val bmp = remember(uri) { runCatching { ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it)?.asImageBitmap() } }.getOrNull() }
                         if (bmp != null) Image(bmp, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) else Text("Preview unavailable", color = Color.White)
@@ -3680,7 +3680,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                 } else {
                                     Text(line, color = Color.White, fontSize = (22f * lyricScale).sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
                                         modifier = Modifier.align(BiasAlignment(0f, lyricY * 2f - 1f)).padding(horizontal = 16.dp)
-                                            .background(Color.Black.copy(alpha = 0.28f), RoundedCornerShape(10.dp)).padding(horizontal = 12.dp, vertical = 5.dp))
+                                            .background(Color.Black.copy(alpha = 0.28f), uiShapeFor(10)).padding(horizontal = 12.dp, vertical = 5.dp))
                                 }
                             }
                             Text("drag • pinch to resize lyrics", color = Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.labelSmall,
@@ -3709,7 +3709,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                     }
                 }
                 if (songLyrics.isNotEmpty()) {
-                    Surface(shape = RoundedCornerShape(18.dp), color = Color.White.copy(alpha = 0.08f), modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                    Surface(shape = uiShapeFor(18), color = Color.White.copy(alpha = 0.08f), modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                         Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("LYRICS STYLE", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
                             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -3731,12 +3731,12 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                     }
                 }
                 // Caption — rounded frosted (light-blur) box, sitting ABOVE the send box
-                Box(Modifier.fillMaxWidth().padding(top = 8.dp).clip(RoundedCornerShape(24.dp))) {
+                Box(Modifier.fillMaxWidth().padding(top = 8.dp).clip(uiShapeFor(24))) {
                     Box(Modifier.matchParentSize().background(Color.White.copy(alpha = 0.07f)))
                     // very soft sheen → subtle frosted-glass feel
                     Box(Modifier.matchParentSize().blur(6.dp).background(
                         Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.08f), Color.White.copy(alpha = 0.02f)))))
-                    OutlinedTextField(caption, { caption = it }, placeholder = { Text("Add a caption…", color = Color.White.copy(alpha = 0.6f)) }, maxLines = 3, shape = RoundedCornerShape(24.dp),
+                    OutlinedTextField(caption, { caption = it }, placeholder = { Text("Add a caption…", color = Color.White.copy(alpha = 0.6f)) }, maxLines = 3, shape = uiShapeFor(24),
                         colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.White.copy(alpha = 0.22f), unfocusedBorderColor = Color.White.copy(alpha = 0.10f),
                             focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
                             focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White),
@@ -3764,7 +3764,7 @@ private fun AudienceSheet(contacts: List<DeviceContact>, audienceIn: String, sel
     var q by remember { mutableStateOf("") }
     val filtered = remember(contacts, q) { if (q.isBlank()) contacts else contacts.filter { it.name.contains(q, true) || it.number.contains(q) } }
     Dialog(onDismissRequest = { onDone(aud, sel) }) {
-        Surface(shape = RoundedCornerShape(16.dp), color = dialogBg()) {
+        Surface(shape = uiShapeFor(16), color = dialogBg()) {
             Column(Modifier.padding(14.dp).heightIn(max = 560.dp)) {
                 Text("Status privacy", fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
@@ -3951,7 +3951,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                         items.indices.forEach { idx ->
-                            val segMod = Modifier.weight(1f).height(3.dp).clip(RoundedCornerShape(2.dp))
+                            val segMod = Modifier.weight(1f).height(3.dp).clip(uiShapeFor(2))
                             when {
                                 idx < ii -> LinearProgressIndicator(progress = { 1f }, modifier = segMod, color = Color.White, trackColor = Color.White.copy(alpha = 0.35f))
                                 idx == ii && activeLoading -> LinearProgressIndicator(modifier = segMod, color = Color.White, trackColor = Color.White.copy(alpha = 0.35f))   // material snake (indeterminate)
@@ -3980,7 +3980,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                 }
                 if (!myMine) {
                     Row(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().imePadding().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(replyText, { replyText = it }, placeholder = { Text("Reply to status…", color = Color.White.copy(alpha = 0.6f)) }, singleLine = true, shape = RoundedCornerShape(26.dp),
+                        OutlinedTextField(replyText, { replyText = it }, placeholder = { Text("Reply to status…", color = Color.White.copy(alpha = 0.6f)) }, singleLine = true, shape = uiShapeFor(26),
                             colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.White.copy(alpha = 0.4f), unfocusedBorderColor = Color.White.copy(alpha = 0.25f),
                                 focusedContainerColor = Color.Black.copy(alpha = 0.4f), unfocusedContainerColor = Color.Black.copy(alpha = 0.4f),
                                 focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White),
@@ -4023,22 +4023,22 @@ private fun ProfileScreen(myJid: String?, dpCache: MutableMap<String, ImageBitma
         }
         Spacer(Modifier.height(12.dp))
         if (number.isNotBlank()) {
-            Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.40f)) {
+            Surface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.40f)) {
                 Text(number, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         Spacer(Modifier.height(26.dp))
-        Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f), modifier = Modifier.fillMaxWidth()) {
+        Surface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f), modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
                 Text("DISPLAY NAME", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.height(6.dp))
-                OutlinedTextField(name, { name = it }, placeholder = { Text("Your name") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth(),
+                OutlinedTextField(name, { name = it }, placeholder = { Text("Your name") }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = AYX_GREEN, unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)))
                 Text("Shows on your WhatsApp profile.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
             }
         }
         Spacer(Modifier.height(18.dp))
-        Button(onClick = { if (name.isNotBlank()) onSaveName(name.trim()) }, enabled = name.isNotBlank(), modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(14.dp)) {
+        Button(onClick = { if (name.isNotBlank()) onSaveName(name.trim()) }, enabled = name.isNotBlank(), modifier = Modifier.fillMaxWidth().height(50.dp), shape = uiShapeFor(14)) {
             Icon(Icons.Filled.CheckCircle, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Save name")
         }
     }
@@ -4085,7 +4085,7 @@ private fun MusicSearchSheet(onSelect: (GatewayClient.Song) -> Unit, onClose: ()
                         detectVerticalDragGestures(onDragEnd = { if (acc > 120f) { runCatching { player.stop() }; onClose() }; acc = 0f }) { _, dy -> acc += dy }
                     }) {
                         Box(Modifier.fillMaxWidth().padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
-                            Box(Modifier.size(width = 42.dp, height = 5.dp).clip(RoundedCornerShape(3.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f)))
+                            Box(Modifier.size(width = 42.dp, height = 5.dp).clip(uiShapeFor(3)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f)))
                         }
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
@@ -4095,7 +4095,7 @@ private fun MusicSearchSheet(onSelect: (GatewayClient.Song) -> Unit, onClose: ()
                             IconButton(onClick = { runCatching { player.stop() }; onClose() }) { Icon(Icons.Filled.Close, "close") }
                         }
                         Spacer(Modifier.height(8.dp))
-                        OutlinedTextField(q, { q = it }, placeholder = { Text("Search songs…") }, leadingIcon = { Icon(Icons.Filled.Search, null) }, singleLine = true, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(q, { q = it }, placeholder = { Text("Search songs…") }, leadingIcon = { Icon(Icons.Filled.Search, null) }, singleLine = true, shape = uiShapeFor(16), modifier = Modifier.fillMaxWidth())
                         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
                         if (!loading && results.isEmpty() && q.trim().length >= 2) {
                             Text(if (error.isNotBlank()) "No songs (" + error.take(120) + ")" else "No results", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 8.dp))
