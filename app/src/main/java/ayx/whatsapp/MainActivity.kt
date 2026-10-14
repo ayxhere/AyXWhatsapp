@@ -207,6 +207,10 @@ import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.animation.animateContentSize
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
@@ -1896,42 +1900,14 @@ private fun ChatDetail(
                 IconButton(onClick = { replyTo = null }) { Icon(Icons.Filled.Close, "cancel reply") }
             }
         }
-        // Inline attachment preview inside the composer (thumbnail card with an X) — same feel as WhatsApp / Claude.
-        pendingMedia?.let { pm ->
-            val puri = pm.first; val pmtype = pm.second
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(96.dp).clip(uiShapeFor(16)).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
-                    if (pmtype == "image" || pmtype == "video") {
-                        // decode a down-sampled thumbnail only (the original bytes are what get sent → full quality)
-                        val pbmp = remember(puri) {
-                            runCatching {
-                                if (pmtype == "image") {
-                                    val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                                    ctx.contentResolver.openInputStream(puri)?.use { BitmapFactory.decodeStream(it, null, o) }
-                                    var ss = 1
-                                    while (o.outWidth / ss > 600 || o.outHeight / ss > 600) ss *= 2
-                                    val o2 = BitmapFactory.Options().apply { inSampleSize = ss }
-                                    ctx.contentResolver.openInputStream(puri)?.use { BitmapFactory.decodeStream(it, null, o2)?.asImageBitmap() }
-                                } else {
-                                    val mmr = android.media.MediaMetadataRetriever()
-                                    try { mmr.setDataSource(ctx, puri); mmr.getFrameAtTime(0)?.asImageBitmap() } finally { runCatching { mmr.release() } }
-                                }
-                            }.getOrNull()
-                        }
-                        if (pbmp != null) Image(pbmp, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                        if (pmtype == "video") Icon(Icons.Filled.PlayArrow, null, tint = Color.White, modifier = Modifier.size(34.dp).background(Color.Black.copy(alpha = 0.45f), CircleShape))
-                    } else {
-                        Icon(Icons.Filled.InsertDriveFile, null, Modifier.size(40.dp), tint = MaterialTheme.colorScheme.primary)
-                    }
-                    IconButton(onClick = onClearPendingMedia, modifier = Modifier.align(Alignment.TopEnd).size(30.dp).padding(4.dp)
-                        .background(Color.Black.copy(alpha = 0.55f), CircleShape)) { Icon(Icons.Filled.Close, "remove", tint = Color.White, modifier = Modifier.size(16.dp)) }
-                }
-                Spacer(Modifier.width(10.dp))
-                Text(queryName(ctx, puri) ?: pmtype, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            }
-        }
-        Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)).padding(horizontal = 6.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        // ===== Composer: ONE rounded floating card (Claude-style). The attachment preview lives INSIDE it and the box grows as you type =====
+        val hasMedia = pendingMedia != null
+        val expanded = hasMedia || input.contains('\n') || input.length > 26
+        val fieldFocus = remember { FocusRequester() }
+        var fieldHadFocus by remember { mutableStateOf(false) }
+        LaunchedEffect(expanded) { if (fieldHadFocus) runCatching { fieldFocus.requestFocus() } }   // keep the keyboard when the layout switches
+        var playPreview by remember(pendingMedia) { mutableStateOf(false) }
+        val plusButton: @Composable () -> Unit = {
             Box {
                 IconButton(onClick = { attachMenu = true }) { Icon(Icons.Filled.Add, "add") }
                 DropdownMenu(expanded = attachMenu, onDismissRequest = { attachMenu = false }) {
@@ -1941,8 +1917,8 @@ private fun ChatDetail(
                     DropdownMenuItem(text = { Text("Files") }, leadingIcon = { Icon(Icons.Filled.AttachFile, null) }, onClick = { attachMenu = false; onAttach() })
                 }
             }
-            OutlinedTextField(input, { input = it }, placeholder = { Text("Message") },
-                shape = uiShapeFor(24), maxLines = 4, modifier = Modifier.weight(1f))
+        }
+        val sendButton: @Composable () -> Unit = {
             FilledIconButton(onClick = {
                 if (pendingMedia != null) {
                     onSend(input.trim()); input = ""; replyTo = null   // caption is optional when an attachment is staged
@@ -1952,6 +1928,72 @@ private fun ChatDetail(
                     input = ""; replyTo = null
                 }
             }, enabled = (input.isNotBlank() || pendingMedia != null) && canSend) { Icon(Icons.AutoMirrored.Filled.Send, "send") }
+        }
+        val textField: @Composable (Modifier) -> Unit = { mod ->
+            OutlinedTextField(input, { input = it }, placeholder = { Text("Message") }, maxLines = if (expanded) 8 else 4,
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent,
+                    focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent),
+                modifier = mod.focusRequester(fieldFocus).onFocusChanged { fieldHadFocus = it.isFocused })
+        }
+        Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp).animateContentSize()
+            .clip(RoundedCornerShape(28.dp)).background(MaterialTheme.colorScheme.surface.copy(alpha = 0.90f))) {
+            pendingMedia?.let { pm ->
+                val puri = pm.first; val pmtype = pm.second
+                val bigPlay = playPreview && pmtype == "video"
+                Box(Modifier.padding(start = 12.dp, top = 12.dp, end = 12.dp)
+                    .then(if (bigPlay) Modifier.fillMaxWidth().height(260.dp) else Modifier.size(104.dp))
+                    .clip(uiShapeFor(18)).background(if (bigPlay) Color.Black else MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable(enabled = pmtype == "video") { playPreview = !playPreview },
+                    contentAlignment = Alignment.Center) {
+                    if (bigPlay) {
+                        // inline video playback right inside the type box (tap again to stop)
+                        AndroidView(factory = { c ->
+                            VideoView(c).apply {
+                                setVideoURI(puri)
+                                setOnPreparedListener { mp -> mp.isLooping = true; mp.start() }
+                            }
+                        }, modifier = Modifier.fillMaxSize())
+                    } else if (pmtype == "image" || pmtype == "video") {
+                        // thumbnail only is decoded (down-sampled); the ORIGINAL bytes are what get sent → full quality
+                        val pbmp = remember(puri) {
+                            runCatching {
+                                if (pmtype == "image") {
+                                    val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                                    ctx.contentResolver.openInputStream(puri)?.use { BitmapFactory.decodeStream(it, null, o) }
+                                    var ss = 1
+                                    while (o.outWidth / ss > 700 || o.outHeight / ss > 700) ss *= 2
+                                    val o2 = BitmapFactory.Options().apply { inSampleSize = ss }
+                                    ctx.contentResolver.openInputStream(puri)?.use { BitmapFactory.decodeStream(it, null, o2)?.asImageBitmap() }
+                                } else {
+                                    val mmr = android.media.MediaMetadataRetriever()
+                                    try { mmr.setDataSource(ctx, puri); mmr.getFrameAtTime(0)?.asImageBitmap() } finally { runCatching { mmr.release() } }
+                                }
+                            }.getOrNull()
+                        }
+                        if (pbmp != null) Image(pbmp, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                        if (pmtype == "video") Icon(Icons.Filled.PlayArrow, "play", tint = Color.White, modifier = Modifier.size(38.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape))
+                    } else {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(6.dp)) {
+                            Icon(Icons.Filled.InsertDriveFile, null, Modifier.size(34.dp), tint = MaterialTheme.colorScheme.primary)
+                            Text(queryName(ctx, puri) ?: pmtype, style = MaterialTheme.typography.labelSmall, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                        }
+                    }
+                    IconButton(onClick = onClearPendingMedia, modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(28.dp)
+                        .background(Color.Black.copy(alpha = 0.55f), CircleShape)) { Icon(Icons.Filled.Close, "remove", tint = Color.White, modifier = Modifier.size(16.dp)) }
+                }
+            }
+            if (expanded) {
+                // expanded (Claude-style): attachment on top → text → [+] ........ [send]
+                textField(Modifier.fillMaxWidth())
+                Row(Modifier.fillMaxWidth().padding(start = 6.dp, end = 8.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    plusButton(); Spacer(Modifier.weight(1f)); sendButton()
+                }
+            } else {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    plusButton(); textField(Modifier.weight(1f)); sendButton()
+                }
+            }
         }
         }
       }
