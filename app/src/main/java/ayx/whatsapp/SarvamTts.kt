@@ -24,6 +24,8 @@ import java.net.URL
 object SarvamTts {
     private const val TAG = "SarvamTts"
     private const val BASE_URL = "https://api.sarvam.ai/text-to-speech"
+    private const val PREFS_NAME = "ayx_ai_voice"
+    private const val KEY_API_KEY = "sarvam_api_key"
     private var apiKey: String? = null
 
     // Default voice settings - Hindi female, natural pace
@@ -37,6 +39,28 @@ object SarvamTts {
         apiKey = key
     }
 
+    /** Save API key to SharedPreferences (from Settings UI). */
+    fun saveApiKey(ctx: Context, key: String) {
+        ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putString(KEY_API_KEY, key).apply()
+        apiKey = key
+    }
+
+    /** Load API key from SharedPreferences. Call once at app start. */
+    fun loadApiKey(ctx: Context): String? {
+        if (apiKey.isNullOrBlank()) {
+            apiKey = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getString(KEY_API_KEY, null)
+        }
+        return apiKey
+    }
+
+    /** Get saved key without context (for Settings UI to display). */
+    fun getSavedApiKey(ctx: Context): String {
+        return ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_API_KEY, "") ?: ""
+    }
+
     fun hasApiKey(): Boolean = !apiKey.isNullOrBlank()
 
     /**
@@ -45,7 +69,7 @@ object SarvamTts {
      */
     fun isVvCommand(text: String): Boolean {
         val t = text.trim()
-        return (t.startsWith(".vv") || t.startsWith("/voice")) && t.length > 3
+        return t.startsWith(".vv") && t.length > 3
     }
 
     /**
@@ -53,12 +77,7 @@ object SarvamTts {
      * ".vv Hello world" -> "Hello world"
      */
     fun extractText(command: String): String {
-        val t = command.trim()
-        return when {
-            t.startsWith(".vv") -> t.removePrefix(".vv").trim()
-            t.startsWith("/voice") -> t.removePrefix("/voice").trim()
-            else -> t
-        }
+        return command.trim().removePrefix(".vv").trim()
     }
 
     /**
@@ -67,9 +86,9 @@ object SarvamTts {
      * Caller is responsible for deleting the file after sending.
      */
     suspend fun textToSpeech(ctx: Context, text: String): File? = withContext(Dispatchers.IO) {
-        val key = apiKey
+        val key = loadApiKey(ctx)
         if (key.isNullOrBlank()) {
-            Log.e(TAG, "Sarvam API key not set. Call SarvamTts.setApiKey() first.")
+            Log.e(TAG, "Sarvam API key not set. User must set it in Settings > AI Voice.")
             return@withContext null
         }
         if (text.isBlank()) return@withContext null
