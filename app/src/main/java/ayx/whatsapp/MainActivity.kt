@@ -680,6 +680,7 @@ fun GatewayApp() {
     var dpView by remember { mutableStateOf<String?>(null) }   // jid whose profile photo is previewed full-screen
     var toast by remember { mutableStateOf<String?>(null) }
     val optimistic = remember { mutableStateListOf<OptMsg>() }
+    val vvLocal = remember { mutableStateListOf<GatewayClient.Msg>().apply { addAll(VvLocal.load(ctx)) } }
     val dpCache = remember { mutableStateMapOf<String, ImageBitmap?>() }
     val previewCache = remember { mutableStateMapOf<String, ImageBitmap?>() }
 
@@ -1302,24 +1303,22 @@ fun GatewayApp() {
             val ocChat = openChat!!
             ChatDetail(
                 chat = ocChat,
-                messages = messages.filter { it.chat == ocChat },
+                messages = messages.filter { it.chat == ocChat } + vvLocal.filter { it.chat == ocChat },
                 optimistic = optimistic.filter { it.chat == ocChat },
                 canSend = status.connection == "open",
                 onSend = { text ->
                     if (SarvamTts.isVvCommand(text)) {
                         val speakText = SarvamTts.extractText(text)
+                        val ts = System.currentTimeMillis()
+                        // 1) keep ".vv <text>" locally only (never sent)
+                        vvLocal.add(GatewayClient.Msg(ocChat, "", true, text.trim(), ts))
+                        VvLocal.add(ctx, ocChat, text.trim(), ts)
+                        // 2) gateway makes the voice + sends ONLY the voice note
                         scope.launch {
                             try {
-                                SarvamTts.useSettingsKey(settings.aiSarvamKey)
                                 notify("Voice bana raha hai...")
-                                val audioFile = SarvamTts.textToSpeech(ctx, speakText)
-                                if (audioFile != null) {
-                                    val bytes = audioFile.readBytes()
-                                    val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
-                                    GatewayClient.sendMedia(ocChat, b64, "audio", "voice.wav", "")
-                                    SarvamTts.deleteTempFile(audioFile)
-                                    notify("Voice bheja gaya")
-                                } else { notify("Voice banane me fail hua") }
+                                GatewayClient.sendVoice(ocChat, speakText)
+                                notify("Voice bheja gaya")
                             } catch (e: Exception) { notify("VV error: " + e.message) }
                         }
                     } else {

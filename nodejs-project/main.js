@@ -1915,6 +1915,22 @@ app.post('/sendmedia', async (req, res) => {
   } catch (e) { log('sendmedia error', e?.message); res.status(500).json({ error: e?.message || 'send failed' }) }
 })
 
+// .vv command: the app sends ONLY the text; the gateway makes the speech (Sarvam → OGG/Opus) and sends
+// it as a real voice note (ptt). The typed ".vv ..." text is never sent. Audio stays in memory — no temp file.
+app.post('/sendvoice', async (req, res) => {
+  try {
+    if (!sock || status.connection !== 'open') return res.status(409).json({ error: 'not connected' })
+    const jid = String(req.body?.jid || '')
+    const text = String(req.body?.text || '').trim()
+    if (!jid || !text) return res.status(400).json({ error: 'jid and text required' })
+    if (!settings.aiSarvamKey) return res.status(400).json({ error: 'Sarvam key not set (Settings > AI Voice)' })
+    const v = await synthVoice(text, settings.aiTtsVoice)
+    if (!v || !v.buf) return res.status(502).json({ error: 'TTS failed: ' + String(_sarvamErr || 'unknown').slice(0, 200) })
+    const r = await sock.sendMessage(jid, { audio: v.buf, ptt: v.ptt !== false, mimetype: v.mime, seconds: estSeconds(text) })
+    res.json({ ok: true, id: r?.key?.id || null, voiceNote: v.ptt === true })
+  } catch (e) { log('sendvoice error', e?.message); res.status(500).json({ error: e?.message || 'send failed' }) }
+})
+
 app.get('/dp', async (req, res) => {
   const jid = String(req.query.jid || '')
   if (!jid || !sock) return res.status(404).end()

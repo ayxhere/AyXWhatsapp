@@ -133,6 +133,12 @@ object GatewayClient {
         if (o.optBoolean("ok", false)) true else throw RuntimeException(o.optString("error", "send failed"))
     }
 
+    // .vv: gateway does text→speech and sends it as a voice note (the ".vv" text is never sent)
+    suspend fun sendVoice(jid: String, text: String): Boolean = withContext(Dispatchers.IO) {
+        val o = post("/sendvoice", JSONObject().put("jid", jid).put("text", text))
+        if (o.optBoolean("ok", false)) true else throw RuntimeException(o.optString("error", "voice failed"))
+    }
+
     suspend fun setProfileName(name: String) = withContext(Dispatchers.IO) {
         val o = post("/profile/name", JSONObject().put("name", name))
         if (!o.optBoolean("ok", false)) throw RuntimeException(o.optString("error", "failed"))
