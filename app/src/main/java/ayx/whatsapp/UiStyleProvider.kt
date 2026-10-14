@@ -9,7 +9,7 @@ import androidx.compose.runtime.compositionLocalOf
  * Components read [UiStyleProvider.current] for corners, elevations,
  * glass and borders — independent of the color theme.
  */
-val LocalUiStyle = compositionLocalOf<UiStyle> { NeumorphismUi }
+val LocalUiStyle = compositionLocalOf<UiStyle> { DefaultUi }
 
 object UiStyleProvider {
     val current: UiStyle

@@ -4,7 +4,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
- * AyX UI Styles — four distinct interface design systems.
+ * AyX UI Styles — distinct interface design systems.
  *
  * These are UI STYLES (component shapes, surfaces, elevations, borders),
  * not color themes. They work alongside the existing Appearance settings
@@ -28,6 +28,20 @@ data class UiStyle(
     val glassAlpha: Float,
     val borderWidth: Dp,
     val shadowIntensity: Float,
+    val isDefault: Boolean = false,
+)
+
+/** System default — standard Material shapes, no special treatment. */
+val DefaultUi = UiStyle(
+    id = "default",
+    name = "Default",
+    description = "System default interface style",
+    cardCorner = 12.dp, buttonCorner = 8.dp, inputCorner = 8.dp,
+    bubbleCorner = 12.dp, chipCorner = 8.dp,
+    cardElevation = 1.dp, buttonElevation = 1.dp, dialogElevation = 6.dp,
+    pressedScale = 1f, useGlass = false, glassAlpha = 1f,
+    borderWidth = 0.dp, shadowIntensity = 0.2f,
+    isDefault = true,
 )
 
 val NeumorphismUi = UiStyle(
@@ -75,8 +89,8 @@ val ClaymorphismUi = UiStyle(
 )
 
 val AyxUiStyles: List<UiStyle> = listOf(
-    NeumorphismUi, GlassmorphismUi, SkeuomorphismUi, ClaymorphismUi,
+    DefaultUi, NeumorphismUi, GlassmorphismUi, SkeuomorphismUi, ClaymorphismUi,
 )
 
 fun uiStyleById(id: String): UiStyle =
-    AyxUiStyles.firstOrNull { it.id == id } ?: NeumorphismUi
+    AyxUiStyles.firstOrNull { it.id == id } ?: DefaultUi

@@ -1,7 +1,5 @@
 package ayx.whatsapp
 
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -88,8 +86,8 @@ fun ChooseUiScreen(onBack: () -> Unit) {
                     .padding(14.dp)
             ) {
                 Column {
-                    // genuine visual preview of the interface style
-                    UiStylePreview(style)
+                    // preview in a distinct box with visible border
+                    UiStylePreviewBox(style)
                     Spacer(Modifier.height(10.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -128,20 +126,39 @@ fun ChooseUiScreen(onBack: () -> Unit) {
 }
 
 /**
+ * Preview boxed in a distinct container with a visible outline, so each
+ * UI style's preview is clearly framed.
+ */
+@Composable
+private fun UiStylePreviewBox(style: UiStyle) {
+    val boxShape = RoundedCornerShape(style.cardCorner)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(
+                1.dp,
+                MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                boxShape
+            )
+            .clip(boxShape)
+            .background(MaterialTheme.colorScheme.background)
+            .padding(10.dp)
+    ) {
+        UiStylePreviewContent(style)
+    }
+}
+
+/**
  * Genuine visual preview of a UI style: mini chat list row, message
  * bubbles, input field and button — all rendered with the style's
  * own corners, elevations, glass and borders.
  */
 @Composable
-private fun UiStylePreview(style: UiStyle) {
+private fun UiStylePreviewContent(style: UiStyle) {
     val bubbleShape = RoundedCornerShape(style.bubbleCorner)
     val inputShape = RoundedCornerShape(style.inputCorner)
     val btnShape = RoundedCornerShape(style.buttonCorner)
     Column(
-        Modifier
-            .clip(RoundedCornerShape(style.cardCorner))
-            .background(MaterialTheme.colorScheme.background)
-            .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         // chat list row
