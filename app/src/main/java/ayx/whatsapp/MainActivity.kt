@@ -931,8 +931,6 @@ fun GatewayApp() {
         }
     }
 
-            onClose = { storyView = null })
-    }
 
     pendingStatus?.let { ps ->
         StatusEditor(ps.first, ps.second, deviceContacts, onUpload = { caption, audience, jids, song, tStart, tEnd, lyrics, lyricY, lyricScale, animStyle, romanize ->
