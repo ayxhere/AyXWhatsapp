@@ -24,6 +24,6 @@ object AyxThemeProvider {
 @Composable
 fun rememberAyxTheme(): AyxTheme {
     // reading .value makes this recompose on style change
-    val styleId = ThemeStore.appearanceStyle.value
+    val styleId = UiStyleStore.uiStyle.value
     return ayxThemeById(styleId)
 }

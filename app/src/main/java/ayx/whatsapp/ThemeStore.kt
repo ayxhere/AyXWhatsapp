@@ -60,4 +60,14 @@ object ThemeStore {
 
     fun accentColor(): Color =
         accents.firstOrNull { it.first == accent.value }?.second ?: Color(0xFFB69DF8)
+
+    fun setMode(m: String) {
+        mode.value = m
+        prefs?.edit()?.putString("mode", m)?.apply()
+    }
+
+    fun setAccent(a: String) {
+        accent.value = a
+        prefs?.edit()?.putString("accent", a)?.apply()
+    }
 }
