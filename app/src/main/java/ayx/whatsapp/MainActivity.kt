@@ -33,6 +33,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.activity.result.PickVisualMediaRequest
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.key
@@ -358,7 +359,8 @@ class MainActivity : ComponentActivity() {
                 surfaceVariant = if (amoled) Color(0xFF161318) else base.surfaceVariant,
             )
             val appTypo = FontStore.typographyFor(FontStore.appFamily(LocalContext.current))
-            MaterialTheme(colorScheme = scheme, typography = appTypo) {
+            CompositionLocalProvider(LocalUiStyle provides rememberUiStyle()) {
+                MaterialTheme(colorScheme = scheme, typography = appTypo, shapes = rememberUiShapes()) {
                 val view = LocalView.current
                 val barColor = MaterialTheme.colorScheme.surface
                 SideEffect {
@@ -378,6 +380,7 @@ class MainActivity : ComponentActivity() {
                     var splashDone by remember { mutableStateOf(false) }
                     if (!splashDone) SplashScreen(dark) { splashDone = true }
                 }
+            }
             }
         }
     }
