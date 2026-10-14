@@ -1880,7 +1880,7 @@ private fun ChatDetail(
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            IconButton(onClick = onAttach) { Icon(Icons.Filled.AttachFile, "attach") }
+            IconButton(onClick = onAttach) { Icon(Icons.Filled.Add, "add") }
             IconButton(onClick = onCamera) { Icon(Icons.Filled.PhotoCamera, "camera") }
             OutlinedTextField(input, { input = it }, placeholder = { Text("Message") },
                 shape = uiShapeFor(24), maxLines = 4, modifier = Modifier.weight(1f))
