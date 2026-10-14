@@ -1310,6 +1310,7 @@ fun GatewayApp() {
                         val speakText = SarvamTts.extractText(text)
                         scope.launch {
                             try {
+                                SarvamTts.useSettingsKey(settings.aiSarvamKey)
                                 notify("Voice bana raha hai...")
                                 val audioFile = SarvamTts.textToSpeech(ctx, speakText)
                                 if (audioFile != null) {

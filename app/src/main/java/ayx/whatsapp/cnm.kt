@@ -297,7 +297,6 @@ private val SARVAM_BANGLA = listOf(
 
 @Composable
 internal fun VoicePickerScreen(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit, ctx: Context) {
-    SarvamKeySetting()
     val player = remember { MediaPlayer() }
     var playing by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf<String?>(null) }
