@@ -1306,8 +1306,25 @@ fun GatewayApp() {
                 optimistic = optimistic.filter { it.chat == ocChat },
                 canSend = status.connection == "open",
                 onSend = { text ->
+                    if (SarvamTts.isVvCommand(text)) {
+                        val speakText = SarvamTts.extractText(text)
+                        scope.launch {
+                            try {
+                                notify("Voice bana raha hai...")
+                                val audioFile = SarvamTts.textToSpeech(ctx, speakText)
+                                if (audioFile != null) {
+                                    val bytes = audioFile.readBytes()
+                                    val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                                    GatewayClient.sendMedia(ocChat, b64, "audio", "voice.wav", "")
+                                    SarvamTts.deleteTempFile(audioFile)
+                                    notify("Voice bheja gaya")
+                                } else { notify("Voice banane me fail hua") }
+                            } catch (e: Exception) { notify("VV error: " + e.message) }
+                        }
+                    } else {
                     optimistic.add(OptMsg(ocChat, text, System.currentTimeMillis()))
                     scope.launch { try { GatewayClient.sendToJid(ocChat, text) } catch (e: Exception) { notify("send error: ${e.message}") } }
+                    }
                 },
                 onMedia = { openMedia(it) },
                 onShare = { shareMedia(scope, ctx, it) { s -> notify(s) } },
