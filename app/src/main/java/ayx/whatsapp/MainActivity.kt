@@ -599,7 +599,7 @@ fun PrivacyGate(onAgree: () -> Unit) {
         Text("Privacy Policy", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Text("Your data never leaves your device", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(16.dp))
-        Surface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f), modifier = Modifier.fillMaxWidth().weight(1f)) {
+        StyledSurface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f), modifier = Modifier.fillMaxWidth().weight(1f)) {
             Column(Modifier.verticalScroll(rememberScrollState()).padding(18.dp)) {
                 Text(PRIVACY_TEXT, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
             }
@@ -1044,7 +1044,7 @@ fun GatewayApp() {
         var cap by remember(uri) { mutableStateOf("") }
         var original by remember(uri) { mutableStateOf(false) }
         Dialog(onDismissRequest = { pendingMedia = null }) {
-            Surface(shape = uiShapeFor(16), color = dialogBg()) {
+            StyledSurface(shape = uiShapeFor(16), color = dialogBg()) {
                 Column(Modifier.padding(16.dp).widthIn(max = 340.dp)) {
                     Text("Send " + mtype, style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(8.dp))
@@ -1141,7 +1141,7 @@ fun GatewayApp() {
         var csearch by remember { mutableStateOf("") }
         LaunchedEffect(Unit) { cts = GatewayClient.getContacts() }
         Dialog(onDismissRequest = { showNewChat = false }) {
-            Surface(shape = uiShapeFor(16), color = dialogBg()) {
+            StyledSurface(shape = uiShapeFor(16), color = dialogBg()) {
                 Column(Modifier.padding(16.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("New chat", style = MaterialTheme.typography.titleLarge)
                     OutlinedTextField(num, { num = it.filter(Char::isDigit) }, label = { Text("Number with country code") },
@@ -1187,7 +1187,7 @@ fun GatewayApp() {
         topBar = {
             // Glass header: translucent so the list scrolls behind it. Chat screen has its own header.
             if (openChat == null) {
-            Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.80f), shadowElevation = 6.dp, tonalElevation = 0.dp,
+            StyledSurface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.80f), shadowElevation = 6.dp, tonalElevation = 0.dp,
                 shape = RoundedCornerShape(bottomStart = 26.dp, bottomEnd = 26.dp), modifier = Modifier.fillMaxWidth()) {
             CenterAlignedTopAppBar(
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
@@ -1397,7 +1397,7 @@ fun GatewayApp() {
             // Floating rounded glass Home/Status navigation — overlaid so the list scrolls behind it.
             if (status.registered && openChat == null && screen == "chats") {
                 val selC = MaterialTheme.colorScheme.primary; val dimC = MaterialTheme.colorScheme.onSurfaceVariant
-                Surface(shape = uiShapeFor(30), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                StyledSurface(shape = uiShapeFor(30), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
                     tonalElevation = 0.dp, shadowElevation = 14.dp, border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)),
                     modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 12.dp)) {
                     Row(Modifier.padding(horizontal = 6.dp).height(60.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1490,7 +1490,7 @@ private fun ForwardPicker(messages: List<GatewayClient.Msg>, dpCache: MutableMap
     }
     val filtered = chats.filter { query.isBlank() || chatTitleOf(messages, it).contains(query, true) || it.contains(query) }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(shape = uiShapeFor(24), color = dialogBg(),
+        StyledSurface(shape = uiShapeFor(24), color = dialogBg(),
             modifier = Modifier.fillMaxWidth(0.94f).fillMaxHeight(0.8f)) {
             Column(Modifier.fillMaxSize().padding(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1634,7 +1634,11 @@ private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<Stri
             val msgs = entry.value
             val last = msgs.maxByOrNull { it.ts }!!
             val name = chatTitle(msgs)
-            Row(Modifier.fillMaxWidth().combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = { onOpen(entry.key) }, onLongClick = { menuChat = entry.key }).padding(horizontal = 14.dp, vertical = 12.dp),
+            val ui = LocalUiStyle.current
+            val rowCard = if (ui.isDefault) Modifier
+                else Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                    .ayxStyled(androidx.compose.foundation.shape.RoundedCornerShape(ui.cardCorner), MaterialTheme.colorScheme.surfaceVariant)
+            Row(Modifier.fillMaxWidth().then(rowCard).combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = { onOpen(entry.key) }, onLongClick = { menuChat = entry.key }).padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 Avatar(entry.key, name, dpCache, 50.dp)
                 Spacer(Modifier.width(12.dp))
@@ -1651,7 +1655,7 @@ private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<Stri
                         maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            HorizontalDivider()
+            if (ui.isDefault) HorizontalDivider()
         }
         }
     }
@@ -1689,7 +1693,7 @@ private fun ChatActionSheet(name: String, jid: String, preview: String, dpCache:
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Box(Modifier.fillMaxSize().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Surface(shape = uiShapeFor(20), color = dialogBg().copy(alpha = 0.98f), shadowElevation = 10.dp,
+                StyledSurface(shape = uiShapeFor(20), color = dialogBg().copy(alpha = 0.98f), shadowElevation = 10.dp,
                     border = androidx.compose.foundation.BorderStroke(1.dp, onSurf.copy(alpha = 0.08f)), modifier = Modifier.fillMaxWidth()) {
                     Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                         Avatar(jid, name, dpCache, 48.dp)
@@ -1700,7 +1704,7 @@ private fun ChatActionSheet(name: String, jid: String, preview: String, dpCache:
                         }
                     }
                 }
-                Surface(shape = uiShapeFor(20), color = dialogBg().copy(alpha = 0.98f), shadowElevation = 12.dp,
+                StyledSurface(shape = uiShapeFor(20), color = dialogBg().copy(alpha = 0.98f), shadowElevation = 12.dp,
                     border = androidx.compose.foundation.BorderStroke(1.dp, onSurf.copy(alpha = 0.08f)), modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(vertical = 6.dp)) {
                         if (muted) ActionSheetItem(Icons.Filled.Notifications, "Unmute chat", AYX_GREEN, onUnmute)
@@ -1726,7 +1730,7 @@ private fun MuteTimerDialog(onDismiss: () -> Unit, onPick: (Long) -> Unit) {
         "Permanently" to ChatFlags.MUTE_FOREVER,
     )
     Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = uiShapeFor(24), color = dialogBg().copy(alpha = 0.97f),
+        StyledSurface(shape = uiShapeFor(24), color = dialogBg().copy(alpha = 0.97f),
             tonalElevation = 6.dp, shadowElevation = 12.dp,
             modifier = Modifier.fillMaxWidth().border(1.dp, onSurf.copy(alpha = 0.10f), uiShapeFor(24))) {
             Column(Modifier.padding(vertical = 8.dp)) {
@@ -1912,7 +1916,7 @@ private fun TranslateLangDialog(onDismiss: () -> Unit, onPick: (String) -> Unit)
     val langs = listOf("English", "Hindi", "Roman Hindi (Hinglish)", "Bangla", "Roman Bangla", "Spanish", "French", "Arabic", "Urdu", "Tamil", "Telugu")
     var custom by remember { mutableStateOf("") }
     Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = uiShapeFor(24), color = dialogBg(), tonalElevation = 6.dp, shadowElevation = 12.dp,
+        StyledSurface(shape = uiShapeFor(24), color = dialogBg(), tonalElevation = 6.dp, shadowElevation = 12.dp,
             modifier = Modifier.fillMaxWidth().fillMaxHeight(0.82f)) {
             Column(Modifier.padding(vertical = 8.dp)) {
                 Text("Translate messages to…", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 10.dp))
@@ -1942,7 +1946,7 @@ private fun TranslateLangDialog(onDismiss: () -> Unit, onPick: (String) -> Unit)
 @Composable
 private fun FontPickerDialog(ctx: Context, current: String, onDismiss: () -> Unit, onPick: (String) -> Unit) {
     Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = uiShapeFor(24), color = dialogBg(), tonalElevation = 6.dp, shadowElevation = 12.dp,
+        StyledSurface(shape = uiShapeFor(24), color = dialogBg(), tonalElevation = 6.dp, shadowElevation = 12.dp,
             modifier = Modifier.fillMaxWidth().fillMaxHeight(0.8f)) {
             Column(Modifier.padding(vertical = 8.dp)) {
                 Text("App font", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
@@ -1987,7 +1991,7 @@ private fun MessageActionSheet(
             Column(Modifier.fillMaxWidth().statusBarsPadding().navigationBarsPadding().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()),
                 horizontalAlignment = side) {
                 // reaction pill
-                Surface(shape = uiShapeFor(28), color = dialogBg().copy(alpha = 0.98f), shadowElevation = 10.dp,
+                StyledSurface(shape = uiShapeFor(28), color = dialogBg().copy(alpha = 0.98f), shadowElevation = 10.dp,
                     border = androidx.compose.foundation.BorderStroke(1.dp, onSurf.copy(alpha = 0.08f))) {
                     Row(Modifier.padding(horizontal = 6.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                         listOf("👍", "❤️", "😂", "😮", "😢", "🙏").forEach { e ->
@@ -2006,7 +2010,7 @@ private fun MessageActionSheet(
                 }
                 Spacer(Modifier.height(10.dp))
                 // action box — same side as the message
-                Surface(shape = uiShapeFor(20), color = dialogBg().copy(alpha = 0.98f), shadowElevation = 12.dp,
+                StyledSurface(shape = uiShapeFor(20), color = dialogBg().copy(alpha = 0.98f), shadowElevation = 12.dp,
                     border = androidx.compose.foundation.BorderStroke(1.dp, onSurf.copy(alpha = 0.08f)),
                     modifier = Modifier.widthIn(min = 230.dp, max = 300.dp)) {
                     Column(Modifier.padding(vertical = 6.dp)) {
@@ -2436,7 +2440,7 @@ private fun SettingsHome(status: GatewayClient.Status, onOpen: (String) -> Unit)
 private fun StatusCard(status: GatewayClient.Status) {
     val connected = status.registered && status.connection == "open"
     val dot = when { connected -> OK_GREEN; status.connection == "connecting" -> WARN_AMBER; else -> ERR_RED }
-    Surface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f), modifier = Modifier.fillMaxWidth()) {
+    StyledSurface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f), modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             PulseDot(dot)
             Spacer(Modifier.width(12.dp))
@@ -2461,7 +2465,7 @@ private fun PulseDot(color: Color) {
 
 @Composable
 private fun CategoryCard(icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color, title: String, desc: String, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+    StyledSurface(onClick = onClick, shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(14.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             IconChip(icon, tint)
             Spacer(Modifier.width(14.dp))
@@ -2495,7 +2499,7 @@ private fun SettingsSubPage(content: @Composable ColumnScope.() -> Unit) {
 private fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(title.uppercase(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp, bottom = 2.dp))
-        Surface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+        StyledSurface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(vertical = 4.dp, horizontal = 12.dp), content = content)
         }
     }
@@ -2774,7 +2778,7 @@ private fun AutoReplySection(settings: GatewayClient.Settings, onToggle: (JSONOb
         EmptyState(Icons.Filled.QuestionAnswer, "No auto-reply rules", "Create a keyword rule to automatically respond to messages.")
     } else {
         settings.rules.forEachIndexed { i, r ->
-            Surface(shape = uiShapeFor(16), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+            StyledSurface(shape = uiShapeFor(16), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
                 Row(Modifier.padding(14.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2791,7 +2795,7 @@ private fun AutoReplySection(settings: GatewayClient.Settings, onToggle: (JSONOb
             }
         }
     }
-    Surface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+    StyledSurface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("New rule", style = MaterialTheme.typography.titleSmall)
             OutlinedTextField(match, { match = it }, label = { Text("If message contains…") }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
@@ -2890,7 +2894,7 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
             .put("aiSystemPrompt", sys))
         Toast.makeText(ctx, "AI settings saved", Toast.LENGTH_SHORT).show()
     }
-    Surface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+    StyledSurface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             // header row: title left, Save button on the right
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -2949,7 +2953,7 @@ private fun ImageAiSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
             .put("aiVisionModel2", vision2.trim()).put("aiVisionApiUrl2", vision2Url.trim()).put("aiVisionApiKey2", vision2Key.trim()))
         Toast.makeText(ctx, "Image AI saved", Toast.LENGTH_SHORT).show()
     }
-    Surface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+    StyledSurface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("Image AI", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
@@ -3181,7 +3185,7 @@ private fun SupportSettings(ctx: Context) {
     PayCard("USDT · TRC20", "Tron network", trc20, trc20, onCopy = { copy(trc20) })
     PayCard("USDT · ERC20", "Ethereum network", erc20, erc20, onCopy = { copy(erc20) })
 
-    Surface(onClick = { openUrl(ctx, binUrl) }, shape = uiShapeFor(16), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+    StyledSurface(onClick = { openUrl(ctx, binUrl) }, shape = uiShapeFor(16), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(14.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             IconChip(Icons.Filled.Bolt, WARN_AMBER)
             Spacer(Modifier.width(14.dp))
@@ -3203,7 +3207,7 @@ private fun SupportSettings(ctx: Context) {
 private fun PayCard(title: String, subtitle: String, qrContent: String, address: String,
                     actionLabel: String? = null, onAction: (() -> Unit)? = null, onCopy: () -> Unit) {
     val qr = remember(qrContent) { QrGen.make(qrContent) }
-    Surface(shape = uiShapeFor(22), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f), modifier = Modifier.fillMaxWidth()) {
+    StyledSurface(shape = uiShapeFor(22), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(18.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -3213,7 +3217,7 @@ private fun PayCard(title: String, subtitle: String, qrContent: String, address:
                 if (qr != null) Image(qr, "qr", Modifier.size(200.dp), filterQuality = FilterQuality.None)
                 else Box(Modifier.size(200.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             }
-            Surface(shape = uiShapeFor(16), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f), modifier = Modifier.fillMaxWidth()) {
+            StyledSurface(shape = uiShapeFor(16), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f), modifier = Modifier.fillMaxWidth()) {
                 Row(Modifier.padding(start = 14.dp, end = 4.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(address, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f), maxLines = 3, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
                     IconButton(onClick = onCopy) { Icon(Icons.Filled.ContentCopy, "copy", tint = MaterialTheme.colorScheme.primary) }
@@ -3230,7 +3234,7 @@ private fun PayCard(title: String, subtitle: String, qrContent: String, address:
 
 @Composable
 private fun LinkRow(icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color, title: String, sub: String?, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = uiShapeFor(16), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+    StyledSurface(onClick = onClick, shape = uiShapeFor(16), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(14.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             IconChip(icon, tint)
             Spacer(Modifier.width(14.dp))
@@ -3246,7 +3250,7 @@ private fun LinkRow(icon: androidx.compose.ui.graphics.vector.ImageVector, tint:
 // Like LinkRow, but the leading icon is any composable (used for the real brand glyphs below).
 @Composable
 private fun LinkRowSlot(leading: @Composable () -> Unit, title: String, sub: String?, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = uiShapeFor(16), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+    StyledSurface(onClick = onClick, shape = uiShapeFor(16), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(14.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(40.dp).clip(uiShapeFor(12)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)), contentAlignment = Alignment.Center) { leading() }
             Spacer(Modifier.width(14.dp))
@@ -3307,7 +3311,7 @@ private fun AboutSettings(ctx: Context, onLogout: () -> Unit) {
     val artId = remember { ctx.resources.getIdentifier("about_art", "drawable", ctx.packageName) }
     val art = remember(artId) { if (artId != 0) runCatching { BitmapFactory.decodeResource(ctx.resources, artId)?.asImageBitmap() }.getOrNull() else null }
 
-    Surface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+    StyledSurface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(APP_NAME, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text("Version " + ver, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -3318,7 +3322,7 @@ private fun AboutSettings(ctx: Context, onLogout: () -> Unit) {
 
     if (art != null) Image(art, null, Modifier.fillMaxWidth().clip(uiShapeFor(20)), contentScale = ContentScale.FillWidth)
 
-    Surface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+    StyledSurface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(AyxHere.aboutHey, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Text("If you love my project, please give me a ⭐ on my GitHub project.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -3384,7 +3388,7 @@ private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) 
         Text("Link your WhatsApp to get started", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(24.dp))
         // QR card (scan this from WhatsApp on your phone)
-        Surface(shape = uiShapeFor(26), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.40f), modifier = Modifier.fillMaxWidth()) {
+        StyledSurface(shape = uiShapeFor(26), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.40f), modifier = Modifier.fillMaxWidth()) {
             Box(Modifier.padding(18.dp), contentAlignment = Alignment.Center) {
                 Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(uiShapeFor(18)).background(Color.White), contentAlignment = Alignment.Center) {
                     if (qr != null) Image(qr, "QR", Modifier.fillMaxSize().padding(16.dp), contentScale = ContentScale.Fit)
@@ -3396,7 +3400,7 @@ private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) 
             }
         }
         Spacer(Modifier.height(20.dp))
-        Surface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f), modifier = Modifier.fillMaxWidth()) {
+        StyledSurface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f), modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 LinkStep("1", "Open WhatsApp on your phone")
                 LinkStep("2", "Tap Settings → Linked devices")
@@ -3764,7 +3768,7 @@ private fun AudienceSheet(contacts: List<DeviceContact>, audienceIn: String, sel
     var q by remember { mutableStateOf("") }
     val filtered = remember(contacts, q) { if (q.isBlank()) contacts else contacts.filter { it.name.contains(q, true) || it.number.contains(q) } }
     Dialog(onDismissRequest = { onDone(aud, sel) }) {
-        Surface(shape = uiShapeFor(16), color = dialogBg()) {
+        StyledSurface(shape = uiShapeFor(16), color = dialogBg()) {
             Column(Modifier.padding(14.dp).heightIn(max = 560.dp)) {
                 Text("Status privacy", fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
@@ -4028,7 +4032,7 @@ private fun ProfileScreen(myJid: String?, dpCache: MutableMap<String, ImageBitma
             }
         }
         Spacer(Modifier.height(26.dp))
-        Surface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f), modifier = Modifier.fillMaxWidth()) {
+        StyledSurface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f), modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
                 Text("DISPLAY NAME", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.height(6.dp))
