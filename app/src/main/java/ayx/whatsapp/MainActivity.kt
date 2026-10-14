@@ -1293,7 +1293,6 @@ fun GatewayApp() {
                         // 2) gateway makes the voice + sends ONLY the voice note
                         scope.launch {
                             try {
-                                SarvamTts.useSettingsKey(settings.aiSarvamKey)
                                 notify("Voice bana raha hai...")
                                 GatewayClient.sendVoice(ocChat, speakText)
                                 notify("Voice bheja gaya")
