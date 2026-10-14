@@ -53,8 +53,8 @@ import androidx.compose.ui.unit.dp
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AyxAppearanceScreen(onBack: () -> Unit) {
-    var previewId by remember { mutableStateOf(ThemeStore.appearanceStyle.value) }
-    val activeTheme = ayxThemeById(ThemeStore.appearanceStyle.value)
+    var previewId by remember { mutableStateOf(ThemeStore.appearanceStyle) }
+    val activeTheme = ayxThemeById(ThemeStore.appearanceStyle)
 
     Scaffold(
         topBar = {
@@ -95,7 +95,7 @@ fun AyxAppearanceScreen(onBack: () -> Unit) {
                         ),
                     onClick = {
                         previewId = theme.id
-                        ThemeStore.setAppearanceStyle(theme.id)
+                        ThemeStore.appearanceStyle = (theme.id)
                     },
                 ) {
                     Column(Modifier.padding(14.dp)) {
@@ -138,7 +138,7 @@ fun AyxAppearanceScreen(onBack: () -> Unit) {
                     text = "Restore Default Appearance",
                     onClick = {
                         previewId = "neumorphism"
-                        ThemeStore.setAppearanceStyle("neumorphism")
+                        ThemeStore.appearanceStyle = ("neumorphism")
                     },
                     modifier = Modifier.fillMaxWidth(),
                 )
