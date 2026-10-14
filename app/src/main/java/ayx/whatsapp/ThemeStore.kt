@@ -5,17 +5,33 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.Color
 
 /**
- * App theme preferences — accent color + theme mode + premium appearance style.
+ * App theme preferences — accent color + theme mode.
  * Persisted locally and observable, so changing them in Appearance settings
  * re-themes the whole app immediately.
+ *
+ * NOTE: UI styles (neumorphism/glassmorphism/skeuomorphism/claymorphism)
+ * are managed by UiStyleStore, the single source of truth. The legacy
+ * appearanceStyle field is kept for migration only and delegates to
+ * UiStyleStore.
  */
 object ThemeStore {
     // system | light | dark | amoled
     val mode = mutableStateOf("system")
     // key into [accents]
     val accent = mutableStateOf("purple")
-    // premium appearance style id: neumorphism | glassmorphism | skeuomorphism | claymorphism
-    val appearanceStyle = mutableStateOf("neumorphism")
+
+    /**
+     * Legacy: delegates to UiStyleStore.uiStyle.
+     * Do not use directly — use UiStyleStore instead.
+     */
+    @Deprecated("Use UiStyleStore.uiStyle instead", ReplaceWith("UiStyleStore.uiStyle.value"))
+    var appearanceStyle: String
+        get() = UiStyleStore.uiStyle.value.let {
+            // map "default" to "neumorphism" for legacy callers
+            if (it == "default") "neumorphism" else it
+        }
+        set(value) { UiStyleStore.setUiStyle(value) }
+
     private var prefs: android.content.SharedPreferences? = null
 
     // ordered so the Appearance swatches render in a nice sequence
@@ -34,19 +50,14 @@ object ThemeStore {
         prefs = ctx.getSharedPreferences("theme", Context.MODE_PRIVATE)
         mode.value = prefs!!.getString("mode", "system") ?: "system"
         accent.value = prefs!!.getString("accent", "purple") ?: "purple"
-        appearanceStyle.value = prefs!!.getString("appearance_style", "neumorphism") ?: "neumorphism"
+        // Migrate legacy appearance_style to UiStyleStore if present
+        val legacy = prefs!!.getString("appearance_style", null)
+        if (legacy != null && UiStyleStore.uiStyle.value == "default") {
+            // Only migrate if user hasn't already chosen a UI style
+            UiStyleStore.setUiStyle(legacy)
+        }
     }
 
-    fun setMode(m: String) { mode.value = m; prefs?.edit()?.putString("mode", m)?.apply() }
-    fun setAccent(a: String) { accent.value = a; prefs?.edit()?.putString("accent", a)?.apply() }
-    fun setAppearanceStyle(id: String) {
-        appearanceStyle.value = id
-        prefs?.edit()?.putString("appearance_style", id)?.apply()
-    }
-
-    fun accentColor(): Color = accents.firstOrNull { it.first == accent.value }?.second ?: accents[0].second
-    fun colorOf(key: String): Color = accents.firstOrNull { it.first == key }?.second ?: Color.Gray
-
-    /** Resolve the active premium theme from the stored style id. */
-    fun currentAyxTheme(): AyxTheme = ayxThemeById(appearanceStyle.value)
+    fun accentColor(): Color =
+        accents.firstOrNull { it.first == accent.value }?.second ?: Color(0xFFB69DF8)
 }
