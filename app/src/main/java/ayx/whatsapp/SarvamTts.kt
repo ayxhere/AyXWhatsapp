@@ -45,7 +45,7 @@ object SarvamTts {
      */
     fun isVvCommand(text: String): Boolean {
         val t = text.trim()
-        return t.startsWith(".vv") && t.length > 3
+        return (t.startsWith(".vv") || t.startsWith("/voice")) && t.length > 3
     }
 
     /**
@@ -53,7 +53,12 @@ object SarvamTts {
      * ".vv Hello world" -> "Hello world"
      */
     fun extractText(command: String): String {
-        return command.trim().removePrefix(".vv").trim()
+        val t = command.trim()
+        return when {
+            t.startsWith(".vv") -> t.removePrefix(".vv").trim()
+            t.startsWith("/voice") -> t.removePrefix("/voice").trim()
+            else -> t
+        }
     }
 
     /**
