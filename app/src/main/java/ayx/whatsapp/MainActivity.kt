@@ -336,6 +336,7 @@ class MainActivity : ComponentActivity() {
         StatusFlags.init(applicationContext)
         SetName.init(applicationContext)
         ThemeStore.init(applicationContext)
+        UiStyleStore.init(applicationContext)
         ChatStyle.init(applicationContext)
         TranslateStore.init(applicationContext)
         FontStore.init(applicationContext)
@@ -2365,7 +2366,7 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
 private fun settingsTitle(page: String): String = when (page) {
     "general" -> "General"; "autoreply" -> "Auto-reply"; "ai" -> "AI Assistant"; "chat" -> "Chat Settings"
     "imageai" -> "Image AI"; "aimemory" -> "AI Memory"; "voice" -> "AI Voice"; "font" -> "App Font"; "emoji" -> "Emoji"
-    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "about" -> "About"; "support" -> "Support Development"; else -> "Settings"
+    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "uistyle" -> "Choose Your UI"; "about" -> "About"; "support" -> "Support Development"; else -> "Settings"
 }
 // parent page for nested back (Wallpaper under Chat Settings; Image AI / AI Memory / Voice under AI Assistant; Font under General)
 private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "general"; "emoji" -> "general"; else -> "home" }
@@ -2390,6 +2391,7 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
             "chat" -> SettingsSubPage { ChatSettings(onOpenWallpaper = { onPage("wallpaper") }) }
             "wallpaper" -> SettingsSubPage { WallpaperSettings(ctx, wallpaperVersion, onPickWallpaper, onRemoveWallpaper) }
             "appearance" -> SettingsSubPage { AppearanceSettings() }
+            "uistyle" -> SettingsSubPage { ChooseUiScreen(onBack = { onPage("home") }) }
             "about" -> SettingsSubPage { AboutSettings(ctx, onLogout) }
             "support" -> SettingsSubPage { SupportSettings(ctx) }
             else -> SettingsHome(status) { onPage(it) }
@@ -2421,6 +2423,7 @@ private fun SettingsHome(status: GatewayClient.Status, onOpen: (String) -> Unit)
         CategoryCard(Icons.Filled.GraphicEq, Color(0xFF4DD0C4), "AI Voice", "Voice reply, voice notes & voice artists") { onOpen("voice") }
         CategoryCard(Icons.Filled.Chat, CAT_WALLPAPER, "Chat", "Wallpaper, bubble style and header") { onOpen("chat") }
         CategoryCard(Icons.Filled.Palette, CAT_APPEARANCE, "Appearance", "Theme and accent color") { onOpen("appearance") }
+        CategoryCard(Icons.Filled.DesignServices, CAT_APPEARANCE, "UI", "Interface style") { onOpen("uistyle") }
         CategoryCard(Icons.Filled.Info, CAT_ABOUT, "About", "App information and reset") { onOpen("about") }
         CategoryCard(Icons.Filled.Favorite, CAT_SUPPORT, "Support Development", "Donate via UPI or crypto to support AyX") { onOpen("support") }
         Spacer(Modifier.height(16.dp))
