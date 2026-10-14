@@ -119,6 +119,7 @@ import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.DesignServices
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.PushPin
@@ -740,6 +741,8 @@ fun GatewayApp() {
     }
 
     var wallpaper by remember { mutableStateOf<ImageBitmap?>(null) }
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? -> if (uri != null && openChat != null) pendingMedia = uri to "image" }
+    val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? -> if (uri != null && openChat != null) pendingMedia = uri to "video" }
     fun loadWallpaper() {
         val f = File(ctx.filesDir, "wallpaper.jpg")
         wallpaper = if (f.exists()) runCatching { decodeScaled(f.absolutePath, 1440)?.asImageBitmap() }.getOrNull() else null
@@ -1312,6 +1315,8 @@ fun GatewayApp() {
                 onReact = { m, e -> scope.launch { m.id?.let { GatewayClient.react(m.chat, it, e, m.fromMe) } } },
                 onDeleteMsg = { m, everyone -> scope.launch { GatewayClient.deleteMessage(m.chat, m.id, m.text, m.ts, everyone, m.fromMe); messages = GatewayClient.getMessages() } },
                 onAttach = { picker.launch("*/*") },
+                onPickChatPhoto = { photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                onPickChatVideo = { videoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)) },
                 onCamera = { openCamera() },
                 onReplySend = { text, qid, qtext ->
                     optimistic.add(OptMsg(ocChat, text, System.currentTimeMillis(), qtext))
@@ -1777,7 +1782,9 @@ private fun ChatDetail(
     onReact: (GatewayClient.Msg, String) -> Unit,
     onDeleteMsg: (GatewayClient.Msg, Boolean) -> Unit,
     onAttach: () -> Unit,
-    onCamera: () -> Unit,
+    onPickChatPhoto: () -> Unit,
+    onPickChatVideo: () -> Unit,
+    onCamera: () -> Unit
     onReplySend: (String, String, String) -> Unit,
     onEditMsg: (GatewayClient.Msg, String) -> Unit,
     onForward: (GatewayClient.Msg) -> Unit,
@@ -1789,6 +1796,7 @@ private fun ChatDetail(
     val clipboard = LocalClipboardManager.current
     val ctx = LocalContext.current
     var input by remember { mutableStateOf("") }
+    var attachMenu by remember { mutableStateOf(false) }
     var replyTo by remember { mutableStateOf<GatewayClient.Msg?>(null) }
     var reactMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
     var editMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
@@ -1892,10 +1900,17 @@ private fun ChatDetail(
                 IconButton(onClick = { replyTo = null }) { Icon(Icons.Filled.Close, "cancel reply") }
             }
         }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically,
+        Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)).padding(horizontal = 6.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            IconButton(onClick = onAttach) { Icon(Icons.Filled.Add, "add") }
-            IconButton(onClick = onCamera) { Icon(Icons.Filled.PhotoCamera, "camera") }
+            Box {
+                IconButton(onClick = { attachMenu = true }) { Icon(Icons.Filled.Add, "add") }
+                DropdownMenu(expanded = attachMenu, onDismissRequest = { attachMenu = false }) {
+                    DropdownMenuItem(text = { Text("Camera") }, leadingIcon = { Icon(Icons.Filled.PhotoCamera, null) }, onClick = { attachMenu = false; onCamera() })
+                    DropdownMenuItem(text = { Text("Photos") }, leadingIcon = { Icon(Icons.Filled.Image, null) }, onClick = { attachMenu = false; onPickChatPhoto() })
+                    DropdownMenuItem(text = { Text("Videos") }, leadingIcon = { Icon(Icons.Filled.VideoFile, null) }, onClick = { attachMenu = false; onPickChatVideo() })
+                    DropdownMenuItem(text = { Text("Files") }, leadingIcon = { Icon(Icons.Filled.AttachFile, null) }, onClick = { attachMenu = false; onAttach() })
+                }
+            }
             OutlinedTextField(input, { input = it }, placeholder = { Text("Message") },
                 shape = uiShapeFor(24), maxLines = 4, modifier = Modifier.weight(1f))
             FilledIconButton(onClick = {
@@ -2394,7 +2409,6 @@ private fun settingsParent(page: String): String = when (page) { "wallpaper" -> 
 @Composable
 private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient.Settings, page: String, onPage: (String) -> Unit, wallpaperVersion: Int,
     onToggle: (JSONObject) -> Unit, onRules: (List<GatewayClient.Rule>) -> Unit, onLogout: () -> Unit, ctx: Context,
-    onPickWallpaper: () -> Unit, onRemoveWallpaper: () -> Unit, onPickPhoto: () -> Unit,
     onSaveName: (String) -> Unit,
     dpCache: MutableMap<String, ImageBitmap?>, messages: List<GatewayClient.Msg>) {
     // back arrow + title live in the top app bar; sub-pages have no second arrow
@@ -4023,7 +4037,6 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
 
 
 @Composable
-private fun ProfileScreen(myJid: String?, dpCache: MutableMap<String, ImageBitmap?>, onPickPhoto: () -> Unit, onSaveName: (String) -> Unit) {
     var name by remember { mutableStateOf("") }
     val number = myJid?.substringBefore("@")?.let { if (it.isNotEmpty() && it.all(Char::isDigit)) "+$it" else it } ?: ""
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
