@@ -102,6 +102,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.DonutLarge
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.EmojiEmotions
@@ -1044,46 +1045,6 @@ fun GatewayApp() {
         )
     }
 
-    pendingMedia?.let { pm ->
-        val uri = pm.first; val mtype = pm.second
-        var cap by remember(uri) { mutableStateOf("") }
-        var original by remember(uri) { mutableStateOf(false) }
-        Dialog(onDismissRequest = { pendingMedia = null }) {
-            StyledSurface(shape = uiShapeFor(16), color = dialogBg()) {
-                Column(Modifier.padding(16.dp).widthIn(max = 340.dp)) {
-                    Text("Send " + mtype, style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(8.dp))
-                    if (mtype == "image") {
-                        val bmp = remember(uri) { runCatching { ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it)?.asImageBitmap() } }.getOrNull() }
-                        bmp?.let { Image(it, null, Modifier.fillMaxWidth().heightIn(max = 240.dp), contentScale = ContentScale.Fit) }
-                    } else Text(queryName(ctx, uri) ?: "file", style = MaterialTheme.typography.bodySmall)
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(cap, { cap = it }, placeholder = { Text("Add a caption…") }, modifier = Modifier.fillMaxWidth())
-                    if (mtype == "image" || mtype == "video") {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(original, { original = it })
-                            Text("Original quality (send as file)", style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        TextButton(onClick = { pendingMedia = null }) { Text("Cancel") }
-                        Button(onClick = {
-                            val jid = openChat; val u = uri
-                            val sendType = if (original) "document" else mtype; val caption = cap.trim()
-                            pendingMedia = null
-                            if (jid != null) scope.launch {
-                                try {
-                                    val bytes = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(u)?.use { it.readBytes() } }
-                                    if (bytes == null) { notify("can't read file"); return@launch }
-                                    notify("sending…")
-                                    GatewayClient.sendMedia(jid, Base64.encodeToString(bytes, Base64.NO_WRAP), sendType, queryName(ctx, u) ?: "file", caption)
-                                } catch (e: Exception) { notify("send failed: ${e.message}") }
-                            }
-                        }) { Text("Send") }
-                    }
-                }
-            }
-        }
     }
 
     // image viewer (full screen)
@@ -1306,8 +1267,24 @@ fun GatewayApp() {
                 messages = messages.filter { it.chat == ocChat } + vvLocal.filter { it.chat == ocChat },
                 optimistic = optimistic.filter { it.chat == ocChat },
                 canSend = status.connection == "open",
+                pendingMedia = pendingMedia,
+                onClearPendingMedia = { pendingMedia = null },
                 onSend = { text ->
-                    if (SarvamTts.isVvCommand(text)) {
+                    val pmSend = pendingMedia
+                    if (pmSend != null) {
+                        val muri = pmSend.first; val mtypeSend = pmSend.second
+                        val mjid = openChat; val mcap = text.trim()
+                        pendingMedia = null
+                        if (mjid != null) scope.launch {
+                            try {
+                                val mbytes = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(muri)?.use { it.readBytes() } }
+                                if (mbytes == null) { notify("can't read file"); return@launch }
+                                notify("sending…")
+                                GatewayClient.sendMedia(mjid, Base64.encodeToString(mbytes, Base64.NO_WRAP), "document", queryName(ctx, muri) ?: "file", mcap)
+                                notify("sent")
+                            } catch (e: Exception) { notify("send failed: " + e.message) }
+                        }
+                    } else if (SarvamTts.isVvCommand(text)) {
                         val speakText = SarvamTts.extractText(text)
                         val ts = System.currentTimeMillis()
                         // 1) keep ".vv <text>" locally only (never sent)
@@ -1316,6 +1293,7 @@ fun GatewayApp() {
                         // 2) gateway makes the voice + sends ONLY the voice note
                         scope.launch {
                             try {
+                                SarvamTts.useSettingsKey(settings.aiSarvamKey)
                                 notify("Voice bana raha hai...")
                                 GatewayClient.sendVoice(ocChat, speakText)
                                 notify("Voice bheja gaya")
@@ -1809,6 +1787,8 @@ private fun ChatDetail(
     previewCache: MutableMap<String, ImageBitmap?>,
     dpCache: MutableMap<String, ImageBitmap?>,
     wallpaper: ImageBitmap?,
+    pendingMedia: Pair<android.net.Uri, String>?,
+    onClearPendingMedia: () -> Unit,
 ) {
     val clipboard = LocalClipboardManager.current
     val ctx = LocalContext.current
@@ -1915,6 +1895,20 @@ private fun ChatDetail(
                     Text(rt.text.ifBlank { "\uD83D\uDCCE media" }, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 IconButton(onClick = { replyTo = null }) { Icon(Icons.Filled.Close, "cancel reply") }
+            }
+        }
+        pendingMedia?.let { pm ->
+            val puri = pm.first; val pmtype = pm.second
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (pmtype == "image") {
+                    val pbmp = remember(puri) { runCatching { ctx.contentResolver.openInputStream(puri)?.use { BitmapFactory.decodeStream(it)?.asImageBitmap() } }.getOrNull() }
+                    pbmp?.let { Image(it, null, Modifier.size(48.dp).clip(uiShapeFor(8)), contentScale = ContentScale.Crop) }
+                } else {
+                    Icon(Icons.Filled.InsertDriveFile, null, Modifier.size(40.dp), tint = MaterialTheme.colorScheme.primary)
+                }
+                Spacer(Modifier.width(8.dp))
+                Text(queryName(ctx, puri) ?: pmtype, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                IconButton(onClick = onClearPendingMedia) { Icon(Icons.Filled.Close, "remove") }
             }
         }
         Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)).padding(horizontal = 6.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically,
