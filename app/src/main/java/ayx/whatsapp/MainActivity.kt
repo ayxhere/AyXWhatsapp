@@ -925,11 +925,12 @@ fun GatewayApp() {
     }
     LaunchedEffect(toast) { if (toast != null) { delay(2500); toast = null } }
 
-    BackHandler(enabled = viewImg != null || viewVideoUrl != null || openChat != null || screen == "settings" || screen == "newchat" || screen == "profile") {
+    BackHandler(enabled = viewImg != null || viewVideoUrl != null || openChat != null || storyView != null || screen == "settings" || screen == "newchat" || screen == "profile") {
         when {
             viewImg != null -> viewImg = null
             viewVideoUrl != null -> viewVideoUrl = null
             openChat != null -> openChat = null
+            storyView != null -> storyView = null
             screen == "settings" && settingsPage != "home" -> settingsPage = settingsParent(settingsPage)
             else -> screen = "chats"
         }
@@ -1107,6 +1108,19 @@ fun GatewayApp() {
                 }
             }
         }
+    }
+    // status viewer (full screen)
+    storyView?.let { sender ->
+        StatusViewer(
+            statuses = statuses,
+            startSender = sender,
+            dpCache = dpCache,
+            onDownload = { st -> },
+            onDeleteStatus = { id -> },
+            onReply = { sid, text -> },
+            onSeen = { st -> },
+            onClose = { storyView = null }
+        )
     }
     // profile-photo viewer (tap a contact avatar in a chat) — preview full DP + download
     dpView?.let { jid ->
@@ -3390,11 +3404,11 @@ private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) 
         // QR card (scan this from WhatsApp on your phone)
         StyledSurface(shape = uiShapeFor(26), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.40f), modifier = Modifier.fillMaxWidth()) {
             Box(Modifier.padding(18.dp), contentAlignment = Alignment.Center) {
-                Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(uiShapeFor(18)).background(Color.White), contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(uiShapeFor(18)).background(MaterialTheme.colorScheme.surface), contentAlignment = Alignment.Center) {
                     if (qr != null) Image(qr, "QR", Modifier.fillMaxSize().padding(16.dp), contentScale = ContentScale.Fit)
                     else Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         CircularProgressIndicator(color = AYX_GREEN, strokeWidth = 3.dp)
-                        Spacer(Modifier.height(12.dp)); Text("Generating QR…", color = Color(0xFF555555), style = MaterialTheme.typography.bodySmall)
+                        Spacer(Modifier.height(12.dp)); Text("Generating QR…", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
