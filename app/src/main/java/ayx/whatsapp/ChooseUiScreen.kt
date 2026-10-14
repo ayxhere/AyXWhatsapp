@@ -10,27 +10,18 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,115 +36,94 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
 /**
- * Settings → UI screen ("Choose Your UI").
+ * Settings → UI screen content ("Choose Your UI").
  *
- * Separate from Appearance. Selects the interface style (component shapes,
- * surfaces, elevations). Persisted via [UiStyleStore], survives restarts.
+ * Designed to run inside SettingsSubPage (which provides scrolling,
+ * title and back navigation). Uses a plain Column — NOT a LazyColumn —
+ * to avoid nested-scroll crashes.
+ *
+ * Separate from Appearance. Persisted via [UiStyleStore], survives restarts.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChooseUiScreen(onBack: () -> Unit) {
     var selectedId by remember { mutableStateOf(UiStyleStore.uiStyle.value) }
     val accent = ThemeStore.accentColor()
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Choose Your UI") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, "Back")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background
-                ),
-            )
-        },
-        containerColor = MaterialTheme.colorScheme.background,
-    ) { pad ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(pad)
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            item { Spacer(Modifier.height(4.dp)) }
-            items(AyxUiStyles) { style ->
-                val isSelected = selectedId == style.id
-                val borderW by animateDpAsState(
-                    if (isSelected) 2.dp else 0.dp, tween(200), label = "ui-sel"
-                )
-                val cardShape = RoundedCornerShape(style.cardCorner)
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .shadow(
-                            style.cardElevation, cardShape,
-                            ambientColor = Color.Black.copy(style.shadowIntensity),
-                            spotColor = Color.Black.copy(style.shadowIntensity),
+    Column(
+        modifier = Modifier.padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Spacer(Modifier.height(4.dp))
+        for (style in AyxUiStyles) {
+            val isSelected = selectedId == style.id
+            val cardShape = RoundedCornerShape(style.cardCorner)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .shadow(
+                        style.cardElevation, cardShape,
+                        ambientColor = Color.Black.copy(style.shadowIntensity),
+                        spotColor = Color.Black.copy(style.shadowIntensity),
+                    )
+                    .clip(cardShape)
+                    .background(
+                        MaterialTheme.colorScheme.surface.copy(
+                            alpha = if (style.useGlass) style.glassAlpha else 1f
                         )
-                        .clip(cardShape)
-                        .background(
-                            MaterialTheme.colorScheme.surface.copy(
-                                alpha = if (style.useGlass) style.glassAlpha else 1f
+                    )
+                    .then(
+                        if (style.borderWidth > 0.dp || isSelected)
+                            Modifier.border(
+                                if (isSelected) 2.dp else style.borderWidth,
+                                if (isSelected) accent
+                                else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                                cardShape
                             )
-                        )
-                        .then(
-                            if (style.borderWidth > 0.dp || isSelected)
-                                Modifier.border(
-                                    if (isSelected) 2.dp else style.borderWidth,
-                                    if (isSelected) accent
-                                    else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
-                                    cardShape
-                                )
-                            else Modifier
-                        )
-                        .clickable {
-                            selectedId = style.id
-                            UiStyleStore.setUiStyle(style.id)
+                        else Modifier
+                    )
+                    .clickable {
+                        selectedId = style.id
+                        UiStyleStore.setUiStyle(style.id)
+                    }
+                    .padding(14.dp)
+            ) {
+                Column {
+                    // genuine visual preview of the interface style
+                    UiStylePreview(style)
+                    Spacer(Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                style.name,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                style.description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
-                        .padding(14.dp)
-                ) {
-                    Column {
-                        // genuine visual preview of the interface style
-                        UiStylePreview(style)
-                        Spacer(Modifier.height(10.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    style.name,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.SemiBold,
+                        if (isSelected) {
+                            Box(
+                                Modifier
+                                    .size(28.dp)
+                                    .clip(CircleShape)
+                                    .background(accent),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    Icons.Default.Check, "Selected",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp),
                                 )
-                                Text(
-                                    style.description,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            if (isSelected) {
-                                Box(
-                                    Modifier
-                                        .size(28.dp)
-                                        .clip(CircleShape)
-                                        .background(accent),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Icon(
-                                        Icons.Default.Check, "Selected",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(18.dp),
-                                    )
-                                }
                             }
                         }
                     }
                 }
             }
-            item { Spacer(Modifier.height(24.dp)) }
         }
+        Spacer(Modifier.height(24.dp))
     }
 }
 
