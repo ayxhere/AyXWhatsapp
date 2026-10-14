@@ -1,1 +1,52 @@
-cGFja2FnZSBheXgud2hhdHNhcHAKCmltcG9ydCBhbmRyb2lkLmNvbnRlbnQuQ29udGV4dAppbXBvcnQgYW5kcm9pZHguY29tcG9zZS5ydW50aW1lLm11dGFibGVTdGF0ZU9mCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLnVpLmdyYXBoaWNzLkNvbG9yCgovKioKICogQXBwIHRoZW1lIHByZWZlcmVuY2VzIOKAlCBhY2NlbnQgY29sb3IgKyB0aGVtZSBtb2RlICsgcHJlbWl1bSBhcHBlYXJhbmNlIHN0eWxlLgogKiBQZXJzaXN0ZWQgbG9jYWxseSBhbmQgb2JzZXJ2YWJsZSwgc28gY2hhbmdpbmcgdGhlbSBpbiBBcHBlYXJhbmNlIHNldHRpbmdzCiAqIHJlLXRoZW1lcyB0aGUgd2hvbGUgYXBwIGltbWVkaWF0ZWx5LgogKi8Kb2JqZWN0IFRoZW1lU3RvcmUgewogICAgLy8gc3lzdGVtIHwgbGlnaHQgfCBkYXJrIHwgYW1vbGVkCiAgICB2YWwgbW9kZSA9IG11dGFibGVTdGF0ZU9mKCJzeXN0ZW0iKQogICAgLy8ga2V5IGludG8gW2FjY2VudHNdCiAgICB2YWwgYWNjZW50ID0gbXV0YWJsZVN0YXRlT2YoInB1cnBsZSIpCiAgICAvLyBwcmVtaXVtIGFwcGVhcmFuY2Ugc3R5bGUgaWQ6IG5ldW1vcnBoaXNtIHwgZ2xhc3Ntb3JwaGlzbSB8IHNrZXVvbW9ycGhpc20gfCBjbGF5bW9ycGhpc20KICAgIHZhbCBhcHBlYXJhbmNlU3R5bGUgPSBtdXRhYmxlU3RhdGVPZigibmV1bW9ycGhpc20iKQogICAgcHJpdmF0ZSB2YXIgcHJlZnM6IGFuZHJvaWQuY29udGVudC5TaGFyZWRQcmVmZXJlbmNlcz8gPSBudWxsCgogICAgLy8gb3JkZXJlZCBzbyB0aGUgQXBwZWFyYW5jZSBzd2F0Y2hlcyByZW5kZXIgaW4gYSBuaWNlIHNlcXVlbmNlCiAgICB2YWwgYWNjZW50czogTGlzdDxQYWlyPFN0cmluZywgQ29sb3I+PiA9IGxpc3RPZigKICAgICAgICAicHVycGxlIiB0byBDb2xvcigweEZGQjY5REY4KSwKICAgICAgICAiYmx1ZSIgdG8gQ29sb3IoMHhGRjgyQUFGRiksCiAgICAgICAgInRlYWwiIHRvIENvbG9yKDB4RkY0REQwQzQpLAogICAgICAgICJncmVlbiIgdG8gQ29sb3IoMHhGRjdCRDg4RiksCiAgICAgICAgIm9yYW5nZSIgdG8gQ29sb3IoMHhGRkZGQjI2QiksCiAgICAgICAgInJlZCIgdG8gQ29sb3IoMHhGRkZGNkI2QiksCiAgICAgICAgInBpbmsiIHRvIENvbG9yKDB4RkZGRjdFQjYpLAogICAgKQoKICAgIGZ1biBpbml0KGN0eDogQ29udGV4dCkgewogICAgICAgIGlmIChwcmVmcyAhPSBudWxsKSByZXR1cm4KICAgICAgICBwcmVmcyA9IGN0eC5nZXRTaGFyZWRQcmVmZXJlbmNlcygidGhlbWUiLCBDb250ZXh0Lk1PREVfUFJJVkFURSkKICAgICAgICBtb2RlLnZhbHVlID0gcHJlZnMhIS5nZXRTdHJpbmcoIm1vZGUiLCAic3lzdGVtIikgPzogInN5c3RlbSIKICAgICAgICBhY2NlbnQudmFsdWUgPSBwcmVmcyEhLmdldFN0cmluZygiYWNjZW50IiwgInB1cnBsZSIpID86ICJwdXJwbGUiCiAgICAgICAgYXBwZWFyYW5jZVN0eWxlLnZhbHVlID0gcHJlZnMhIS5nZXRTdHJpbmcoImFwcGVhcmFuY2Vfc3R5bGUiLCAibmV1bW9ycGhpc20iKSA/OiAibmV1bW9ycGhpc20iCiAgICB9CgogICAgZnVuIHNldE1vZGUobTogU3RyaW5nKSB7IG1vZGUudmFsdWUgPSBtOyBwcmVmcz8uZWRpdCgpPy5wdXRTdHJpbmcoIm1vZGUiLCBtKT8uYXBwbHkoKSB9CiAgICBmdW4gc2V0QWNjZW50KGE6IFN0cmluZykgeyBhY2NlbnQudmFsdWUgPSBhOyBwcmVmcz8uZWRpdCgpPy5wdXRTdHJpbmcoImFjY2VudCIsIGEpPy5hcHBseSgpIH0KICAgIGZ1biBzZXRBcHBlYXJhbmNlU3R5bGUoaWQ6IFN0cmluZykgewogICAgICAgIGFwcGVhcmFuY2VTdHlsZS52YWx1ZSA9IGlkCiAgICAgICAgcHJlZnM/LmVkaXQoKT8ucHV0U3RyaW5nKCJhcHBlYXJhbmNlX3N0eWxlIiwgaWQpPy5hcHBseSgpCiAgICB9CgogICAgZnVuIGFjY2VudENvbG9yKCk6IENvbG9yID0gYWNjZW50cy5maXJzdE9yTnVsbCB7IGl0LmZpcnN0ID09IGFjY2VudC52YWx1ZSB9Py5zZWNvbmQgPzogYWNjZW50c1swXS5zZWNvbmQKICAgIGZ1biBjb2xvck9mKGtleTogU3RyaW5nKTogQ29sb3IgPSBhY2NlbnRzLmZpcnN0T3JOdWxsIHsgaXQuZmlyc3QgPT0ga2V5IH0/LnNlY29uZCA/OiBDb2xvci5HcmF5CgogICAgLyoqIFJlc29sdmUgdGhlIGFjdGl2ZSBwcmVtaXVtIHRoZW1lIGZyb20gdGhlIHN0b3JlZCBzdHlsZSBpZC4gKi8KICAgIGZ1biBjdXJyZW50QXl4VGhlbWUoKTogQXl4VGhlbWUgPSBheXhUaGVtZUJ5SWQoYXBwZWFyYW5jZVN0eWxlLnZhbHVlKQp9Cg==
+package ayx.whatsapp
+
+import android.content.Context
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.graphics.Color
+
+/**
+ * App theme preferences — accent color + theme mode + premium appearance style.
+ * Persisted locally and observable, so changing them in Appearance settings
+ * re-themes the whole app immediately.
+ */
+object ThemeStore {
+    // system | light | dark | amoled
+    val mode = mutableStateOf("system")
+    // key into [accents]
+    val accent = mutableStateOf("purple")
+    // premium appearance style id: neumorphism | glassmorphism | skeuomorphism | claymorphism
+    val appearanceStyle = mutableStateOf("neumorphism")
+    private var prefs: android.content.SharedPreferences? = null
+
+    // ordered so the Appearance swatches render in a nice sequence
+    val accents: List<Pair<String, Color>> = listOf(
+        "purple" to Color(0xFFB69DF8),
+        "blue" to Color(0xFF82AAFF),
+        "teal" to Color(0xFF4DD0C4),
+        "green" to Color(0xFF7BD88F),
+        "orange" to Color(0xFFFFB26B),
+        "red" to Color(0xFFFF6B6B),
+        "pink" to Color(0xFFFF7EB6),
+    )
+
+    fun init(ctx: Context) {
+        if (prefs != null) return
+        prefs = ctx.getSharedPreferences("theme", Context.MODE_PRIVATE)
+        mode.value = prefs!!.getString("mode", "system") ?: "system"
+        accent.value = prefs!!.getString("accent", "purple") ?: "purple"
+        appearanceStyle.value = prefs!!.getString("appearance_style", "neumorphism") ?: "neumorphism"
+    }
+
+    fun setMode(m: String) { mode.value = m; prefs?.edit()?.putString("mode", m)?.apply() }
+    fun setAccent(a: String) { accent.value = a; prefs?.edit()?.putString("accent", a)?.apply() }
+    fun setAppearanceStyle(id: String) {
+        appearanceStyle.value = id
+        prefs?.edit()?.putString("appearance_style", id)?.apply()
+    }
+
+    fun accentColor(): Color = accents.firstOrNull { it.first == accent.value }?.second ?: accents[0].second
+    fun colorOf(key: String): Color = accents.firstOrNull { it.first == key }?.second ?: Color.Gray
+
+    /** Resolve the active premium theme from the stored style id. */
+    fun currentAyxTheme(): AyxTheme = ayxThemeById(appearanceStyle.value)
+}

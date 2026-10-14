@@ -1,1 +1,263 @@
-cGFja2FnZSBheXgud2hhdHNhcHAKCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLmFuaW1hdGlvbi5jb3JlLmFuaW1hdGVEcEFzU3RhdGUKaW1wb3J0IGFuZHJvaWR4LmNvbXBvc2UuYW5pbWF0aW9uLmNvcmUudHdlZW4KaW1wb3J0IGFuZHJvaWR4LmNvbXBvc2UuZm91bmRhdGlvbi5iYWNrZ3JvdW5kCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLmZvdW5kYXRpb24uYm9yZGVyCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLmZvdW5kYXRpb24uY2xpY2thYmxlCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLmZvdW5kYXRpb24ubGF5b3V0LkFycmFuZ2VtZW50CmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLmZvdW5kYXRpb24ubGF5b3V0LkJveAppbXBvcnQgYW5kcm9pZHguY29tcG9zZS5mb3VuZGF0aW9uLmxheW91dC5Db2x1bW4KaW1wb3J0IGFuZHJvaWR4LmNvbXBvc2UuZm91bmRhdGlvbi5sYXlvdXQuUm93CmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLmZvdW5kYXRpb24ubGF5b3V0LlNwYWNlcgppbXBvcnQgYW5kcm9pZHguY29tcG9zZS5mb3VuZGF0aW9uLmxheW91dC5maWxsTWF4U2l6ZQppbXBvcnQgYW5kcm9pZHguY29tcG9zZS5mb3VuZGF0aW9uLmxheW91dC5maWxsTWF4V2lkdGgKaW1wb3J0IGFuZHJvaWR4LmNvbXBvc2UuZm91bmRhdGlvbi5sYXlvdXQuaGVpZ2h0CmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLmZvdW5kYXRpb24ubGF5b3V0LnBhZGRpbmcKaW1wb3J0IGFuZHJvaWR4LmNvbXBvc2UuZm91bmRhdGlvbi5sYXlvdXQuc2l6ZQppbXBvcnQgYW5kcm9pZHguY29tcG9zZS5mb3VuZGF0aW9uLmxheW91dC53aWR0aAppbXBvcnQgYW5kcm9pZHguY29tcG9zZS5mb3VuZGF0aW9uLmxhenkuTGF6eUNvbHVtbgppbXBvcnQgYW5kcm9pZHguY29tcG9zZS5mb3VuZGF0aW9uLmxhenkuaXRlbXMKaW1wb3J0IGFuZHJvaWR4LmNvbXBvc2UuZm91bmRhdGlvbi5zaGFwZS5DaXJjbGVTaGFwZQppbXBvcnQgYW5kcm9pZHguY29tcG9zZS5mb3VuZGF0aW9uLnNoYXBlLlJvdW5kZWRDb3JuZXJTaGFwZQppbXBvcnQgYW5kcm9pZHguY29tcG9zZS5tYXRlcmlhbC5pY29ucy5JY29ucwppbXBvcnQgYW5kcm9pZHguY29tcG9zZS5tYXRlcmlhbC5pY29ucy5maWxsZWQuQXJyb3dCYWNrCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLm1hdGVyaWFsLmljb25zLmZpbGxlZC5DaGVjawppbXBvcnQgYW5kcm9pZHguY29tcG9zZS5tYXRlcmlhbDMuRXhwZXJpbWVudGFsTWF0ZXJpYWwzQXBpCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLm1hdGVyaWFsMy5JY29uCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLm1hdGVyaWFsMy5JY29uQnV0dG9uCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLm1hdGVyaWFsMy5NYXRlcmlhbFRoZW1lCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLm1hdGVyaWFsMy5TY2FmZm9sZAppbXBvcnQgYW5kcm9pZHguY29tcG9zZS5tYXRlcmlhbDMuVGV4dAppbXBvcnQgYW5kcm9pZHguY29tcG9zZS5tYXRlcmlhbDMuVG9wQXBwQmFyCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLm1hdGVyaWFsMy5Ub3BBcHBCYXJEZWZhdWx0cwppbXBvcnQgYW5kcm9pZHguY29tcG9zZS5ydW50aW1lLkNvbXBvc2FibGUKaW1wb3J0IGFuZHJvaWR4LmNvbXBvc2UucnVudGltZS5nZXRWYWx1ZQppbXBvcnQgYW5kcm9pZHguY29tcG9zZS5ydW50aW1lLm11dGFibGVTdGF0ZU9mCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLnJ1bnRpbWUucmVtZW1iZXIKaW1wb3J0IGFuZHJvaWR4LmNvbXBvc2UucnVudGltZS5zZXRWYWx1ZQppbXBvcnQgYW5kcm9pZHguY29tcG9zZS51aS5BbGlnbm1lbnQKaW1wb3J0IGFuZHJvaWR4LmNvbXBvc2UudWkuTW9kaWZpZXIKaW1wb3J0IGFuZHJvaWR4LmNvbXBvc2UudWkuZHJhdy5jbGlwCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLnVpLmdyYXBoaWNzLkNvbG9yCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLnVpLnRleHQuZm9udC5Gb250V2VpZ2h0CmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLnVpLnVuaXQuZHAKCi8qKgogKiBTZXR0aW5ncyDihpIgQXBwZWFyYW5jZSBzY3JlZW4uCiAqCiAqIFNob3dzIHRoZSBmb3VyIHByZW1pdW0gc3R5bGVzIGFzIHNlbGVjdGFibGUgY2FyZHMgd2l0aCBsaXZlIG1pbmkgcHJldmlld3MuCiAqIFNlbGVjdGlvbiBhcHBsaWVzIGltbWVkaWF0ZWx5IHZpYSBbVGhlbWVTdG9yZS5zZXRBcHBlYXJhbmNlU3R5bGVdIGFuZAogKiBwZXJzaXN0cyBhY3Jvc3MgcmVzdGFydHMgKFNoYXJlZFByZWZlcmVuY2VzKS4KICovCkBPcHRJbihFeHBlcmltZW50YWxNYXRlcmlhbDNBcGk6OmNsYXNzKQpAQ29tcG9zYWJsZQpmdW4gQXl4QXBwZWFyYW5jZVNjcmVlbihvbkJhY2s6ICgpIC0+IFVuaXQpIHsKICAgIHZhciBwcmV2aWV3SWQgYnkgcmVtZW1iZXIgeyBtdXRhYmxlU3RhdGVPZihUaGVtZVN0b3JlLmFwcGVhcmFuY2VTdHlsZS52YWx1ZSkgfQogICAgdmFsIGFjdGl2ZVRoZW1lID0gYXl4VGhlbWVCeUlkKFRoZW1lU3RvcmUuYXBwZWFyYW5jZVN0eWxlLnZhbHVlKQoKICAgIFNjYWZmb2xkKAogICAgICAgIHRvcEJhciA9IHsKICAgICAgICAgICAgVG9wQXBwQmFyKAogICAgICAgICAgICAgICAgdGl0bGUgPSB7IFRleHQoIkFwcGVhcmFuY2UiLCBjb2xvciA9IGFjdGl2ZVRoZW1lLmNvbG9ycy5vbkJhY2tncm91bmQpIH0sCiAgICAgICAgICAgICAgICBuYXZpZ2F0aW9uSWNvbiA9IHsKICAgICAgICAgICAgICAgICAgICBJY29uQnV0dG9uKG9uQ2xpY2sgPSBvbkJhY2spIHsKICAgICAgICAgICAgICAgICAgICAgICAgSWNvbihJY29ucy5EZWZhdWx0LkFycm93QmFjaywgIkJhY2siLCB0aW50ID0gYWN0aXZlVGhlbWUuY29sb3JzLm9uQmFja2dyb3VuZCkKICAgICAgICAgICAgICAgICAgICB9CiAgICAgICAgICAgICAgICB9LAogICAgICAgICAgICAgICAgY29sb3JzID0gVG9wQXBwQmFyRGVmYXVsdHMudG9wQXBwQmFyQ29sb3JzKAogICAgICAgICAgICAgICAgICAgIGNvbnRhaW5lckNvbG9yID0gYWN0aXZlVGhlbWUuY29sb3JzLmJhY2tncm91bmQKICAgICAgICAgICAgICAgICksCiAgICAgICAgICAgICkKICAgICAgICB9LAogICAgICAgIGNvbnRhaW5lckNvbG9yID0gYWN0aXZlVGhlbWUuY29sb3JzLmJhY2tncm91bmQsCiAgICApIHsgcGFkIC0+CiAgICAgICAgTGF6eUNvbHVtbigKICAgICAgICAgICAgbW9kaWZpZXIgPSBNb2RpZmllcgogICAgICAgICAgICAgICAgLmZpbGxNYXhTaXplKCkKICAgICAgICAgICAgICAgIC5wYWRkaW5nKHBhZCkKICAgICAgICAgICAgICAgIC5wYWRkaW5nKGhvcml6b250YWwgPSAxNi5kcCksCiAgICAgICAgICAgIHZlcnRpY2FsQXJyYW5nZW1lbnQgPSBBcnJhbmdlbWVudC5zcGFjZWRCeSgxMi5kcCksCiAgICAgICAgKSB7CiAgICAgICAgICAgIGl0ZW0geyBTcGFjZXIoTW9kaWZpZXIuaGVpZ2h0KDQuZHApKSB9CiAgICAgICAgICAgIGl0ZW1zKEF5eFRoZW1lcykgeyB0aGVtZSAtPgogICAgICAgICAgICAgICAgdmFsIHNlbGVjdGVkID0gcHJldmlld0lkID09IHRoZW1lLmlkCiAgICAgICAgICAgICAgICB2YWwgYm9yZGVyV2lkdGggYnkgYW5pbWF0ZURwQXNTdGF0ZSgKICAgICAgICAgICAgICAgICAgICBpZiAoc2VsZWN0ZWQpIDIuZHAgZWxzZSAwLmRwLCB0d2VlbigyMDApLCBsYWJlbCA9ICJzZWwtYm9yZGVyIgogICAgICAgICAgICAgICAgKQogICAgICAgICAgICAgICAgQXl4Q2FyZCgKICAgICAgICAgICAgICAgICAgICBtb2RpZmllciA9IE1vZGlmaWVyCiAgICAgICAgICAgICAgICAgICAgICAgIC5maWxsTWF4V2lkdGgoKQogICAgICAgICAgICAgICAgICAgICAgICAuYm9yZGVyKAogICAgICAgICAgICAgICAgICAgICAgICAgICAgYm9yZGVyV2lkdGgsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICBhY3RpdmVUaGVtZS5jb2xvcnMucHJpbWFyeSwKICAgICAgICAgICAgICAgICAgICAgICAgICAgIFJvdW5kZWRDb3JuZXJTaGFwZShhY3RpdmVUaGVtZS5zaGFwZXMuY2FyZENvcm5lcikKICAgICAgICAgICAgICAgICAgICAgICAgKSwKICAgICAgICAgICAgICAgICAgICBvbkNsaWNrID0gewogICAgICAgICAgICAgICAgICAgICAgICBwcmV2aWV3SWQgPSB0aGVtZS5pZAogICAgICAgICAgICAgICAgICAgICAgICBUaGVtZVN0b3JlLnNldEFwcGVhcmFuY2VTdHlsZSh0aGVtZS5pZCkKICAgICAgICAgICAgICAgICAgICB9LAogICAgICAgICAgICAgICAgKSB7CiAgICAgICAgICAgICAgICAgICAgQ29sdW1uKE1vZGlmaWVyLnBhZGRpbmcoMTQuZHApKSB7CiAgICAgICAgICAgICAgICAgICAgICAgIFJvdyh2ZXJ0aWNhbEFsaWdubWVudCA9IEFsaWdubWVudC5DZW50ZXJWZXJ0aWNhbGx5KSB7CiAgICAgICAgICAgICAgICAgICAgICAgICAgICBUaGVtZU1pbmlQcmV2aWV3KHRoZW1lLCBNb2RpZmllci53ZWlnaHQoMWYpKQogICAgICAgICAgICAgICAgICAgICAgICAgICAgaWYgKHNlbGVjdGVkKSB7CiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgQm94KAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBNb2RpZmllcgogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgLnNpemUoMjguZHApCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAuY2xpcChDaXJjbGVTaGFwZSkKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIC5iYWNrZ3JvdW5kKGFjdGl2ZVRoZW1lLmNvbG9ycy5wcmltYXJ5KSwKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgY29udGVudEFsaWdubWVudCA9IEFsaWdubWVudC5DZW50ZXIsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgKSB7CiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIEljb24oCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBJY29ucy5EZWZhdWx0LkNoZWNrLCAiU2VsZWN0ZWQiLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgdGludCA9IGFjdGl2ZVRoZW1lLmNvbG9ycy5vblByaW1hcnksCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBtb2RpZmllciA9IE1vZGlmaWVyLnNpemUoMTguZHApLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICApCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgfQogICAgICAgICAgICAgICAgICAgICAgICAgICAgfQogICAgICAgICAgICAgICAgICAgICAgICB9CiAgICAgICAgICAgICAgICAgICAgICAgIFNwYWNlcihNb2RpZmllci5oZWlnaHQoMTAuZHApKQogICAgICAgICAgICAgICAgICAgICAgICBUZXh0KAogICAgICAgICAgICAgICAgICAgICAgICAgICAgdGhlbWUubmFtZSwKICAgICAgICAgICAgICAgICAgICAgICAgICAgIHN0eWxlID0gTWF0ZXJpYWxUaGVtZS50eXBvZ3JhcGh5LnRpdGxlTWVkaXVtLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgZm9udFdlaWdodCA9IEZvbnRXZWlnaHQuU2VtaUJvbGQsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICBjb2xvciA9IGFjdGl2ZVRoZW1lLmNvbG9ycy5vblN1cmZhY2UsCiAgICAgICAgICAgICAgICAgICAgICAgICkKICAgICAgICAgICAgICAgICAgICAgICAgVGV4dCgKICAgICAgICAgICAgICAgICAgICAgICAgICAgIHRoZW1lLmRlc2NyaXB0aW9uLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgc3R5bGUgPSBNYXRlcmlhbFRoZW1lLnR5cG9ncmFwaHkuYm9keVNtYWxsLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgY29sb3IgPSBhY3RpdmVUaGVtZS5jb2xvcnMudGV4dFNlY29uZGFyeSwKICAgICAgICAgICAgICAgICAgICAgICAgKQogICAgICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgfQogICAgICAgICAgICBpdGVtIHsKICAgICAgICAgICAgICAgIFNwYWNlcihNb2RpZmllci5oZWlnaHQoNC5kcCkpCiAgICAgICAgICAgICAgICBBeXhCdXR0b24oCiAgICAgICAgICAgICAgICAgICAgdGV4dCA9ICJSZXN0b3JlIERlZmF1bHQgQXBwZWFyYW5jZSIsCiAgICAgICAgICAgICAgICAgICAgb25DbGljayA9IHsKICAgICAgICAgICAgICAgICAgICAgICAgcHJldmlld0lkID0gIm5ldW1vcnBoaXNtIgogICAgICAgICAgICAgICAgICAgICAgICBUaGVtZVN0b3JlLnNldEFwcGVhcmFuY2VTdHlsZSgibmV1bW9ycGhpc20iKQogICAgICAgICAgICAgICAgICAgIH0sCiAgICAgICAgICAgICAgICAgICAgbW9kaWZpZXIgPSBNb2RpZmllci5maWxsTWF4V2lkdGgoKSwKICAgICAgICAgICAgICAgICkKICAgICAgICAgICAgICAgIFNwYWNlcihNb2RpZmllci5oZWlnaHQoMjQuZHApKQogICAgICAgICAgICB9CiAgICAgICAgfQogICAgfQp9CgovKioKICogTWluaSBsaXZlIHByZXZpZXc6IGNoYXQgcm93ICsgYnViYmxlcyArIGNvbXBvc2VyIGluIHRoZSBnaXZlbiB0aGVtZSdzIHRva2Vucy4KICovCkBDb21wb3NhYmxlCnByaXZhdGUgZnVuIFRoZW1lTWluaVByZXZpZXcodGhlbWU6IEF5eFRoZW1lLCBtb2RpZmllcjogTW9kaWZpZXIgPSBNb2RpZmllcikgewogICAgdmFsIGJ1YmJsZVNoYXBlID0gUm91bmRlZENvcm5lclNoYXBlKHRoZW1lLnNoYXBlcy5idWJibGVDb3JuZXIpCiAgICBDb2x1bW4oCiAgICAgICAgbW9kaWZpZXIKICAgICAgICAgICAgLmNsaXAoUm91bmRlZENvcm5lclNoYXBlKHRoZW1lLnNoYXBlcy5jYXJkQ29ybmVyKSkKICAgICAgICAgICAgLmJhY2tncm91bmQodGhlbWUuY29sb3JzLmJhY2tncm91bmQpCiAgICAgICAgICAgIC5wYWRkaW5nKDEwLmRwKSwKICAgICAgICB2ZXJ0aWNhbEFycmFuZ2VtZW50ID0gQXJyYW5nZW1lbnQuc3BhY2VkQnkoNi5kcCksCiAgICApIHsKICAgICAgICAvLyBjaGF0IHJvdwogICAgICAgIFJvdyh2ZXJ0aWNhbEFsaWdubWVudCA9IEFsaWdubWVudC5DZW50ZXJWZXJ0aWNhbGx5KSB7CiAgICAgICAgICAgIEJveCgKICAgICAgICAgICAgICAgIE1vZGlmaWVyCiAgICAgICAgICAgICAgICAgICAgLnNpemUoMzAuZHApCiAgICAgICAgICAgICAgICAgICAgLmNsaXAoQ2lyY2xlU2hhcGUpCiAgICAgICAgICAgICAgICAgICAgLmJhY2tncm91bmQodGhlbWUuY29sb3JzLnN1cmZhY2VWYXJpYW50KQogICAgICAgICAgICApCiAgICAgICAgICAgIFNwYWNlcihNb2RpZmllci53aWR0aCg4LmRwKSkKICAgICAgICAgICAgQ29sdW1uKE1vZGlmaWVyLndlaWdodCgxZikpIHsKICAgICAgICAgICAgICAgIEJveCgKICAgICAgICAgICAgICAgICAgICBNb2RpZmllcgogICAgICAgICAgICAgICAgICAgICAgICAuZmlsbE1heFdpZHRoKDAuNWYpCiAgICAgICAgICAgICAgICAgICAgICAgIC5oZWlnaHQoOC5kcCkKICAgICAgICAgICAgICAgICAgICAgICAgLmNsaXAoUm91bmRlZENvcm5lclNoYXBlKDQuZHApKQogICAgICAgICAgICAgICAgICAgICAgICAuYmFja2dyb3VuZCh0aGVtZS5jb2xvcnMub25TdXJmYWNlLmNvcHkoYWxwaGEgPSAwLjc1ZikpCiAgICAgICAgICAgICAgICApCiAgICAgICAgICAgICAgICBTcGFjZXIoTW9kaWZpZXIuaGVpZ2h0KDQuZHApKQogICAgICAgICAgICAgICAgQm94KAogICAgICAgICAgICAgICAgICAgIE1vZGlmaWVyCiAgICAgICAgICAgICAgICAgICAgICAgIC5maWxsTWF4V2lkdGgoMC43ZikKICAgICAgICAgICAgICAgICAgICAgICAgLmhlaWdodCg3LmRwKQogICAgICAgICAgICAgICAgICAgICAgICAuY2xpcChSb3VuZGVkQ29ybmVyU2hhcGUoNC5kcCkpCiAgICAgICAgICAgICAgICAgICAgICAgIC5iYWNrZ3JvdW5kKHRoZW1lLmNvbG9ycy50ZXh0U2Vjb25kYXJ5LmNvcHkoYWxwaGEgPSAwLjVmKSkKICAgICAgICAgICAgICAgICkKICAgICAgICAgICAgfQogICAgICAgIH0KICAgICAgICAvLyByZWNlaXZlZCBidWJibGUKICAgICAgICBCb3goCiAgICAgICAgICAgIE1vZGlmaWVyCiAgICAgICAgICAgICAgICAuY2xpcChidWJibGVTaGFwZSkKICAgICAgICAgICAgICAgIC5iYWNrZ3JvdW5kKHRoZW1lLmNvbG9ycy5idWJibGVSZWNlaXZlZCkKICAgICAgICAgICAgICAgIC5wYWRkaW5nKGhvcml6b250YWwgPSAxMC5kcCwgdmVydGljYWwgPSA3LmRwKQogICAgICAgICkgewogICAgICAgICAgICBCb3goCiAgICAgICAgICAgICAgICBNb2RpZmllcgogICAgICAgICAgICAgICAgICAgIC53aWR0aCg5MC5kcCkKICAgICAgICAgICAgICAgICAgICAuaGVpZ2h0KDguZHApCiAgICAgICAgICAgICAgICAgICAgLmNsaXAoUm91bmRlZENvcm5lclNoYXBlKDQuZHApKQogICAgICAgICAgICAgICAgICAgIC5iYWNrZ3JvdW5kKHRoZW1lLmNvbG9ycy5vbkJ1YmJsZVJlY2VpdmVkLmNvcHkoYWxwaGEgPSAwLjhmKSkKICAgICAgICAgICAgKQogICAgICAgIH0KICAgICAgICAvLyBzZW50IGJ1YmJsZQogICAgICAgIFJvdyhNb2RpZmllci5maWxsTWF4V2lkdGgoKSwgaG9yaXpvbnRhbEFycmFuZ2VtZW50ID0gQXJyYW5nZW1lbnQuRW5kKSB7CiAgICAgICAgICAgIEJveCgKICAgICAgICAgICAgICAgIE1vZGlmaWVyCiAgICAgICAgICAgICAgICAgICAgLmNsaXAoYnViYmxlU2hhcGUpCiAgICAgICAgICAgICAgICAgICAgLmJhY2tncm91bmQodGhlbWUuY29sb3JzLmJ1YmJsZVNlbnQpCiAgICAgICAgICAgICAgICAgICAgLnBhZGRpbmcoaG9yaXpvbnRhbCA9IDEwLmRwLCB2ZXJ0aWNhbCA9IDcuZHApCiAgICAgICAgICAgICkgewogICAgICAgICAgICAgICAgQm94KAogICAgICAgICAgICAgICAgICAgIE1vZGlmaWVyCiAgICAgICAgICAgICAgICAgICAgICAgIC53aWR0aCg3MC5kcCkKICAgICAgICAgICAgICAgICAgICAgICAgLmhlaWdodCg4LmRwKQogICAgICAgICAgICAgICAgICAgICAgICAuY2xpcChSb3VuZGVkQ29ybmVyU2hhcGUoNC5kcCkpCiAgICAgICAgICAgICAgICAgICAgICAgIC5iYWNrZ3JvdW5kKHRoZW1lLmNvbG9ycy5vbkJ1YmJsZVNlbnQuY29weShhbHBoYSA9IDAuOGYpKQogICAgICAgICAgICAgICAgKQogICAgICAgICAgICB9CiAgICAgICAgfQogICAgICAgIC8vIGNvbXBvc2VyCiAgICAgICAgUm93KHZlcnRpY2FsQWxpZ25tZW50ID0gQWxpZ25tZW50LkNlbnRlclZlcnRpY2FsbHkpIHsKICAgICAgICAgICAgQm94KAogICAgICAgICAgICAgICAgTW9kaWZpZXIKICAgICAgICAgICAgICAgICAgICAud2VpZ2h0KDFmKQogICAgICAgICAgICAgICAgICAgIC5oZWlnaHQoMjguZHApCiAgICAgICAgICAgICAgICAgICAgLmNsaXAoUm91bmRlZENvcm5lclNoYXBlKHRoZW1lLnNoYXBlcy5jb3JuZXJGdWxsKSkKICAgICAgICAgICAgICAgICAgICAuYmFja2dyb3VuZCh0aGVtZS5jb2xvcnMuaW5wdXRCYWNrZ3JvdW5kKQogICAgICAgICAgICAgICAgICAgIC5ib3JkZXIoCiAgICAgICAgICAgICAgICAgICAgICAgIDEuZHAsCiAgICAgICAgICAgICAgICAgICAgICAgIHRoZW1lLmNvbG9ycy5ib3JkZXIuY29weShhbHBoYSA9IDAuNmYpLAogICAgICAgICAgICAgICAgICAgICAgICBSb3VuZGVkQ29ybmVyU2hhcGUodGhlbWUuc2hhcGVzLmNvcm5lckZ1bGwpCiAgICAgICAgICAgICAgICAgICAgKQogICAgICAgICAgICApCiAgICAgICAgICAgIFNwYWNlcihNb2RpZmllci53aWR0aCg2LmRwKSkKICAgICAgICAgICAgQm94KAogICAgICAgICAgICAgICAgTW9kaWZpZXIKICAgICAgICAgICAgICAgICAgICAuc2l6ZSgyOC5kcCkKICAgICAgICAgICAgICAgICAgICAuY2xpcChDaXJjbGVTaGFwZSkKICAgICAgICAgICAgICAgICAgICAuYmFja2dyb3VuZCh0aGVtZS5jb2xvcnMucHJpbWFyeSkKICAgICAgICAgICAgKQogICAgICAgIH0KICAgICAgICAvLyBuYXYgaGludAogICAgICAgIFJvdygKICAgICAgICAgICAgTW9kaWZpZXIuZmlsbE1heFdpZHRoKCksCiAgICAgICAgICAgIGhvcml6b250YWxBcnJhbmdlbWVudCA9IEFycmFuZ2VtZW50LlNwYWNlRXZlbmx5LAogICAgICAgICkgewogICAgICAgICAgICByZXBlYXQoNCkgeyBpIC0+CiAgICAgICAgICAgICAgICBCb3goCiAgICAgICAgICAgICAgICAgICAgTW9kaWZpZXIKICAgICAgICAgICAgICAgICAgICAgICAgLnNpemUoMTAuZHApCiAgICAgICAgICAgICAgICAgICAgICAgIC5jbGlwKENpcmNsZVNoYXBlKQogICAgICAgICAgICAgICAgICAgICAgICAuYmFja2dyb3VuZCgKICAgICAgICAgICAgICAgICAgICAgICAgICAgIGlmIChpID09IDApIHRoZW1lLmNvbG9ycy5wcmltYXJ5CiAgICAgICAgICAgICAgICAgICAgICAgICAgICBlbHNlIHRoZW1lLmNvbG9ycy50ZXh0RGlzYWJsZWQuY29weShhbHBoYSA9IDAuNGYpCiAgICAgICAgICAgICAgICAgICAgICAgICkKICAgICAgICAgICAgICAgICkKICAgICAgICAgICAgfQogICAgICAgIH0KICAgIH0KfQo=
+package ayx.whatsapp
+
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+
+/**
+ * Settings → Appearance screen.
+ *
+ * Shows the four premium styles as selectable cards with live mini previews.
+ * Selection applies immediately via [ThemeStore.setAppearanceStyle] and
+ * persists across restarts (SharedPreferences).
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AyxAppearanceScreen(onBack: () -> Unit) {
+    var previewId by remember { mutableStateOf(ThemeStore.appearanceStyle.value) }
+    val activeTheme = ayxThemeById(ThemeStore.appearanceStyle.value)
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Appearance", color = activeTheme.colors.onBackground) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, "Back", tint = activeTheme.colors.onBackground)
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = activeTheme.colors.background
+                ),
+            )
+        },
+        containerColor = activeTheme.colors.background,
+    ) { pad ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(pad)
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item { Spacer(Modifier.height(4.dp)) }
+            items(AyxThemes) { theme ->
+                val selected = previewId == theme.id
+                val borderWidth by animateDpAsState(
+                    if (selected) 2.dp else 0.dp, tween(200), label = "sel-border"
+                )
+                AyxCard(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(
+                            borderWidth,
+                            activeTheme.colors.primary,
+                            RoundedCornerShape(activeTheme.shapes.cardCorner)
+                        ),
+                    onClick = {
+                        previewId = theme.id
+                        ThemeStore.setAppearanceStyle(theme.id)
+                    },
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            ThemeMiniPreview(theme, Modifier.weight(1f))
+                            if (selected) {
+                                Box(
+                                    Modifier
+                                        .size(28.dp)
+                                        .clip(CircleShape)
+                                        .background(activeTheme.colors.primary),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        Icons.Default.Check, "Selected",
+                                        tint = activeTheme.colors.onPrimary,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            theme.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = activeTheme.colors.onSurface,
+                        )
+                        Text(
+                            theme.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = activeTheme.colors.textSecondary,
+                        )
+                    }
+                }
+            }
+            item {
+                Spacer(Modifier.height(4.dp))
+                AyxButton(
+                    text = "Restore Default Appearance",
+                    onClick = {
+                        previewId = "neumorphism"
+                        ThemeStore.setAppearanceStyle("neumorphism")
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(24.dp))
+            }
+        }
+    }
+}
+
+/**
+ * Mini live preview: chat row + bubbles + composer in the given theme's tokens.
+ */
+@Composable
+private fun ThemeMiniPreview(theme: AyxTheme, modifier: Modifier = Modifier) {
+    val bubbleShape = RoundedCornerShape(theme.shapes.bubbleCorner)
+    Column(
+        modifier
+            .clip(RoundedCornerShape(theme.shapes.cardCorner))
+            .background(theme.colors.background)
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        // chat row
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .size(30.dp)
+                    .clip(CircleShape)
+                    .background(theme.colors.surfaceVariant)
+            )
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Box(
+                    Modifier
+                        .fillMaxWidth(0.5f)
+                        .height(8.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(theme.colors.onSurface.copy(alpha = 0.75f))
+                )
+                Spacer(Modifier.height(4.dp))
+                Box(
+                    Modifier
+                        .fillMaxWidth(0.7f)
+                        .height(7.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(theme.colors.textSecondary.copy(alpha = 0.5f))
+                )
+            }
+        }
+        // received bubble
+        Box(
+            Modifier
+                .clip(bubbleShape)
+                .background(theme.colors.bubbleReceived)
+                .padding(horizontal = 10.dp, vertical = 7.dp)
+        ) {
+            Box(
+                Modifier
+                    .width(90.dp)
+                    .height(8.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(theme.colors.onBubbleReceived.copy(alpha = 0.8f))
+            )
+        }
+        // sent bubble
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            Box(
+                Modifier
+                    .clip(bubbleShape)
+                    .background(theme.colors.bubbleSent)
+                    .padding(horizontal = 10.dp, vertical = 7.dp)
+            ) {
+                Box(
+                    Modifier
+                        .width(70.dp)
+                        .height(8.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(theme.colors.onBubbleSent.copy(alpha = 0.8f))
+                )
+            }
+        }
+        // composer
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .weight(1f)
+                    .height(28.dp)
+                    .clip(RoundedCornerShape(theme.shapes.cornerFull))
+                    .background(theme.colors.inputBackground)
+                    .border(
+                        1.dp,
+                        theme.colors.border.copy(alpha = 0.6f),
+                        RoundedCornerShape(theme.shapes.cornerFull)
+                    )
+            )
+            Spacer(Modifier.width(6.dp))
+            Box(
+                Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .background(theme.colors.primary)
+            )
+        }
+        // nav hint
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+        ) {
+            repeat(4) { i ->
+                Box(
+                    Modifier
+                        .size(10.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (i == 0) theme.colors.primary
+                            else theme.colors.textDisabled.copy(alpha = 0.4f)
+                        )
+                )
+            }
+        }
+    }
+}

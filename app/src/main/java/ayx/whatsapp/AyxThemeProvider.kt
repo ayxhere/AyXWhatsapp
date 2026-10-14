@@ -1,1 +1,29 @@
-cGFja2FnZSBheXgud2hhdHNhcHAKCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLnJ1bnRpbWUuQ29tcG9zYWJsZQppbXBvcnQgYW5kcm9pZHguY29tcG9zZS5ydW50aW1lLlJlYWRPbmx5Q29tcG9zYWJsZQppbXBvcnQgYW5kcm9pZHguY29tcG9zZS5ydW50aW1lLmNvbXBvc2l0aW9uTG9jYWxPZgoKLyoqCiAqIFByb3ZpZGVzIHRoZSBhY3RpdmUgW0F5eFRoZW1lXSB0byB0aGUgY29tcG9zaXRpb24uCiAqIFNjcmVlbnMgcmVhZCBbQXl4VGhlbWVQcm92aWRlci5jdXJyZW50XSBpbnN0ZWFkIG9mIGhhcmRjb2RlZCBjb2xvcnMuCiAqLwp2YWwgTG9jYWxBeXhUaGVtZSA9IGNvbXBvc2l0aW9uTG9jYWxPZjxBeXhUaGVtZT4geyBOZXVtb3JwaGlzbVRoZW1lIH0KCm9iamVjdCBBeXhUaGVtZVByb3ZpZGVyIHsKICAgIHZhbCBjdXJyZW50OiBBeXhUaGVtZQogICAgICAgIEBDb21wb3NhYmxlCiAgICAgICAgQFJlYWRPbmx5Q29tcG9zYWJsZQogICAgICAgIGdldCgpID0gTG9jYWxBeXhUaGVtZS5jdXJyZW50Cn0KCi8qKgogKiBPYnNlcnZlcyBbVGhlbWVTdG9yZS5hcHBlYXJhbmNlU3R5bGVdIGFuZCByZXNvbHZlcyB0aGUgYWN0aXZlIHRoZW1lLgogKiBDYWxsIG9uY2UgbmVhciB0aGUgdG9wIG9mIHRoZSBjb21wb3NpdGlvbiAoZS5nLiBpbnNpZGUgc2V0Q29udGVudCkuCiAqLwpAQ29tcG9zYWJsZQpmdW4gcmVtZW1iZXJBeXhUaGVtZSgpOiBBeXhUaGVtZSB7CiAgICAvLyByZWFkaW5nIC52YWx1ZSBtYWtlcyB0aGlzIHJlY29tcG9zZSBvbiBzdHlsZSBjaGFuZ2UKICAgIHZhbCBzdHlsZUlkID0gVGhlbWVTdG9yZS5hcHBlYXJhbmNlU3R5bGUudmFsdWUKICAgIHJldHVybiBheXhUaGVtZUJ5SWQoc3R5bGVJZCkKfQo=
+package ayx.whatsapp
+
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.compositionLocalOf
+
+/**
+ * Provides the active [AyxTheme] to the composition.
+ * Screens read [AyxThemeProvider.current] instead of hardcoded colors.
+ */
+val LocalAyxTheme = compositionLocalOf<AyxTheme> { NeumorphismTheme }
+
+object AyxThemeProvider {
+    val current: AyxTheme
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalAyxTheme.current
+}
+
+/**
+ * Observes [ThemeStore.appearanceStyle] and resolves the active theme.
+ * Call once near the top of the composition (e.g. inside setContent).
+ */
+@Composable
+fun rememberAyxTheme(): AyxTheme {
+    // reading .value makes this recompose on style change
+    val styleId = ThemeStore.appearanceStyle.value
+    return ayxThemeById(styleId)
+}

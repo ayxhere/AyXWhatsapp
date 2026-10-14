@@ -1,1 +1,263 @@
-cGFja2FnZSBheXgud2hhdHNhcHAKCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLnVpLmdyYXBoaWNzLkNvbG9yCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLnVpLnVuaXQuRHAKaW1wb3J0IGFuZHJvaWR4LmNvbXBvc2UudWkudW5pdC5kcAoKLyoqCiAqIEF5WCBQcmVtaXVtIERlc2lnbiBTeXN0ZW0g4oCUIGZvdXIgc2VsZWN0YWJsZSB2aXN1YWwgdGhlbWVzLgogKgogKiBFYWNoIHRoZW1lIHByb3ZpZGVzIGEgY29tcGxldGUgc2V0IG9mIGRlc2lnbiB0b2tlbnMuIFNjcmVlbnMgcmVhZCB0aGUKICogYWN0aXZlIHRoZW1lIHZpYSBbQXl4VGhlbWVQcm92aWRlci5jdXJyZW50XSBhbmQgc3R5bGUgdGhlbXNlbHZlcwogKiBhY2NvcmRpbmdseS4gTm8gaGFyZGNvZGVkIHRoZW1lIGNoZWNrcyBzY2F0dGVyZWQgaW4gVUkgY29kZS4KICovCgovLyDilIDilIAgRGVzaWduIHRva2VucyDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIAKCmRhdGEgY2xhc3MgQXl4Q29sb3JzKAogICAgdmFsIGJhY2tncm91bmQ6IENvbG9yLAogICAgdmFsIHN1cmZhY2U6IENvbG9yLAogICAgdmFsIHN1cmZhY2VWYXJpYW50OiBDb2xvciwKICAgIHZhbCBzdXJmYWNlUmFpc2VkOiBDb2xvciwKICAgIHZhbCBzdXJmYWNlSW5zZXQ6IENvbG9yLAogICAgdmFsIHByaW1hcnk6IENvbG9yLAogICAgdmFsIHByaW1hcnlWYXJpYW50OiBDb2xvciwKICAgIHZhbCBzZWNvbmRhcnk6IENvbG9yLAogICAgdmFsIGFjY2VudDogQ29sb3IsCiAgICB2YWwgb25CYWNrZ3JvdW5kOiBDb2xvciwKICAgIHZhbCBvblN1cmZhY2U6IENvbG9yLAogICAgdmFsIG9uUHJpbWFyeTogQ29sb3IsCiAgICB2YWwgdGV4dFNlY29uZGFyeTogQ29sb3IsCiAgICB2YWwgdGV4dERpc2FibGVkOiBDb2xvciwKICAgIHZhbCBib3JkZXI6IENvbG9yLAogICAgdmFsIGRpdmlkZXI6IENvbG9yLAogICAgdmFsIGJ1YmJsZVNlbnQ6IENvbG9yLAogICAgdmFsIGJ1YmJsZVJlY2VpdmVkOiBDb2xvciwKICAgIHZhbCBvbkJ1YmJsZVNlbnQ6IENvbG9yLAogICAgdmFsIG9uQnViYmxlUmVjZWl2ZWQ6IENvbG9yLAogICAgdmFsIGlucHV0QmFja2dyb3VuZDogQ29sb3IsCiAgICB2YWwgY2FyZEJhY2tncm91bmQ6IENvbG9yLAogICAgdmFsIGJhZGdlOiBDb2xvciwKICAgIHZhbCBzdWNjZXNzOiBDb2xvciwKICAgIHZhbCBlcnJvcjogQ29sb3IsCiAgICB2YWwgc2NyaW06IENvbG9yLAopCgpkYXRhIGNsYXNzIEF5eFNoYXBlcygKICAgIHZhbCBjb3JuZXJTbWFsbDogRHAsCiAgICB2YWwgY29ybmVyTWVkaXVtOiBEcCwKICAgIHZhbCBjb3JuZXJMYXJnZTogRHAsCiAgICB2YWwgY29ybmVyRnVsbDogRHAsCiAgICB2YWwgYnViYmxlQ29ybmVyOiBEcCwKICAgIHZhbCBjYXJkQ29ybmVyOiBEcCwKKQoKZGF0YSBjbGFzcyBBeXhFbGV2YXRpb24oCiAgICB2YWwgY2FyZDogRHAsCiAgICB2YWwgZGlhbG9nOiBEcCwKICAgIHZhbCBidXR0b246IERwLAogICAgdmFsIG5hdkJhcjogRHAsCiAgICB2YWwgc2hhZG93QWxwaGE6IEZsb2F0LAopCgpkYXRhIGNsYXNzIEF5eEdsYXNzKAogICAgdmFsIGVuYWJsZWQ6IEJvb2xlYW4sCiAgICB2YWwgc3VyZmFjZUFscGhhOiBGbG9hdCwKICAgIHZhbCBib3JkZXJBbHBoYTogRmxvYXQsCiAgICB2YWwgYmx1clJhZGl1czogRHAsCikKCmRhdGEgY2xhc3MgQXl4VGhlbWUoCiAgICB2YWwgaWQ6IFN0cmluZywKICAgIHZhbCBuYW1lOiBTdHJpbmcsCiAgICB2YWwgZGVzY3JpcHRpb246IFN0cmluZywKICAgIHZhbCBjb2xvcnM6IEF5eENvbG9ycywKICAgIHZhbCBzaGFwZXM6IEF5eFNoYXBlcywKICAgIHZhbCBlbGV2YXRpb246IEF5eEVsZXZhdGlvbiwKICAgIHZhbCBnbGFzczogQXl4R2xhc3MsCikKCi8vIOKUgOKUgCBUaGVtZSAxOiBOZXVtb3JwaGlzbSDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIAKCnZhbCBOZXVtb3JwaGlzbVRoZW1lID0gQXl4VGhlbWUoCiAgICBpZCA9ICJuZXVtb3JwaGlzbSIsCiAgICBuYW1lID0gIk5ldW1vcnBoaXNtIiwKICAgIGRlc2NyaXB0aW9uID0gIlNvZnQgZGltZW5zaW9uYWwgc3VyZmFjZXMgd2l0aCBnZW50bGUgcGFpcmVkIHNoYWRvd3MiLAogICAgY29sb3JzID0gQXl4Q29sb3JzKAogICAgICAgIGJhY2tncm91bmQgPSBDb2xvcigweEZGMUExRDI0KSwKICAgICAgICBzdXJmYWNlID0gQ29sb3IoMHhGRjIyMjYyRiksCiAgICAgICAgc3VyZmFjZVZhcmlhbnQgPSBDb2xvcigweEZGMjYyQjM2KSwKICAgICAgICBzdXJmYWNlUmFpc2VkID0gQ29sb3IoMHhGRjJBMzAzQyksCiAgICAgICAgc3VyZmFjZUluc2V0ID0gQ29sb3IoMHhGRjE2MTgxRSksCiAgICAgICAgcHJpbWFyeSA9IENvbG9yKDB4RkY0REQwQzQpLAogICAgICAgIHByaW1hcnlWYXJpYW50ID0gQ29sb3IoMHhGRjNBQTg5RSksCiAgICAgICAgc2Vjb25kYXJ5ID0gQ29sb3IoMHhGRjgyQUFGRiksCiAgICAgICAgYWNjZW50ID0gQ29sb3IoMHhGRjRERDBDNCksCiAgICAgICAgb25CYWNrZ3JvdW5kID0gQ29sb3IoMHhGRkU4RUFGMCksCiAgICAgICAgb25TdXJmYWNlID0gQ29sb3IoMHhGRkU4RUFGMCksCiAgICAgICAgb25QcmltYXJ5ID0gQ29sb3IoMHhGRjBEMTExNyksCiAgICAgICAgdGV4dFNlY29uZGFyeSA9IENvbG9yKDB4RkY5QUEzQjIpLAogICAgICAgIHRleHREaXNhYmxlZCA9IENvbG9yKDB4RkY1QTYyNzApLAogICAgICAgIGJvcmRlciA9IENvbG9yKDB4RkYyRTM0NDApLAogICAgICAgIGRpdmlkZXIgPSBDb2xvcigweEZGMjYyQjM2KSwKICAgICAgICBidWJibGVTZW50ID0gQ29sb3IoMHhGRjJBNEE0OCksCiAgICAgICAgYnViYmxlUmVjZWl2ZWQgPSBDb2xvcigweEZGMjYyQjM2KSwKICAgICAgICBvbkJ1YmJsZVNlbnQgPSBDb2xvcigweEZGRThGNUYzKSwKICAgICAgICBvbkJ1YmJsZVJlY2VpdmVkID0gQ29sb3IoMHhGRkU4RUFGMCksCiAgICAgICAgaW5wdXRCYWNrZ3JvdW5kID0gQ29sb3IoMHhGRjE2MTgxRSksCiAgICAgICAgY2FyZEJhY2tncm91bmQgPSBDb2xvcigweEZGMjIyNjJGKSwKICAgICAgICBiYWRnZSA9IENvbG9yKDB4RkY0REQwQzQpLAogICAgICAgIHN1Y2Nlc3MgPSBDb2xvcigweEZGN0JEODhGKSwKICAgICAgICBlcnJvciA9IENvbG9yKDB4RkZGRjZCNkIpLAogICAgICAgIHNjcmltID0gQ29sb3IoMHg5OTAwMDAwMCksCiAgICApLAogICAgc2hhcGVzID0gQXl4U2hhcGVzKAogICAgICAgIGNvcm5lclNtYWxsID0gOC5kcCwgY29ybmVyTWVkaXVtID0gMTQuZHAsIGNvcm5lckxhcmdlID0gMjAuZHAsCiAgICAgICAgY29ybmVyRnVsbCA9IDUwLmRwLCBidWJibGVDb3JuZXIgPSAxNi5kcCwgY2FyZENvcm5lciA9IDE4LmRwLAogICAgKSwKICAgIGVsZXZhdGlvbiA9IEF5eEVsZXZhdGlvbigKICAgICAgICBjYXJkID0gMC5kcCwgZGlhbG9nID0gOC5kcCwgYnV0dG9uID0gMC5kcCwgbmF2QmFyID0gNC5kcCwgc2hhZG93QWxwaGEgPSAwLjM1ZiwKICAgICksCiAgICBnbGFzcyA9IEF5eEdsYXNzKGVuYWJsZWQgPSBmYWxzZSwgc3VyZmFjZUFscGhhID0gMWYsIGJvcmRlckFscGhhID0gMWYsIGJsdXJSYWRpdXMgPSAwLmRwKSwKKQoKLy8g4pSA4pSAIFRoZW1lIDI6IEdsYXNzbW9ycGhpc20g4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSACgp2YWwgR2xhc3Ntb3JwaGlzbVRoZW1lID0gQXl4VGhlbWUoCiAgICBpZCA9ICJnbGFzc21vcnBoaXNtIiwKICAgIG5hbWUgPSAiR2xhc3Ntb3JwaGlzbSIsCiAgICBkZXNjcmlwdGlvbiA9ICJUcmFuc2x1Y2VudCBnbGFzcyBwYW5lbHMgd2l0aCBjeWFuLWJsdWUgbGlnaHRpbmciLAogICAgY29sb3JzID0gQXl4Q29sb3JzKAogICAgICAgIGJhY2tncm91bmQgPSBDb2xvcigweEZGMEQxMTE3KSwKICAgICAgICBzdXJmYWNlID0gQ29sb3IoMHgxQTFFMkEpLAogICAgICAgIHN1cmZhY2VWYXJpYW50ID0gQ29sb3IoMHgyMjFFMkEpLAogICAgICAgIHN1cmZhY2VSYWlzZWQgPSBDb2xvcigweDJBMjQzOCksCiAgICAgICAgc3VyZmFjZUluc2V0ID0gQ29sb3IoMHgwQTBEMTQpLAogICAgICAgIHByaW1hcnkgPSBDb2xvcigweEZGNkVFN0Y5KSwKICAgICAgICBwcmltYXJ5VmFyaWFudCA9IENvbG9yKDB4RkY0Q0M5RTgpLAogICAgICAgIHNlY29uZGFyeSA9IENvbG9yKDB4RkZBNzhCRkEpLAogICAgICAgIGFjY2VudCA9IENvbG9yKDB4RkY2RUU3RjkpLAogICAgICAgIG9uQmFja2dyb3VuZCA9IENvbG9yKDB4RkZGMEY0RkYpLAogICAgICAgIG9uU3VyZmFjZSA9IENvbG9yKDB4RkZGMEY0RkYpLAogICAgICAgIG9uUHJpbWFyeSA9IENvbG9yKDB4RkYwRDExMTcpLAogICAgICAgIHRleHRTZWNvbmRhcnkgPSBDb2xvcigweEZGQThCM0M3KSwKICAgICAgICB0ZXh0RGlzYWJsZWQgPSBDb2xvcigweEZGNUE2NTc3KSwKICAgICAgICBib3JkZXIgPSBDb2xvcigweDMzNkVFN0Y5KSwKICAgICAgICBkaXZpZGVyID0gQ29sb3IoMHgxQTZFRTdGOSksCiAgICAgICAgYnViYmxlU2VudCA9IENvbG9yKDB4MkEzQTRBKSwKICAgICAgICBidWJibGVSZWNlaXZlZCA9IENvbG9yKDB4MUUyNDMwKSwKICAgICAgICBvbkJ1YmJsZVNlbnQgPSBDb2xvcigweEZGRjBGNEZGKSwKICAgICAgICBvbkJ1YmJsZVJlY2VpdmVkID0gQ29sb3IoMHhGRkYwRjRGRiksCiAgICAgICAgaW5wdXRCYWNrZ3JvdW5kID0gQ29sb3IoMHgxNDE4MjEpLAogICAgICAgIGNhcmRCYWNrZ3JvdW5kID0gQ29sb3IoMHgxQTFFMkEpLAogICAgICAgIGJhZGdlID0gQ29sb3IoMHhGRjZFRTdGOSksCiAgICAgICAgc3VjY2VzcyA9IENvbG9yKDB4RkY3QkQ4OEYpLAogICAgICAgIGVycm9yID0gQ29sb3IoMHhGRkZGNkI2QiksCiAgICAgICAgc2NyaW0gPSBDb2xvcigweDk5MDAwMDAwKSwKICAgICksCiAgICBzaGFwZXMgPSBBeXhTaGFwZXMoCiAgICAgICAgY29ybmVyU21hbGwgPSAxMC5kcCwgY29ybmVyTWVkaXVtID0gMTYuZHAsIGNvcm5lckxhcmdlID0gMjQuZHAsCiAgICAgICAgY29ybmVyRnVsbCA9IDUwLmRwLCBidWJibGVDb3JuZXIgPSAxOC5kcCwgY2FyZENvcm5lciA9IDIwLmRwLAogICAgKSwKICAgIGVsZXZhdGlvbiA9IEF5eEVsZXZhdGlvbigKICAgICAgICBjYXJkID0gMC5kcCwgZGlhbG9nID0gMTIuZHAsIGJ1dHRvbiA9IDIuZHAsIG5hdkJhciA9IDAuZHAsIHNoYWRvd0FscGhhID0gMC4yNWYsCiAgICApLAogICAgZ2xhc3MgPSBBeXhHbGFzcyhlbmFibGVkID0gdHJ1ZSwgc3VyZmFjZUFscGhhID0gMC41NWYsIGJvcmRlckFscGhhID0gMC4zNWYsIGJsdXJSYWRpdXMgPSAxNi5kcCksCikKCi8vIOKUgOKUgCBUaGVtZSAzOiBTa2V1b21vcnBoaXNtIOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgAoKdmFsIFNrZXVvbW9ycGhpc21UaGVtZSA9IEF5eFRoZW1lKAogICAgaWQgPSAic2tldW9tb3JwaGlzbSIsCiAgICBuYW1lID0gIlNrZXVvbW9ycGhpc20iLAogICAgZGVzY3JpcHRpb24gPSAiUmljaCBtYXRlcmlhbCBkZXB0aCB3aXRoIHRhY3RpbGUgcGh5c2ljYWwgY29udHJvbHMiLAogICAgY29sb3JzID0gQXl4Q29sb3JzKAogICAgICAgIGJhY2tncm91bmQgPSBDb2xvcigweEZGMTQxNjFDKSwKICAgICAgICBzdXJmYWNlID0gQ29sb3IoMHhGRjFFMjEyOSksCiAgICAgICAgc3VyZmFjZVZhcmlhbnQgPSBDb2xvcigweEZGMjQyODMzKSwKICAgICAgICBzdXJmYWNlUmFpc2VkID0gQ29sb3IoMHhGRjJBMkYzQiksCiAgICAgICAgc3VyZmFjZUluc2V0ID0gQ29sb3IoMHhGRjBFMTAxNSksCiAgICAgICAgcHJpbWFyeSA9IENvbG9yKDB4RkY1QkM4QkUpLAogICAgICAgIHByaW1hcnlWYXJpYW50ID0gQ29sb3IoMHhGRjQ4QTg5RiksCiAgICAgICAgc2Vjb25kYXJ5ID0gQ29sb3IoMHhGRjhCOUJCNCksCiAgICAgICAgYWNjZW50ID0gQ29sb3IoMHhGRjVCQzhCRSksCiAgICAgICAgb25CYWNrZ3JvdW5kID0gQ29sb3IoMHhGRkVERUZGNSksCiAgICAgICAgb25TdXJmYWNlID0gQ29sb3IoMHhGRkVERUZGNSksCiAgICAgICAgb25QcmltYXJ5ID0gQ29sb3IoMHhGRjBEMTExNyksCiAgICAgICAgdGV4dFNlY29uZGFyeSA9IENvbG9yKDB4RkY5QkEzQjUpLAogICAgICAgIHRleHREaXNhYmxlZCA9IENvbG9yKDB4RkY1QzYzNzMpLAogICAgICAgIGJvcmRlciA9IENvbG9yKDB4RkYzMzM5NDcpLAogICAgICAgIGRpdmlkZXIgPSBDb2xvcigweEZGMjQyODMzKSwKICAgICAgICBidWJibGVTZW50ID0gQ29sb3IoMHhGRjIzNDAzRCksCiAgICAgICAgYnViYmxlUmVjZWl2ZWQgPSBDb2xvcigweEZGMjQyODMzKSwKICAgICAgICBvbkJ1YmJsZVNlbnQgPSBDb2xvcigweEZGRURFRkY1KSwKICAgICAgICBvbkJ1YmJsZVJlY2VpdmVkID0gQ29sb3IoMHhGRkVERUZGNSksCiAgICAgICAgaW5wdXRCYWNrZ3JvdW5kID0gQ29sb3IoMHhGRjBFMTAxNSksCiAgICAgICAgY2FyZEJhY2tncm91bmQgPSBDb2xvcigweEZGMUUyMTI5KSwKICAgICAgICBiYWRnZSA9IENvbG9yKDB4RkY1QkM4QkUpLAogICAgICAgIHN1Y2Nlc3MgPSBDb2xvcigweEZGN0JEODhGKSwKICAgICAgICBlcnJvciA9IENvbG9yKDB4RkZGRjZCNkIpLAogICAgICAgIHNjcmltID0gQ29sb3IoMHg5OTAwMDAwMCksCiAgICApLAogICAgc2hhcGVzID0gQXl4U2hhcGVzKAogICAgICAgIGNvcm5lclNtYWxsID0gNi5kcCwgY29ybmVyTWVkaXVtID0gMTAuZHAsIGNvcm5lckxhcmdlID0gMTQuZHAsCiAgICAgICAgY29ybmVyRnVsbCA9IDUwLmRwLCBidWJibGVDb3JuZXIgPSAxMi5kcCwgY2FyZENvcm5lciA9IDEyLmRwLAogICAgKSwKICAgIGVsZXZhdGlvbiA9IEF5eEVsZXZhdGlvbigKICAgICAgICBjYXJkID0gNC5kcCwgZGlhbG9nID0gMTIuZHAsIGJ1dHRvbiA9IDMuZHAsIG5hdkJhciA9IDYuZHAsIHNoYWRvd0FscGhhID0gMC40NWYsCiAgICApLAogICAgZ2xhc3MgPSBBeXhHbGFzcyhlbmFibGVkID0gZmFsc2UsIHN1cmZhY2VBbHBoYSA9IDFmLCBib3JkZXJBbHBoYSA9IDFmLCBibHVyUmFkaXVzID0gMC5kcCksCikKCi8vIOKUgOKUgCBUaGVtZSA0OiBDbGF5bW9ycGhpc20g4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSACgp2YWwgQ2xheW1vcnBoaXNtVGhlbWUgPSBBeXhUaGVtZSgKICAgIGlkID0gImNsYXltb3JwaGlzbSIsCiAgICBuYW1lID0gIkNsYXltb3JwaGlzbSIsCiAgICBkZXNjcmlwdGlvbiA9ICJTb2Z0IGNsYXkgc3VyZmFjZXMgd2l0aCBmcmllbmRseSByb3VuZGVkIGRlcHRoIiwKICAgIGNvbG9ycyA9IEF5eENvbG9ycygKICAgICAgICBiYWNrZ3JvdW5kID0gQ29sb3IoMHhGRjE5MUMyNiksCiAgICAgICAgc3VyZmFjZSA9IENvbG9yKDB4RkYyMzI2MzYpLAogICAgICAgIHN1cmZhY2VWYXJpYW50ID0gQ29sb3IoMHhGRjI4MkMzRSksCiAgICAgICAgc3VyZmFjZVJhaXNlZCA9IENvbG9yKDB4RkYyRTMzNDgpLAogICAgICAgIHN1cmZhY2VJbnNldCA9IENvbG9yKDB4RkYxNDE2MUYpLAogICAgICAgIHByaW1hcnkgPSBDb2xvcigweEZGN0VENkNDKSwKICAgICAgICBwcmltYXJ5VmFyaWFudCA9IENvbG9yKDB4RkY1RkI4QUUpLAogICAgICAgIHNlY29uZGFyeSA9IENvbG9yKDB4RkY5RDhERjEpLAogICAgICAgIGFjY2VudCA9IENvbG9yKDB4RkY3RUQ2Q0MpLAogICAgICAgIG9uQmFja2dyb3VuZCA9IENvbG9yKDB4RkZFRUYwRjgpLAogICAgICAgIG9uU3VyZmFjZSA9IENvbG9yKDB4RkZFRUYwRjgpLAogICAgICAgIG9uUHJpbWFyeSA9IENvbG9yKDB4RkYwRDExMTcpLAogICAgICAgIHRleHRTZWNvbmRhcnkgPSBDb2xvcigweEZGQTJBOEJFKSwKICAgICAgICB0ZXh0RGlzYWJsZWQgPSBDb2xvcigweEZGNjA2NjdDKSwKICAgICAgICBib3JkZXIgPSBDb2xvcigweEZGMzAzNTRBKSwKICAgICAgICBkaXZpZGVyID0gQ29sb3IoMHhGRjI4MkMzRSksCiAgICAgICAgYnViYmxlU2VudCA9IENvbG9yKDB4RkYyQjRBNDcpLAogICAgICAgIGJ1YmJsZVJlY2VpdmVkID0gQ29sb3IoMHhGRjI4MkMzRSksCiAgICAgICAgb25CdWJibGVTZW50ID0gQ29sb3IoMHhGRkVFRjBGOCksCiAgICAgICAgb25CdWJibGVSZWNlaXZlZCA9IENvbG9yKDB4RkZFRUYwRjgpLAogICAgICAgIGlucHV0QmFja2dyb3VuZCA9IENvbG9yKDB4RkYxNDE2MUYpLAogICAgICAgIGNhcmRCYWNrZ3JvdW5kID0gQ29sb3IoMHhGRjIzMjYzNiksCiAgICAgICAgYmFkZ2UgPSBDb2xvcigweEZGN0VENkNDKSwKICAgICAgICBzdWNjZXNzID0gQ29sb3IoMHhGRjhCRDg5QSksCiAgICAgICAgZXJyb3IgPSBDb2xvcigweEZGRkY3QjdCKSwKICAgICAgICBzY3JpbSA9IENvbG9yKDB4OTkwMDAwMDApLAogICAgKSwKICAgIHNoYXBlcyA9IEF5eFNoYXBlcygKICAgICAgICBjb3JuZXJTbWFsbCA9IDEyLmRwLCBjb3JuZXJNZWRpdW0gPSAyMC5kcCwgY29ybmVyTGFyZ2UgPSAyOC5kcCwKICAgICAgICBjb3JuZXJGdWxsID0gNTAuZHAsIGJ1YmJsZUNvcm5lciA9IDIyLmRwLCBjYXJkQ29ybmVyID0gMjQuZHAsCiAgICApLAogICAgZWxldmF0aW9uID0gQXl4RWxldmF0aW9uKAogICAgICAgIGNhcmQgPSA2LmRwLCBkaWFsb2cgPSAxMC5kcCwgYnV0dG9uID0gNC5kcCwgbmF2QmFyID0gNi5kcCwgc2hhZG93QWxwaGEgPSAwLjNmLAogICAgKSwKICAgIGdsYXNzID0gQXl4R2xhc3MoZW5hYmxlZCA9IGZhbHNlLCBzdXJmYWNlQWxwaGEgPSAxZiwgYm9yZGVyQWxwaGEgPSAxZiwgYmx1clJhZGl1cyA9IDAuZHApLAopCgovLyDilIDilIAgUmVnaXN0cnkg4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSACgp2YWwgQXl4VGhlbWVzOiBMaXN0PEF5eFRoZW1lPiA9IGxpc3RPZigKICAgIE5ldW1vcnBoaXNtVGhlbWUsIEdsYXNzbW9ycGhpc21UaGVtZSwgU2tldW9tb3JwaGlzbVRoZW1lLCBDbGF5bW9ycGhpc21UaGVtZSwKKQoKZnVuIGF5eFRoZW1lQnlJZChpZDogU3RyaW5nKTogQXl4VGhlbWUgPQogICAgQXl4VGhlbWVzLmZpcnN0T3JOdWxsIHsgaXQuaWQgPT0gaWQgfSA/OiBOZXVtb3JwaGlzbVRoZW1lCg==
+package ayx.whatsapp
+
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+
+/**
+ * AyX Premium Design System — four selectable visual themes.
+ *
+ * Each theme provides a complete set of design tokens. Screens read the
+ * active theme via [AyxThemeProvider.current] and style themselves
+ * accordingly. No hardcoded theme checks scattered in UI code.
+ */
+
+// ── Design tokens ──────────────────────────────────────────────
+
+data class AyxColors(
+    val background: Color,
+    val surface: Color,
+    val surfaceVariant: Color,
+    val surfaceRaised: Color,
+    val surfaceInset: Color,
+    val primary: Color,
+    val primaryVariant: Color,
+    val secondary: Color,
+    val accent: Color,
+    val onBackground: Color,
+    val onSurface: Color,
+    val onPrimary: Color,
+    val textSecondary: Color,
+    val textDisabled: Color,
+    val border: Color,
+    val divider: Color,
+    val bubbleSent: Color,
+    val bubbleReceived: Color,
+    val onBubbleSent: Color,
+    val onBubbleReceived: Color,
+    val inputBackground: Color,
+    val cardBackground: Color,
+    val badge: Color,
+    val success: Color,
+    val error: Color,
+    val scrim: Color,
+)
+
+data class AyxShapes(
+    val cornerSmall: Dp,
+    val cornerMedium: Dp,
+    val cornerLarge: Dp,
+    val cornerFull: Dp,
+    val bubbleCorner: Dp,
+    val cardCorner: Dp,
+)
+
+data class AyxElevation(
+    val card: Dp,
+    val dialog: Dp,
+    val button: Dp,
+    val navBar: Dp,
+    val shadowAlpha: Float,
+)
+
+data class AyxGlass(
+    val enabled: Boolean,
+    val surfaceAlpha: Float,
+    val borderAlpha: Float,
+    val blurRadius: Dp,
+)
+
+data class AyxTheme(
+    val id: String,
+    val name: String,
+    val description: String,
+    val colors: AyxColors,
+    val shapes: AyxShapes,
+    val elevation: AyxElevation,
+    val glass: AyxGlass,
+)
+
+// ── Theme 1: Neumorphism ───────────────────────────────────────
+
+val NeumorphismTheme = AyxTheme(
+    id = "neumorphism",
+    name = "Neumorphism",
+    description = "Soft dimensional surfaces with gentle paired shadows",
+    colors = AyxColors(
+        background = Color(0xFF1A1D24),
+        surface = Color(0xFF22262F),
+        surfaceVariant = Color(0xFF262B36),
+        surfaceRaised = Color(0xFF2A303C),
+        surfaceInset = Color(0xFF16181E),
+        primary = Color(0xFF4DD0C4),
+        primaryVariant = Color(0xFF3AA89E),
+        secondary = Color(0xFF82AAFF),
+        accent = Color(0xFF4DD0C4),
+        onBackground = Color(0xFFE8EAF0),
+        onSurface = Color(0xFFE8EAF0),
+        onPrimary = Color(0xFF0D1117),
+        textSecondary = Color(0xFF9AA3B2),
+        textDisabled = Color(0xFF5A6270),
+        border = Color(0xFF2E3440),
+        divider = Color(0xFF262B36),
+        bubbleSent = Color(0xFF2A4A48),
+        bubbleReceived = Color(0xFF262B36),
+        onBubbleSent = Color(0xFFE8F5F3),
+        onBubbleReceived = Color(0xFFE8EAF0),
+        inputBackground = Color(0xFF16181E),
+        cardBackground = Color(0xFF22262F),
+        badge = Color(0xFF4DD0C4),
+        success = Color(0xFF7BD88F),
+        error = Color(0xFFFF6B6B),
+        scrim = Color(0x99000000),
+    ),
+    shapes = AyxShapes(
+        cornerSmall = 8.dp, cornerMedium = 14.dp, cornerLarge = 20.dp,
+        cornerFull = 50.dp, bubbleCorner = 16.dp, cardCorner = 18.dp,
+    ),
+    elevation = AyxElevation(
+        card = 0.dp, dialog = 8.dp, button = 0.dp, navBar = 4.dp, shadowAlpha = 0.35f,
+    ),
+    glass = AyxGlass(enabled = false, surfaceAlpha = 1f, borderAlpha = 1f, blurRadius = 0.dp),
+)
+
+// ── Theme 2: Glassmorphism ─────────────────────────────────────
+
+val GlassmorphismTheme = AyxTheme(
+    id = "glassmorphism",
+    name = "Glassmorphism",
+    description = "Translucent glass panels with cyan-blue lighting",
+    colors = AyxColors(
+        background = Color(0xFF0D1117),
+        surface = Color(0x1A1E2A),
+        surfaceVariant = Color(0x221E2A),
+        surfaceRaised = Color(0x2A2438),
+        surfaceInset = Color(0x0A0D14),
+        primary = Color(0xFF6EE7F9),
+        primaryVariant = Color(0xFF4CC9E8),
+        secondary = Color(0xFFA78BFA),
+        accent = Color(0xFF6EE7F9),
+        onBackground = Color(0xFFF0F4FF),
+        onSurface = Color(0xFFF0F4FF),
+        onPrimary = Color(0xFF0D1117),
+        textSecondary = Color(0xFFA8B3C7),
+        textDisabled = Color(0xFF5A6577),
+        border = Color(0x336EE7F9),
+        divider = Color(0x1A6EE7F9),
+        bubbleSent = Color(0x2A3A4A),
+        bubbleReceived = Color(0x1E2430),
+        onBubbleSent = Color(0xFFF0F4FF),
+        onBubbleReceived = Color(0xFFF0F4FF),
+        inputBackground = Color(0x141821),
+        cardBackground = Color(0x1A1E2A),
+        badge = Color(0xFF6EE7F9),
+        success = Color(0xFF7BD88F),
+        error = Color(0xFFFF6B6B),
+        scrim = Color(0x99000000),
+    ),
+    shapes = AyxShapes(
+        cornerSmall = 10.dp, cornerMedium = 16.dp, cornerLarge = 24.dp,
+        cornerFull = 50.dp, bubbleCorner = 18.dp, cardCorner = 20.dp,
+    ),
+    elevation = AyxElevation(
+        card = 0.dp, dialog = 12.dp, button = 2.dp, navBar = 0.dp, shadowAlpha = 0.25f,
+    ),
+    glass = AyxGlass(enabled = true, surfaceAlpha = 0.55f, borderAlpha = 0.35f, blurRadius = 16.dp),
+)
+
+// ── Theme 3: Skeuomorphism ─────────────────────────────────────
+
+val SkeuomorphismTheme = AyxTheme(
+    id = "skeuomorphism",
+    name = "Skeuomorphism",
+    description = "Rich material depth with tactile physical controls",
+    colors = AyxColors(
+        background = Color(0xFF14161C),
+        surface = Color(0xFF1E2129),
+        surfaceVariant = Color(0xFF242833),
+        surfaceRaised = Color(0xFF2A2F3B),
+        surfaceInset = Color(0xFF0E1015),
+        primary = Color(0xFF5BC8BE),
+        primaryVariant = Color(0xFF48A89F),
+        secondary = Color(0xFF8B9BB4),
+        accent = Color(0xFF5BC8BE),
+        onBackground = Color(0xFFEDEFF5),
+        onSurface = Color(0xFFEDEFF5),
+        onPrimary = Color(0xFF0D1117),
+        textSecondary = Color(0xFF9BA3B5),
+        textDisabled = Color(0xFF5C6373),
+        border = Color(0xFF333947),
+        divider = Color(0xFF242833),
+        bubbleSent = Color(0xFF23403D),
+        bubbleReceived = Color(0xFF242833),
+        onBubbleSent = Color(0xFFEDEFF5),
+        onBubbleReceived = Color(0xFFEDEFF5),
+        inputBackground = Color(0xFF0E1015),
+        cardBackground = Color(0xFF1E2129),
+        badge = Color(0xFF5BC8BE),
+        success = Color(0xFF7BD88F),
+        error = Color(0xFFFF6B6B),
+        scrim = Color(0x99000000),
+    ),
+    shapes = AyxShapes(
+        cornerSmall = 6.dp, cornerMedium = 10.dp, cornerLarge = 14.dp,
+        cornerFull = 50.dp, bubbleCorner = 12.dp, cardCorner = 12.dp,
+    ),
+    elevation = AyxElevation(
+        card = 4.dp, dialog = 12.dp, button = 3.dp, navBar = 6.dp, shadowAlpha = 0.45f,
+    ),
+    glass = AyxGlass(enabled = false, surfaceAlpha = 1f, borderAlpha = 1f, blurRadius = 0.dp),
+)
+
+// ── Theme 4: Claymorphism ──────────────────────────────────────
+
+val ClaymorphismTheme = AyxTheme(
+    id = "claymorphism",
+    name = "Claymorphism",
+    description = "Soft clay surfaces with friendly rounded depth",
+    colors = AyxColors(
+        background = Color(0xFF191C26),
+        surface = Color(0xFF232636),
+        surfaceVariant = Color(0xFF282C3E),
+        surfaceRaised = Color(0xFF2E3348),
+        surfaceInset = Color(0xFF14161F),
+        primary = Color(0xFF7ED6CC),
+        primaryVariant = Color(0xFF5FB8AE),
+        secondary = Color(0xFF9D8DF1),
+        accent = Color(0xFF7ED6CC),
+        onBackground = Color(0xFFEEF0F8),
+        onSurface = Color(0xFFEEF0F8),
+        onPrimary = Color(0xFF0D1117),
+        textSecondary = Color(0xFFA2A8BE),
+        textDisabled = Color(0xFF60667C),
+        border = Color(0xFF30354A),
+        divider = Color(0xFF282C3E),
+        bubbleSent = Color(0xFF2B4A47),
+        bubbleReceived = Color(0xFF282C3E),
+        onBubbleSent = Color(0xFFEEF0F8),
+        onBubbleReceived = Color(0xFFEEF0F8),
+        inputBackground = Color(0xFF14161F),
+        cardBackground = Color(0xFF232636),
+        badge = Color(0xFF7ED6CC),
+        success = Color(0xFF8BD89A),
+        error = Color(0xFFFF7B7B),
+        scrim = Color(0x99000000),
+    ),
+    shapes = AyxShapes(
+        cornerSmall = 12.dp, cornerMedium = 20.dp, cornerLarge = 28.dp,
+        cornerFull = 50.dp, bubbleCorner = 22.dp, cardCorner = 24.dp,
+    ),
+    elevation = AyxElevation(
+        card = 6.dp, dialog = 10.dp, button = 4.dp, navBar = 6.dp, shadowAlpha = 0.3f,
+    ),
+    glass = AyxGlass(enabled = false, surfaceAlpha = 1f, borderAlpha = 1f, blurRadius = 0.dp),
+)
+
+// ── Registry ───────────────────────────────────────────────────
+
+val AyxThemes: List<AyxTheme> = listOf(
+    NeumorphismTheme, GlassmorphismTheme, SkeuomorphismTheme, ClaymorphismTheme,
+)
+
+fun ayxThemeById(id: String): AyxTheme =
+    AyxThemes.firstOrNull { it.id == id } ?: NeumorphismTheme

@@ -1,1 +1,130 @@
-cGFja2FnZSBheXgud2hhdHNhcHAKCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLmFuaW1hdGlvbi5jb3JlLmFuaW1hdGVEcEFzU3RhdGUKaW1wb3J0IGFuZHJvaWR4LmNvbXBvc2UuYW5pbWF0aW9uLmNvcmUudHdlZW4KaW1wb3J0IGFuZHJvaWR4LmNvbXBvc2UuZm91bmRhdGlvbi5iYWNrZ3JvdW5kCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLmZvdW5kYXRpb24uYm9yZGVyCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLmZvdW5kYXRpb24uY2xpY2thYmxlCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLmZvdW5kYXRpb24uaW50ZXJhY3Rpb24uTXV0YWJsZUludGVyYWN0aW9uU291cmNlCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLmZvdW5kYXRpb24uaW50ZXJhY3Rpb24uY29sbGVjdElzUHJlc3NlZEFzU3RhdGUKaW1wb3J0IGFuZHJvaWR4LmNvbXBvc2UuZm91bmRhdGlvbi5sYXlvdXQuQm94CmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLmZvdW5kYXRpb24ubGF5b3V0LlBhZGRpbmdWYWx1ZXMKaW1wb3J0IGFuZHJvaWR4LmNvbXBvc2UuZm91bmRhdGlvbi5sYXlvdXQucGFkZGluZwppbXBvcnQgYW5kcm9pZHguY29tcG9zZS5mb3VuZGF0aW9uLnNoYXBlLlJvdW5kZWRDb3JuZXJTaGFwZQppbXBvcnQgYW5kcm9pZHguY29tcG9zZS5tYXRlcmlhbDMuQnV0dG9uCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLm1hdGVyaWFsMy5CdXR0b25EZWZhdWx0cwppbXBvcnQgYW5kcm9pZHguY29tcG9zZS5tYXRlcmlhbDMuQ2FyZAppbXBvcnQgYW5kcm9pZHguY29tcG9zZS5tYXRlcmlhbDMuQ2FyZERlZmF1bHRzCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLm1hdGVyaWFsMy5NYXRlcmlhbFRoZW1lCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLm1hdGVyaWFsMy5UZXh0CmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLnJ1bnRpbWUuQ29tcG9zYWJsZQppbXBvcnQgYW5kcm9pZHguY29tcG9zZS5ydW50aW1lLmdldFZhbHVlCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLnJ1bnRpbWUucmVtZW1iZXIKaW1wb3J0IGFuZHJvaWR4LmNvbXBvc2UudWkuTW9kaWZpZXIKaW1wb3J0IGFuZHJvaWR4LmNvbXBvc2UudWkuZHJhdy5jbGlwCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLnVpLmRyYXcuc2hhZG93CmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLnVpLmdyYXBoaWNzLkJydXNoCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLnVpLmdyYXBoaWNzLkNvbG9yCmltcG9ydCBhbmRyb2lkeC5jb21wb3NlLnVpLnVuaXQuZHAKCi8qKgogKiBUaGVtZS1hd2FyZSByZXVzYWJsZSBjb21wb25lbnRzLiBBbGwgcmVhZCBbQXl4VGhlbWVQcm92aWRlci5jdXJyZW50XQogKiBzbyB0aGV5IHJlc3R5bGUgYXV0b21hdGljYWxseSB3aGVuIHRoZSBhcHBlYXJhbmNlIGNoYW5nZXMuCiAqLwoKQENvbXBvc2FibGUKZnVuIEF5eENhcmQoCiAgICBtb2RpZmllcjogTW9kaWZpZXIgPSBNb2RpZmllciwKICAgIG9uQ2xpY2s6ICgoKSAtPiBVbml0KT8gPSBudWxsLAogICAgY29udGVudDogQENvbXBvc2FibGUgKCkgLT4gVW5pdCwKKSB7CiAgICB2YWwgdGhlbWUgPSBBeXhUaGVtZVByb3ZpZGVyLmN1cnJlbnQKICAgIHZhbCBzaGFwZSA9IFJvdW5kZWRDb3JuZXJTaGFwZSh0aGVtZS5zaGFwZXMuY2FyZENvcm5lcikKICAgIHZhbCBjYXJkTW9kID0gbW9kaWZpZXIKICAgICAgICAuc2hhZG93KAogICAgICAgICAgICBlbGV2YXRpb24gPSB0aGVtZS5lbGV2YXRpb24uY2FyZCwKICAgICAgICAgICAgc2hhcGUgPSBzaGFwZSwKICAgICAgICAgICAgYW1iaWVudENvbG9yID0gQ29sb3IuQmxhY2suY29weShhbHBoYSA9IHRoZW1lLmVsZXZhdGlvbi5zaGFkb3dBbHBoYSksCiAgICAgICAgICAgIHNwb3RDb2xvciA9IENvbG9yLkJsYWNrLmNvcHkoYWxwaGEgPSB0aGVtZS5lbGV2YXRpb24uc2hhZG93QWxwaGEpLAogICAgICAgICkKICAgICAgICAuY2xpcChzaGFwZSkKICAgICAgICAuYmFja2dyb3VuZCgKICAgICAgICAgICAgaWYgKHRoZW1lLmdsYXNzLmVuYWJsZWQpCiAgICAgICAgICAgICAgICB0aGVtZS5jb2xvcnMuY2FyZEJhY2tncm91bmQuY29weShhbHBoYSA9IHRoZW1lLmdsYXNzLnN1cmZhY2VBbHBoYSkKICAgICAgICAgICAgZWxzZSB0aGVtZS5jb2xvcnMuY2FyZEJhY2tncm91bmQKICAgICAgICApCiAgICAgICAgLnRoZW4oCiAgICAgICAgICAgIGlmICh0aGVtZS5nbGFzcy5lbmFibGVkKQogICAgICAgICAgICAgICAgTW9kaWZpZXIuYm9yZGVyKAogICAgICAgICAgICAgICAgICAgIDEuZHAsCiAgICAgICAgICAgICAgICAgICAgdGhlbWUuY29sb3JzLmJvcmRlci5jb3B5KGFscGhhID0gdGhlbWUuZ2xhc3MuYm9yZGVyQWxwaGEpLAogICAgICAgICAgICAgICAgICAgIHNoYXBlCiAgICAgICAgICAgICAgICApCiAgICAgICAgICAgIGVsc2UgTW9kaWZpZXIKICAgICAgICApCiAgICAgICAgLnRoZW4oCiAgICAgICAgICAgIGlmIChvbkNsaWNrICE9IG51bGwpIE1vZGlmaWVyLmNsaWNrYWJsZShvbkNsaWNrID0gb25DbGljaykgZWxzZSBNb2RpZmllcgogICAgICAgICkKICAgIEJveChtb2RpZmllciA9IGNhcmRNb2QpIHsgY29udGVudCgpIH0KfQoKQENvbXBvc2FibGUKZnVuIEF5eEJ1dHRvbigKICAgIHRleHQ6IFN0cmluZywKICAgIG9uQ2xpY2s6ICgpIC0+IFVuaXQsCiAgICBtb2RpZmllcjogTW9kaWZpZXIgPSBNb2RpZmllciwKICAgIGVuYWJsZWQ6IEJvb2xlYW4gPSB0cnVlLAopIHsKICAgIHZhbCB0aGVtZSA9IEF5eFRoZW1lUHJvdmlkZXIuY3VycmVudAogICAgdmFsIGludGVyYWN0aW9uID0gcmVtZW1iZXIgeyBNdXRhYmxlSW50ZXJhY3Rpb25Tb3VyY2UoKSB9CiAgICB2YWwgcHJlc3NlZCBieSBpbnRlcmFjdGlvbi5jb2xsZWN0SXNQcmVzc2VkQXNTdGF0ZSgpCiAgICB2YWwgZWxldmF0aW9uIGJ5IGFuaW1hdGVEcEFzU3RhdGUoCiAgICAgICAgdGFyZ2V0VmFsdWUgPSBpZiAocHJlc3NlZCkgMC5kcCBlbHNlIHRoZW1lLmVsZXZhdGlvbi5idXR0b24sCiAgICAgICAgYW5pbWF0aW9uU3BlYyA9IHR3ZWVuKDE1MCksIGxhYmVsID0gImF5eC1idG4tZWxldiIKICAgICkKICAgIHZhbCBzaGFwZSA9IFJvdW5kZWRDb3JuZXJTaGFwZSh0aGVtZS5zaGFwZXMuY29ybmVyTWVkaXVtKQogICAgQnV0dG9uKAogICAgICAgIG9uQ2xpY2sgPSBvbkNsaWNrLAogICAgICAgIGVuYWJsZWQgPSBlbmFibGVkLAogICAgICAgIG1vZGlmaWVyID0gbW9kaWZpZXIuc2hhZG93KGVsZXZhdGlvbiwgc2hhcGUpLAogICAgICAgIHNoYXBlID0gc2hhcGUsCiAgICAgICAgY29sb3JzID0gQnV0dG9uRGVmYXVsdHMuYnV0dG9uQ29sb3JzKAogICAgICAgICAgICBjb250YWluZXJDb2xvciA9IHRoZW1lLmNvbG9ycy5wcmltYXJ5LAogICAgICAgICAgICBjb250ZW50Q29sb3IgPSB0aGVtZS5jb2xvcnMub25QcmltYXJ5LAogICAgICAgICAgICBkaXNhYmxlZENvbnRhaW5lckNvbG9yID0gdGhlbWUuY29sb3JzLnN1cmZhY2VWYXJpYW50LAogICAgICAgICAgICBkaXNhYmxlZENvbnRlbnRDb2xvciA9IHRoZW1lLmNvbG9ycy50ZXh0RGlzYWJsZWQsCiAgICAgICAgKSwKICAgICAgICBjb250ZW50UGFkZGluZyA9IFBhZGRpbmdWYWx1ZXMoaG9yaXpvbnRhbCA9IDIwLmRwLCB2ZXJ0aWNhbCA9IDEyLmRwKSwKICAgICAgICBpbnRlcmFjdGlvblNvdXJjZSA9IGludGVyYWN0aW9uLAogICAgKSB7CiAgICAgICAgVGV4dCh0ZXh0LCBzdHlsZSA9IE1hdGVyaWFsVGhlbWUudHlwb2dyYXBoeS5sYWJlbExhcmdlKQogICAgfQp9CgpAQ29tcG9zYWJsZQpmdW4gQXl4U3VyZmFjZSgKICAgIG1vZGlmaWVyOiBNb2RpZmllciA9IE1vZGlmaWVyLAogICAgY29udGVudDogQENvbXBvc2FibGUgKCkgLT4gVW5pdCwKKSB7CiAgICB2YWwgdGhlbWUgPSBBeXhUaGVtZVByb3ZpZGVyLmN1cnJlbnQKICAgIEJveCgKICAgICAgICBtb2RpZmllciA9IG1vZGlmaWVyLmJhY2tncm91bmQodGhlbWUuY29sb3JzLmJhY2tncm91bmQpCiAgICApIHsgY29udGVudCgpIH0KfQoKLyoqIEdyYWRpZW50IGJydXNoIGhlbHBlciBmb3Igc2tldW9tb3JwaGljIC8gcHJlbWl1bSBzdXJmYWNlcy4gKi8KQENvbXBvc2FibGUKZnVuIGF5eFJhaXNlZEJydXNoKCk6IEJydXNoIHsKICAgIHZhbCB0aGVtZSA9IEF5eFRoZW1lUHJvdmlkZXIuY3VycmVudAogICAgcmV0dXJuIEJydXNoLnZlcnRpY2FsR3JhZGllbnQoCiAgICAgICAgbGlzdE9mKHRoZW1lLmNvbG9ycy5zdXJmYWNlUmFpc2VkLCB0aGVtZS5jb2xvcnMuc3VyZmFjZSkKICAgICkKfQoKQENvbXBvc2FibGUKZnVuIGF5eEluc2V0QnJ1c2goKTogQnJ1c2ggewogICAgdmFsIHRoZW1lID0gQXl4VGhlbWVQcm92aWRlci5jdXJyZW50CiAgICByZXR1cm4gQnJ1c2gudmVydGljYWxHcmFkaWVudCgKICAgICAgICBsaXN0T2YodGhlbWUuY29sb3JzLnN1cmZhY2VJbnNldCwgdGhlbWUuY29sb3JzLnN1cmZhY2VWYXJpYW50KQogICAgKQp9Cg==
+package ayx.whatsapp
+
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+
+/**
+ * Theme-aware reusable components. All read [AyxThemeProvider.current]
+ * so they restyle automatically when the appearance changes.
+ */
+
+@Composable
+fun AyxCard(
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+    content: @Composable () -> Unit,
+) {
+    val theme = AyxThemeProvider.current
+    val shape = RoundedCornerShape(theme.shapes.cardCorner)
+    val cardMod = modifier
+        .shadow(
+            elevation = theme.elevation.card,
+            shape = shape,
+            ambientColor = Color.Black.copy(alpha = theme.elevation.shadowAlpha),
+            spotColor = Color.Black.copy(alpha = theme.elevation.shadowAlpha),
+        )
+        .clip(shape)
+        .background(
+            if (theme.glass.enabled)
+                theme.colors.cardBackground.copy(alpha = theme.glass.surfaceAlpha)
+            else theme.colors.cardBackground
+        )
+        .then(
+            if (theme.glass.enabled)
+                Modifier.border(
+                    1.dp,
+                    theme.colors.border.copy(alpha = theme.glass.borderAlpha),
+                    shape
+                )
+            else Modifier
+        )
+        .then(
+            if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier
+        )
+    Box(modifier = cardMod) { content() }
+}
+
+@Composable
+fun AyxButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
+    val theme = AyxThemeProvider.current
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val elevation by animateDpAsState(
+        targetValue = if (pressed) 0.dp else theme.elevation.button,
+        animationSpec = tween(150), label = "ayx-btn-elev"
+    )
+    val shape = RoundedCornerShape(theme.shapes.cornerMedium)
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier.shadow(elevation, shape),
+        shape = shape,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = theme.colors.primary,
+            contentColor = theme.colors.onPrimary,
+            disabledContainerColor = theme.colors.surfaceVariant,
+            disabledContentColor = theme.colors.textDisabled,
+        ),
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+        interactionSource = interaction,
+    ) {
+        Text(text, style = MaterialTheme.typography.labelLarge)
+    }
+}
+
+@Composable
+fun AyxSurface(
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    val theme = AyxThemeProvider.current
+    Box(
+        modifier = modifier.background(theme.colors.background)
+    ) { content() }
+}
+
+/** Gradient brush helper for skeuomorphic / premium surfaces. */
+@Composable
+fun ayxRaisedBrush(): Brush {
+    val theme = AyxThemeProvider.current
+    return Brush.verticalGradient(
+        listOf(theme.colors.surfaceRaised, theme.colors.surface)
+    )
+}
+
+@Composable
+fun ayxInsetBrush(): Brush {
+    val theme = AyxThemeProvider.current
+    return Brush.verticalGradient(
+        listOf(theme.colors.surfaceInset, theme.colors.surfaceVariant)
+    )
+}
