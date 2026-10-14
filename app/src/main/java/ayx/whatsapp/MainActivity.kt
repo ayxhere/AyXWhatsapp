@@ -1202,7 +1202,7 @@ fun GatewayApp() {
             // Glass header: translucent so the list scrolls behind it. Chat screen has its own header.
             if (openChat == null) {
             StyledSurface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.80f), shadowElevation = 6.dp, tonalElevation = 0.dp,
-                shape = RoundedCornerShape(bottomStart = 26.dp, bottomEnd = 26.dp), modifier = Modifier.fillMaxWidth()) {
+                shape = RoundedCornerShape(bottomStart = 26.dp, bottomEnd = 26.dp), modifier = Modifier.fillMaxWidth().offset(y = (-4).dp)) {
             CenterAlignedTopAppBar(
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
                 title = {
