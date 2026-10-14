@@ -704,6 +704,8 @@ fun GatewayApp() {
 
     // file picker for sending media
     var pendingMedia by remember { mutableStateOf<Pair<Uri, String>?>(null) }
+    // an attachment staged in one chat must NEVER follow you into another chat → drop it whenever the open chat changes
+    LaunchedEffect(openChat) { pendingMedia = null }
     var chatsPage by remember { mutableStateOf(0) }
     var storyView by remember { mutableStateOf<String?>(null) }
     var myJid by remember { mutableStateOf<String?>(null) }
