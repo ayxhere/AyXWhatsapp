@@ -102,6 +102,15 @@ object GatewayClient {
     }
 
     suspend fun sendToJid(jid: String, text: String): Boolean = withContext(Dispatchers.IO) {
+        // Smart AI reminders (Reschedule.kt): natural reminder requests in any
+        // outgoing message are consumed here at the delivery layer so the chat
+        // composer stays untouched (frozen 2026-10-15). No command prefix.
+        if (Reschedule.handleOutgoing(jid, text)) return@withContext true
+        sendToJidDirect(jid, text)
+    }
+
+    /** Raw send without reminder interception — used by the reminder fire worker. */
+    suspend fun sendToJidDirect(jid: String, text: String): Boolean = withContext(Dispatchers.IO) {
         val o = post("/sendraw", JSONObject().put("jid", jid).put("text", text))
         if (o.optBoolean("ok", false)) true else throw RuntimeException(o.optString("error", "send failed"))
     }

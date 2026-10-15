@@ -25,6 +25,10 @@ object NodeRuntime {
         // so it can be passed via environment (process-private, not on command line).
         val apiToken = GatewayAuth.init(ctx)
 
+        // Smart AI reminders: static app context for the reminder store/scheduler.
+        // (Chat composer and .vv are frozen — this init lives at app startup.)
+        Reschedule.init(ctx.applicationContext)
+
         val projectDir = File(ctx.filesDir, "nodejs-project")
         extractIfNeeded(ctx, projectDir)
 
