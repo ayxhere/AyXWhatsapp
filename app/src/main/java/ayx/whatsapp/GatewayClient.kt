@@ -538,6 +538,8 @@ object GatewayClient {
         val jid: String, val name: String, val chatName: String,
         val lastTs: Long, val lastText: String, val lastFromMe: Boolean,
         val lastMediaType: String, val archived: Boolean, val muted: Boolean,
+        /** Baileys unreadCount (incoming messages the user hasn't read). */
+        val unreadCount: Int = 0,
     )
 
     suspend fun getChats(): List<ChatInfo> = withContext(Dispatchers.IO) {
@@ -550,9 +552,21 @@ object GatewayClient {
                     o.optLong("ts", o.optLong("lastTs", 0L)), o.optString("lastText"),
                     o.optBoolean("lastFromMe", false), o.optString("lastMediaType"),
                     o.optBoolean("archived", false), o.optBoolean("muted", false),
+                    o.optInt("unreadCount", 0),
                 )
             }
         } catch (e: Exception) { emptyList() }
+    }
+
+    /**
+     * Mark a chat read (home unread badge clears): zeroes the gateway's
+     * Baileys unreadCount for [jid] + sends WhatsApp read receipts for its
+     * recent incoming messages. Best-effort — the local badge clears
+     * immediately via clearedUnread regardless.
+     */
+    suspend fun markRead(jid: String): Boolean = withContext(Dispatchers.IO) {
+        try { post("/markread", JSONObject().put("jid", jid)).optBoolean("ok", false) }
+        catch (e: Exception) { false }
     }
 
     /**

@@ -737,6 +737,19 @@ fun GatewayApp() {
 
     var screen by remember { mutableStateOf("chats") }
     var openChat by remember { mutableStateOf<String?>(null) }
+    // Unread badge: jid -> wall-clock ms when that chat was marked read.
+    // The badge clears the moment a chat is opened (see markChatRead), so
+    // going back home never shows a stale count — but a message arriving
+    // AFTER the mark-read still shows (its ts > the cleared timestamp).
+    var clearedUnread by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
+    fun markChatRead(jid: String) {
+        clearedUnread = clearedUnread + (jid to System.currentTimeMillis())
+        scope.launch { runCatching { GatewayClient.markRead(jid) } }
+    }
+    // Opening a chat marks it read (covers every open path: tap, locked-chat
+    // unlock, new-chat, deep-link). Closing also re-marks (onBack) for
+    // messages that arrived while inside the chat.
+    LaunchedEffect(openChat) { openChat?.let { markChatRead(it) } }
     // AyX Group system channel — a dedicated screen, NOT a chat. No mute/block/hide applies.
     var showAyxUpdates by remember { mutableStateOf(false) } // legacy, unused - kept for compat
     // Snippet for the pinned chat-list row; refreshed whenever the updates screen closes.
@@ -1605,7 +1618,7 @@ fun GatewayApp() {
                 presence = chatPresence,
                 dpCache = dpCache,
                 isBlocked = ocBlocked,
-                onBack = { openChat = null },
+                onBack = { markChatRead(ocChat); openChat = null },
                 onEdit = { showSetName = true },
                 onWallpaper = { chatWallpaperPicker.launch("image/*") },
                 onBlock = { scope.launch { runCatching { GatewayClient.blockChat(ocChat, true) }.onSuccess { notify("blocked"); blockedJids = blockedJids + ocChat; blkPrefs.edit().putStringSet("blocked", blockedJids).apply() }.onFailure { notify("failed: ${it.message}") } } },
@@ -1668,6 +1681,7 @@ fun GatewayApp() {
                         }
                     },
                     onDelete = { jid -> scope.launch { GatewayClient.deleteChat(jid); messages = GatewayClient.getMessages() } },
+                    clearedUnread = clearedUnread,
                     onOpen = { jid ->
                         if (ChatFlags.locked[jid] == true) {
                             val km = ctx.getSystemService(KeyguardManager::class.java)
@@ -1928,7 +1942,7 @@ private fun chatTitleOfRow(row: ChatRow): String {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChatList(messages: List<GatewayClient.Msg>, chats: List<GatewayClient.ChatInfo> = emptyList(), dpCache: MutableMap<String, ImageBitmap?>, query: String, contentPad: androidx.compose.foundation.layout.PaddingValues, ayxSnippet: String, onToggleReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit) {
+private fun ChatList(messages: List<GatewayClient.Msg>, chats: List<GatewayClient.ChatInfo> = emptyList(), dpCache: MutableMap<String, ImageBitmap?>, query: String, contentPad: androidx.compose.foundation.layout.PaddingValues, ayxSnippet: String, onToggleReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit, clearedUnread: Map<String, Long> = emptyMap()) {
     // MERGED chat list (BUG FIX: rows used to come ONLY from messages, so
     // chats with no recent messages never appeared — fewer chats than the
     // original WhatsApp). Union of message-derived chats + gateway /chats.
@@ -2009,11 +2023,32 @@ private fun ChatList(messages: List<GatewayClient.Msg>, chats: List<GatewayClien
                         // never a 1970 epoch date.
                         if (entry.lastTs > 0) Text(fmt(entry.lastTs), style = MaterialTheme.typography.labelSmall)
                     }
+                    // Unread badge (WhatsApp-style): Baileys unreadCount for
+                    // this chat. Locally cleared the moment the chat was
+                    // opened (clearedUnread) so the badge drops instantly —
+                    // a message that arrived AFTER the mark-read still shows.
+                    val serverUnread = entry.info?.unreadCount ?: 0
+                    val unread = if ((clearedUnread[entry.jid] ?: 0L) >= entry.lastTs && entry.lastTs > 0) 0 else serverUnread
                     // No-message chats have an honestly empty preview —
                     // never a fake "[message]".
                     val preview = entry.lastMsg?.let { chatPreview(it, entry.isGroup) } ?: ""
-                    Text(preview, style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(preview, style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            color = if (unread > 0) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = if (unread > 0) FontWeight.SemiBold else FontWeight.Normal,
+                            modifier = Modifier.weight(1f))
+                        if (unread > 0) {
+                            Spacer(Modifier.width(6.dp))
+                            val mutedRow = ChatFlags.isMuted(entry.jid) || entry.info?.muted == true
+                            Box(Modifier.size(20.dp).clip(CircleShape)
+                                .background(if (mutedRow) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f) else AYX_GREEN),
+                                contentAlignment = Alignment.Center) {
+                                Text(if (unread > 99) "99+" else unread.toString(), color = Color.White,
+                                    style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
                 }
             }
             }
@@ -4066,7 +4101,7 @@ private fun NewChatScreen(contacts: List<DeviceContact>, loading: Boolean, dpCac
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, chats: List<GatewayClient.ChatInfo> = emptyList(), statuses: List<GatewayClient.StatusItem>, dpCache: MutableMap<String, ImageBitmap?>, query: String, page: Int, topInset: androidx.compose.ui.unit.Dp, ayxSnippet: String, onPageChange: (Int) -> Unit, onLoadStatuses: () -> Unit, onOpenStatus: (GatewayClient.StatusItem) -> Unit, onToggleStatusReveal: () -> Unit, onToggleChatReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit) {
+private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, chats: List<GatewayClient.ChatInfo> = emptyList(), statuses: List<GatewayClient.StatusItem>, dpCache: MutableMap<String, ImageBitmap?>, query: String, page: Int, topInset: androidx.compose.ui.unit.Dp, ayxSnippet: String, onPageChange: (Int) -> Unit, onLoadStatuses: () -> Unit, onOpenStatus: (GatewayClient.StatusItem) -> Unit, onToggleStatusReveal: () -> Unit, onToggleChatReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit, clearedUnread: Map<String, Long> = emptyMap()) {
     val pager = rememberPagerState(initialPage = page) { 2 }
     // content scrolls BEHIND the glass header (topInset) and the floating bottom nav (bottom)
     val contentPad = androidx.compose.foundation.layout.PaddingValues(top = topInset + 6.dp, bottom = 118.dp)
@@ -4088,7 +4123,7 @@ private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, chats: List<Gatew
             animationSpec = tween(250), label = "tabFade",
         )
         Box(Modifier.fillMaxSize().graphicsLayer { alpha = tabAlpha }) {
-            if (pg == 0) ChatList(messages, chats, dpCache, query, contentPad, ayxSnippet, onToggleChatReveal, onDelete, onOpen)
+            if (pg == 0) ChatList(messages, chats, dpCache, query, contentPad, ayxSnippet, onToggleChatReveal, onDelete, onOpen, clearedUnread)
             else StatusScreen(statuses, contentPad, onOpenStatus, dpCache, onToggleStatusReveal)
         }
     }
@@ -4315,7 +4350,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                 }
                             }
                         }
-                        } else if (mediaType == "image") {
+                        else if (mediaType == "image") {
                             val editedBmp = remember(editedBytes) { editedBytes?.let { runCatching { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }.getOrNull() } }
                             val bmp = editedBmp ?: remember(curUri) { runCatching { ctx.contentResolver.openInputStream(curUri)?.use { BitmapFactory.decodeStream(it)?.asImageBitmap() } }.getOrNull() }
                             if (bmp != null) Image(bmp, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) else Text("Preview unavailable", color = Color.White)
@@ -4329,7 +4364,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                 Text("✨ Edit image with AI", color = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), uiShapeFor(16)).padding(horizontal = 10.dp, vertical = 6.dp))
                             }
                         }
-                        } else {
+                        else {
                             // Video preview (plays inside the trim window).
                             key(curUri) {
                                 AndroidView(factory = { c ->
@@ -4363,7 +4398,6 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                 Icon(Icons.Filled.Close, "remove video", tint = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(4.dp))
                             }
                         }
-                    }
                     if (displayLyrics.isNotEmpty()) {
                         val active = displayLyrics.lastOrNull { it.first <= previewPos + 200L }
                         val line = active?.second ?: displayLyrics.firstOrNull { it.first in trimStart..trimEnd }?.second ?: ""

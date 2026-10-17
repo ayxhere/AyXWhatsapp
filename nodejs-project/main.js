@@ -2739,6 +2739,34 @@ app.post('/status/read', async (req, res) => {
   } catch (e) { res.json({ ok: false, error: e?.message }) }
 })
 
+// UNREAD BADGE: mark a chat read. The gateway's chatMap unreadCount drops
+// to 0 immediately (Baileys may not re-emit chats.update for the read, so
+// the local count must drop, not wait for an event), AND WhatsApp read
+// receipts go out for the chat's recent incoming messages so Baileys' own
+// unreadCount drops too (and original WhatsApp shows them read).
+// The count itself is Baileys' unreadCount (chats.set/upsert/update) — the
+// gateway never computes it from messages, so own outgoing messages are
+// never counted (Baileys only increments on incoming).
+app.post('/markread', async (req, res) => {
+  try {
+    if (!sock || status.connection !== 'open') return res.json({ ok: false, error: 'not connected' })
+    const jid = canon(String(req.body?.jid || ''))
+    if (!jid) return res.json({ ok: false, error: 'jid required' })
+    touchChat(jid, { unreadCount: 0 })
+    try {
+      const keys = []
+      for (let i = msgLog.length - 1; i >= 0 && keys.length < 50; i--) {
+        const m = msgLog[i]
+        if (!m || m.chat !== jid || m.fromMe || !m.id) continue
+        const raw = rawStore.get(m.id)
+        if (raw && raw.key) keys.push(raw.key)
+      }
+      if (keys.length) await sock.readMessages(keys)
+    } catch (_) {}
+    res.json({ ok: true })
+  } catch (e) { res.json({ ok: false, error: e?.message }) }
+})
+
 app.post('/status/delete', async (req, res) => {
   try {
     if (!sock) return res.status(409).json({ error: 'not connected' })
