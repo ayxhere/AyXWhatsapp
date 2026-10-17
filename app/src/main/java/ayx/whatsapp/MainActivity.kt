@@ -1796,8 +1796,6 @@ private fun HiddenReveal(label: String, revealed: Boolean, onClick: () -> Unit) 
     HorizontalDivider()
 }
 
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
 // One chat-list row: message-derived chats carry their messages (title +
 // preview come from them); gateway-only chats (no messages yet) carry
 // just their ChatInfo. Neither source may drop a chat the other knows.
@@ -1826,6 +1824,7 @@ private fun chatTitleOfRow(row: ChatRow): String {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChatList(messages: List<GatewayClient.Msg>, chats: List<GatewayClient.ChatInfo> = emptyList(), dpCache: MutableMap<String, ImageBitmap?>, query: String, contentPad: androidx.compose.foundation.layout.PaddingValues, ayxSnippet: String, onToggleReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit) {
     // MERGED chat list (BUG FIX: rows used to come ONLY from messages, so
