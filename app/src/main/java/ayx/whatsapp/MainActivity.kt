@@ -1055,17 +1055,33 @@ fun GatewayApp() {
 
 
     pendingStatus?.let { ps ->
-        StatusEditor(ps.first, ps.second, deviceContacts, onUpload = { caption, audience, jids, song, tStart, tEnd, lyrics, lyricY, lyricScale, animStyle, romanize ->
-            val u = ps.first; val t = ps.second
+        StatusEditor(ps.first, ps.second, deviceContacts, onUpload = { caption, audience, jids, song, tStart, tEnd, lyrics, lyricY, lyricScale, animStyle, romanize, editedBytes, vTrimStart, vTrimEnd, videoMuted, mediaUri, mediaType ->
+            val u = mediaUri
+            val t = mediaType
             pendingStatus = null
             // 'all' audience: send to every WhatsApp contact on the device so distribution never depends on
             // the gateway's accumulated contact list (which can be empty after a fresh link / clear data).
             val recipients: List<String> = if (audience == "all") deviceContacts.map { c -> c.number + "@s.whatsapp.net" } else jids
-            scope.launch {
+            if (u == null) { notify("Add a photo or video first") } else scope.launch {
                 try {
+                    val vTrimActive = t == "video" && vTrimEnd > vTrimStart && vTrimEnd > 0L
                     if (song == null) {
-                        val bytes = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(u)?.use { it.readBytes() } }
-                        if (bytes != null) { notify("uploading status…"); val res = GatewayClient.postStatus(t, Base64.encodeToString(bytes, Base64.NO_WRAP), caption, audience, recipients); notify((if (res.first) "✅ " else "❌ ") + res.second); if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) } }
+                        if (t == "image") {
+                            // AI-edited bytes win over the raw file — what you see is what posts.
+                            val bytes = editedBytes ?: withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(u)?.use { it.readBytes() } }
+                            if (bytes != null) { notify("uploading status…"); val res = GatewayClient.postStatus(t, Base64.encodeToString(bytes, Base64.NO_WRAP), caption, audience, recipients); notify((if (res.first) "✅ " else "❌ ") + res.second); if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) } }
+                        } else {
+                            // Video, no song: trim + mute apply for real (no re-encode, sample copy).
+                            val bytes = withContext(Dispatchers.IO) {
+                                if (vTrimActive || videoMuted) {
+                                    val trimmed = File(ctx.cacheDir, "vtrim_${System.currentTimeMillis()}.mp4")
+                                    val ok = MediaTools.trimVideoAudio(ctx, u, trimmed, vTrimStart, vTrimEnd, !videoMuted)
+                                    if (ok) trimmed.readBytes().also { runCatching { trimmed.delete() } }
+                                    else { notify("Video trim failed — posting original"); ctx.contentResolver.openInputStream(u)?.use { it.readBytes() } }
+                                } else ctx.contentResolver.openInputStream(u)?.use { it.readBytes() }
+                            }
+                            if (bytes != null) { notify("uploading status…"); val res = GatewayClient.postStatus(t, Base64.encodeToString(bytes, Base64.NO_WRAP), caption, audience, recipients); notify((if (res.first) "✅ " else "❌ ") + res.second); if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) } }
+                        }
                     } else {
                         notify("Creating status video…")
                         val finalMp4 = withContext(Dispatchers.IO) {
@@ -1082,8 +1098,26 @@ fun GatewayApp() {
                                 val rom = runCatching { GatewayClient.translateLines(adjusted0.map { it.second }, true) }.getOrDefault(adjusted0.map { it.second })
                                 adjusted0.mapIndexed { i, pr -> pr.first to (rom.getOrNull(i)?.ifBlank { pr.second } ?: pr.second) }
                             } else adjusted0
-                            val vOk = if (t == "image") MediaTools.photosToVideo(ctx, listOf(u), vFile, durMs, adjusted, lyricY, lyricScale, animStyle) { }
-                                      else runCatching { ctx.contentResolver.openInputStream(u)?.use { inp -> FileOutputStream(vFile).use { inp.copyTo(it) } }; true }.getOrDefault(false)
+                            val vOk = if (t == "image") {
+                                // AI-edited photo: render the video from the edited bytes, not the raw file.
+                                var imgUri = u
+                                var editedTmp: File? = null
+                                if (editedBytes != null) {
+                                    editedTmp = File(dir, "edited_$stamp.jpg").also { it.writeBytes(editedBytes) }
+                                    imgUri = Uri.fromFile(editedTmp)
+                                }
+                                val ok = MediaTools.photosToVideo(ctx, listOf(imgUri), vFile, durMs, adjusted, lyricY, lyricScale, animStyle) { }
+                                runCatching { editedTmp?.delete() }
+                                ok
+                            } else if (vTrimActive || videoMuted) {
+                                // Video + song: trim / mute the SOURCE video first, then the song audio is muxed on top.
+                                val trimmed = File(dir, "vtrim_$stamp.mp4")
+                                if (MediaTools.trimVideoAudio(ctx, u, trimmed, vTrimStart, vTrimEnd, !videoMuted)) {
+                                    trimmed.inputStream().use { inp -> FileOutputStream(vFile).use { inp.copyTo(it) } }
+                                    runCatching { trimmed.delete() }
+                                    true
+                                } else runCatching { ctx.contentResolver.openInputStream(u)?.use { inp -> FileOutputStream(vFile).use { inp.copyTo(it) } }; true }.getOrDefault(false)
+                            } else runCatching { ctx.contentResolver.openInputStream(u)?.use { inp -> FileOutputStream(vFile).use { inp.copyTo(it) } }; true }.getOrDefault(false)
                             if (!vOk) return@withContext null
                             notify("Preparing audio…")
                             // song audio; if it fails, fall back to a silent AAC track so the MP4 always has audio (WhatsApp needs it)
@@ -4182,7 +4216,7 @@ private fun LinkText(text: String, color: Color) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, onUpload: (String, String, List<String>, GatewayClient.Song?, Long, Long, List<Pair<Long, String>>, Float, Float, Int, Boolean) -> Unit, onCancel: () -> Unit) {
+private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, onUpload: (String, String, List<String>, GatewayClient.Song?, Long, Long, List<Pair<Long, String>>, Float, Float, Int, Boolean, ByteArray?, Long, Long, Boolean, Uri?, String) -> Unit, onCancel: () -> Unit) {
     val ctx = LocalContext.current
     var caption by remember { mutableStateOf("") }
     var audience by remember { mutableStateOf("all") }
@@ -4195,34 +4229,62 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     var songLyrics by remember { mutableStateOf<List<Pair<Long, String>>>(emptyList()) }
     var lyricY by remember { mutableStateOf(0.18f) }      // Instagram-style text sits near the top
     var lyricScale by remember { mutableStateOf(1f) }
-    var animStyle by remember { mutableStateOf(1) }       // 0=None,1=Reveal(Instagram),2=Pop,3=Slide,4=Type,5=Fade
-    var romanize by remember { mutableStateOf(false) }    // Hindi/Punjabi lyrics → English letters
+    // Lyrics animation is ALWAYS Reveal (the one built-in style) — no style selector.
+    val animStyle = 1
+    // No transliteration toggle — lyrics post exactly as fetched.
+    val romanize = false
     var previewPos by remember { mutableStateOf(0L) }
-    // what the preview + video actually show: romanized when the toggle is on (shown live in the preview)
-    var displayLyrics by remember { mutableStateOf<List<Pair<Long, String>>>(emptyList()) }
-    var lyricBusy by remember { mutableStateOf(false) }
-    LaunchedEffect(songLyrics, romanize) {
-        if (!(romanize && songLyrics.isNotEmpty())) { displayLyrics = songLyrics; lyricBusy = false; return@LaunchedEffect }
-        lyricBusy = true
-        val src = songLyrics.map { it.second }
-        val native = Regex("[\\u0900-\\u0DFF]")   // Devanagari / Bengali / Gurmukhi / Tamil … native scripts
-        var rom = runCatching { GatewayClient.translateLines(src, true) }.getOrNull()
-        // retry once if it failed or came back unchanged while native-script text is still present
-        if ((rom == null || rom == src) && src.any { native.containsMatchIn(it) }) {
-            rom = runCatching { GatewayClient.translateLines(src, true) }.getOrNull()
+    val displayLyrics = songLyrics
+    // ---- Media (Image 2): re-pickable + removable inside the editor ----
+    var mediaUri by remember { mutableStateOf<Uri?>(uri) }
+    var mediaType by remember { mutableStateOf(type) }
+    var editedBytes by remember { mutableStateOf<ByteArray?>(null) }   // AI-edited photo bytes (posted instead of the raw file)
+    var aiEditOpen by remember { mutableStateOf(false) }
+    // ---- Video: trim + mute (honest — applied to the posted file) ----
+    var videoMuted by remember { mutableStateOf(false) }
+    var videoDuration by remember { mutableStateOf(0L) }
+    var vTrimStart by remember { mutableStateOf(0L) }
+    var vTrimEnd by remember { mutableStateOf(0L) }
+    var videoPos by remember { mutableStateOf(0L) }
+    var videoPlaying by remember { mutableStateOf(false) }
+    var videoView by remember { mutableStateOf<VideoView?>(null) }
+    // ---- Collapsible controls panel (header tap = expand/collapse) ----
+    var controlsExpanded by remember { mutableStateOf(true) }
+    var songQuery by remember { mutableStateOf("") }   // last song-search query (preserved across replace)
+    val pickPhoto = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { u ->
+        if (u != null) { mediaUri = u; mediaType = "image"; editedBytes = null }
+    }
+    val pickVideo = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { u ->
+        if (u != null) { mediaUri = u; mediaType = "video"; editedBytes = null }
+    }
+    // Video duration + trim defaults when the video (re)loads.
+    LaunchedEffect(mediaUri, mediaType) {
+        if (mediaType != "video" || mediaUri == null) { videoDuration = 0L; vTrimStart = 0L; vTrimEnd = 0L; videoPlaying = false; return@LaunchedEffect }
+        val dur = withContext(Dispatchers.IO) {
+            runCatching {
+                val r = MediaMetadataRetriever(); r.setDataSource(ctx, mediaUri)
+                r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+            }.getOrDefault(0L)
         }
-        displayLyrics = if (rom != null && rom.size == songLyrics.size)
-            songLyrics.mapIndexed { i, pr -> pr.first to rom!![i].ifBlank { pr.second } }
-        else songLyrics
-        lyricBusy = false
+        videoDuration = dur.coerceAtLeast(0L)
+        vTrimStart = 0L
+        vTrimEnd = if (dur > 0L) minOf(60000L, dur) else 0L
+    }
+    // Video preview loop: play inside the trim window, then stop at its end.
+    LaunchedEffect(videoPlaying) {
+        while (videoPlaying) {
+            videoPos = runCatching { videoView?.currentPosition?.toLong() ?: 0L }.getOrDefault(videoPos)
+            if (vTrimEnd > 0L && videoPos >= vTrimEnd) { runCatching { videoView?.pause(); videoView?.seekTo(vTrimStart.toInt()) }; videoPlaying = false; videoPos = vTrimStart }
+            delay(90)
+        }
     }
     var musicOpen by remember { mutableStateOf(false) }
     val editorBlur by animateDpAsState(if (musicOpen) 18.dp else 0.dp, label = "editorblur")   // blur editor behind the music sheet
     val player = remember { MediaPlayer() }
     var playing by remember { mutableStateOf(false) }
-    DisposableEffect(Unit) { onDispose { runCatching { player.release() } } }
+    DisposableEffect(Unit) { onDispose { runCatching { player.release() }; runCatching { videoView?.stopPlayback() } } }
     LaunchedEffect(playing) { while (playing) { previewPos = runCatching { player.currentPosition.toLong() }.getOrDefault(previewPos); if (trimEnd > 0 && previewPos >= trimEnd) { runCatching { player.seekTo(trimStart.toInt()) }; previewPos = trimStart }; delay(90) } }
-    // when music isn't playing, gently scrub through the lyric window so the (romanized) lines are visible live in the preview
+    // when music isn't playing, gently scrub through the lyric window so the lines are visible live in the preview
     LaunchedEffect(displayLyrics, playing, trimStart, trimEnd) {
         if (playing || displayLyrics.isEmpty()) return@LaunchedEffect
         val from = trimStart
@@ -4239,11 +4301,69 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                     Text("New status", color = Color.White, fontWeight = FontWeight.Bold)
                     TextButton(onClick = { pickAudience = true }) { Text(audLabel, color = IOS_BLUE) }
                 }
+                // ---- Image 2: media area (photo / video / empty) ----
                 Box(Modifier.weight(1f).fillMaxWidth().clip(uiShapeFor(14)).background(Color(0xFF111111)), contentAlignment = Alignment.Center) {
-                    if (type == "image") {
-                        val bmp = remember(uri) { runCatching { ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it)?.asImageBitmap() } }.getOrNull() }
-                        if (bmp != null) Image(bmp, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) else Text("Preview unavailable", color = Color.White)
-                    } else Text("Video selected", color = Color.White)
+                    val curUri = mediaUri
+                    if (curUri == null) {
+                            // Empty state: add a photo or video again.
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("Add a photo or video", color = Color.White.copy(alpha = 0.7f))
+                                Spacer(Modifier.height(10.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    TextButton(onClick = { pickPhoto.launch("image/*") }) { Text("Add photo", color = IOS_BLUE) }
+                                    TextButton(onClick = { pickVideo.launch("video/*") }) { Text("Add video", color = IOS_BLUE) }
+                                }
+                            }
+                        }
+                        } else if (mediaType == "image") {
+                            val editedBmp = remember(editedBytes) { editedBytes?.let { runCatching { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }.getOrNull() } }
+                            val bmp = editedBmp ?: remember(curUri) { runCatching { ctx.contentResolver.openInputStream(curUri)?.use { BitmapFactory.decodeStream(it)?.asImageBitmap() } }.getOrNull() }
+                            if (bmp != null) Image(bmp, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) else Text("Preview unavailable", color = Color.White)
+                            // LEFT-side X: remove the photo.
+                            IconButton(onClick = { mediaUri = null; editedBytes = null }, modifier = Modifier.align(Alignment.TopStart).padding(8.dp)) {
+                                Icon(Icons.Filled.Close, "remove photo", tint = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(4.dp))
+                            }
+                            if (editedBytes != null) Text("Edited ✓", color = Color.White, style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.align(Alignment.TopEnd).padding(10.dp).background(Color.Black.copy(alpha = 0.5f), uiShapeFor(8)).padding(horizontal = 8.dp, vertical = 4.dp))
+                            TextButton(onClick = { aiEditOpen = true }, modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)) {
+                                Text("✨ Edit image with AI", color = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), uiShapeFor(16)).padding(horizontal = 10.dp, vertical = 6.dp))
+                            }
+                        }
+                        } else {
+                            // Video preview (plays inside the trim window).
+                            key(curUri) {
+                                AndroidView(factory = { c ->
+                                    VideoView(c).also { vv ->
+                                        videoView = vv
+                                        vv.setVideoURI(curUri)
+                                        vv.seekTo(vTrimStart.toInt())
+                                    }
+                                }, modifier = Modifier.fillMaxSize())
+                            }
+                            IconButton(onClick = {
+                                val vv = videoView
+                                if (vv != null) {
+                                    if (videoPlaying) { runCatching { vv.pause() }; videoPlaying = false }
+                                    else {
+                                        runCatching {
+                                            if (vv.currentPosition < vTrimStart.toInt() || (vTrimEnd > 0L && vv.currentPosition >= vTrimEnd.toInt())) vv.seekTo(vTrimStart.toInt())
+                                            vv.start()
+                                        }
+                                        videoPlaying = true
+                                    }
+                                }
+                            }, modifier = Modifier.align(Alignment.Center)) {
+                                Icon(if (videoPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, "play video", tint = Color.White,
+                                    modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(12.dp))
+                            }
+                            Text(if (videoMuted) "🔇 Muted" else "🔊 Sound", color = Color.White, style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.align(Alignment.TopEnd).padding(10.dp).background(Color.Black.copy(alpha = 0.5f), uiShapeFor(8)).padding(horizontal = 8.dp, vertical = 4.dp))
+                            // LEFT-side X: remove the video.
+                            IconButton(onClick = { runCatching { videoView?.stopPlayback() }; videoPlaying = false; mediaUri = null }, modifier = Modifier.align(Alignment.TopStart).padding(8.dp)) {
+                                Icon(Icons.Filled.Close, "remove video", tint = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(4.dp))
+                            }
+                        }
+                    }
                     if (displayLyrics.isNotEmpty()) {
                         val active = displayLyrics.lastOrNull { it.first <= previewPos + 200L }
                         val line = active?.second ?: displayLyrics.firstOrNull { it.first in trimStart..trimEnd }?.second ?: ""
@@ -4254,8 +4374,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                             }
                         }) {
                             if (line.isNotBlank()) {
-                                if (animStyle == 1) {
-                                    // Instagram-style: words build left→right, newest word grey, UPPERCASE bold
+                                    // Reveal (the one built-in style): words build left→right, newest word grey, UPPERCASE bold
                                     val lineStart = active?.first ?: 0L
                                     val nextStart = displayLyrics.firstOrNull { it.first > lineStart }?.first ?: (lineStart + 3000L)
                                     val dur = (nextStart - lineStart).coerceIn(700L, 6000L)
@@ -4269,81 +4388,97 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                                 fontSize = (27f * lyricScale).sp, fontWeight = FontWeight.Black, lineHeight = (31f * lyricScale).sp)
                                         }
                                     }
-                                } else {
-                                    Text(line, color = Color.White, fontSize = (22f * lyricScale).sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
-                                        modifier = Modifier.align(BiasAlignment(0f, lyricY * 2f - 1f)).padding(horizontal = 16.dp)
-                                            .background(Color.Black.copy(alpha = 0.28f), uiShapeFor(10)).padding(horizontal = 12.dp, vertical = 5.dp))
-                                }
+
                             }
                             Text("drag • pinch to resize lyrics", color = Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.labelSmall,
                                 modifier = Modifier.align(Alignment.TopCenter).padding(top = 6.dp))
                         }
                     }
                 }
-                Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    val sg = song
-                    if (sg == null) {
-                        TextButton(onClick = { musicOpen = true }) { Text("♪  Add music", color = IOS_BLUE) }
-                    } else {
-                        TextButton(onClick = {
-                            if (playing) { runCatching { player.pause() }; playing = false }
-                            else runCatching {
-                                player.reset(); player.setDataSource(sg.url)
-                                player.setOnPreparedListener { it.seekTo(trimStart.toInt()); it.start(); playing = true }
-                                player.setOnCompletionListener { playing = false }
-                                player.setOnErrorListener { _, _, _ -> playing = false; true }
-                                player.prepareAsync()
-                            }
-                        }) { Text(if (playing) "⏸ Pause" else "▶ Play", color = IOS_BLUE) }
-                        Text("♪ " + sg.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                        if (songLyrics.isNotEmpty()) Text("  © lyrics", color = IOS_BLUE, style = MaterialTheme.typography.labelSmall)
-                        IconButton(onClick = { runCatching { player.reset() }; playing = false; song = null }) { Icon(Icons.Filled.Close, "remove", tint = Color.White) }
+                // ---- Collapsible controls panel: tap the header to expand / collapse ----
+                val videoBars = remember(mediaUri) { val r = java.util.Random((mediaUri?.toString() ?: "").hashCode().toLong()); FloatArray(64) { 0.22f + r.nextFloat() * 0.78f } }
+                Column(Modifier.fillMaxWidth().padding(top = 6.dp)) {
+                    Row(Modifier.fillMaxWidth().clickable { controlsExpanded = !controlsExpanded }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(if (controlsExpanded) "▴" else "▾", color = Color.White.copy(alpha = 0.7f))
+                        Spacer(Modifier.width(8.dp))
+                        Text("♪ " + (song?.title ?: "No song"), color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                        Text(if (mediaType == "video") "🎬 Video" else "🖼 Photo", color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelSmall)
                     }
-                }
-                if (songLyrics.isNotEmpty()) {
-                    Surface(shape = uiShapeFor(18), color = Color.White.copy(alpha = 0.08f), modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("LYRICS STYLE", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
-                            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                listOf("None", "Reveal", "Pop", "Slide", "Type", "Fade").forEachIndexed { i, lbl ->
-                                    FilterChip(selected = animStyle == i, onClick = { animStyle = i }, label = { Text(lbl) })
+                    AnimatedVisibility(visible = controlsExpanded, enter = expandVertically(), exit = shrinkVertically()) {
+                        Column {
+                            // ---- Image 1: SONG row. LEFT X = REPLACE (back to search), not delete ----
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                val sg = song
+                                if (sg == null) {
+                                    TextButton(onClick = { musicOpen = true }) { Text("♪  Add music", color = IOS_BLUE) }
+                                } else {
+                                    IconButton(onClick = { musicOpen = true }) { Icon(Icons.Filled.Close, "replace song", tint = Color.White) }
+                                    TextButton(onClick = {
+                                        if (playing) { runCatching { player.pause() }; playing = false }
+                                        else runCatching {
+                                            player.reset(); player.setDataSource(sg.url)
+                                            player.setOnPreparedListener { it.seekTo(trimStart.toInt()); it.start(); playing = true }
+                                            player.setOnCompletionListener { playing = false }
+                                            player.setOnErrorListener { _, _, _ -> playing = false; true }
+                                            player.prepareAsync()
+                                        }
+                                    }) { Text(if (playing) "⏸ Pause" else "▶ Play", color = IOS_BLUE) }
+                                    Text("♪ " + sg.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                    if (songLyrics.isNotEmpty()) Text("  © lyrics", color = IOS_BLUE, style = MaterialTheme.typography.labelSmall)
+                                    TextButton(onClick = { runCatching { player.reset() }; playing = false; song = null; songLyrics = emptyList() }) { Text("Remove", color = Color.White.copy(alpha = 0.7f)) }
                                 }
                             }
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                Column(Modifier.weight(1f)) {
-                                    Text("Hindi / Punjabi → English letters", color = Color.White, style = MaterialTheme.typography.bodyMedium)
-                                    Text(
-                                        if (lyricBusy) "Romanizing lyrics…" else if (romanize) "Romanized — showing live in preview" else "Shows live in the preview",
-                                        color = if (lyricBusy) IOS_BLUE else Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.labelSmall)
+                            // ---- Video: fixed-box trimmer + mute ----
+                            if (mediaType == "video" && mediaUri != null && videoDuration > 0L) {
+                                WaveformTrimmer(videoBars, videoDuration, vTrimStart, vTrimEnd, videoPos) { ns, ne -> vTrimStart = ns; vTrimEnd = ne }
+                                if (videoDuration > 6000L) {
+                                    val vSelLen = (vTrimEnd - vTrimStart).coerceIn(1000L, videoDuration)
+                                    val vMaxLen = minOf(60000L, videoDuration)
+                                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                        Text("Length", color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelMedium)
+                                        Slider(value = vSelLen.toFloat().coerceIn(5000f, vMaxLen.toFloat()), onValueChange = { nl ->
+                                            val newLen = nl.toLong().coerceIn(5000L, vMaxLen)
+                                            vTrimEnd = (vTrimStart + newLen).coerceAtMost(videoDuration)
+                                            if (vTrimEnd - vTrimStart < newLen) vTrimStart = (vTrimEnd - newLen).coerceAtLeast(0L)
+                                        }, valueRange = 5000f..vMaxLen.toFloat(), modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
+                                        colors = SliderDefaults.colors(thumbColor = IOS_BLUE, activeTrackColor = IOS_BLUE))
+                                        Text(fmtMs(vSelLen), color = Color.White, style = MaterialTheme.typography.labelMedium)
+                                    }
                                 }
-                                if (lyricBusy) CircularProgressIndicator(Modifier.size(18.dp), color = IOS_BLUE, strokeWidth = 2.dp)
-                                else Switch(checked = romanize, onCheckedChange = { romanize = it })
+                                Text(fmtMs(vTrimStart) + "  →  " + fmtMs(vTrimEnd) + "   •   swipe the waveform to move", color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    TextButton(onClick = { videoMuted = !videoMuted }) { Text(if (videoMuted) "🔇 Muted" else "🔊 Sound", color = IOS_BLUE) }
+                                    Text(if (videoMuted) "Video audio will be off in the posted status" else "Video audio will be kept", color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                            // Caption — rounded frosted (light-blur) box, sitting ABOVE the send box
+                            Box(Modifier.fillMaxWidth().padding(top = 8.dp).clip(uiShapeFor(24))) {
+                                Box(Modifier.matchParentSize().background(Color.White.copy(alpha = 0.07f)))
+                                // very soft sheen → subtle frosted-glass feel
+                                Box(Modifier.matchParentSize().blur(6.dp).background(
+                                    Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.08f), Color.White.copy(alpha = 0.02f)))))
+                                OutlinedTextField(caption, { caption = it }, placeholder = { Text("Add a caption…", color = Color.White.copy(alpha = 0.6f)) }, maxLines = 3, shape = uiShapeFor(24),
+                                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.White.copy(alpha = 0.22f), unfocusedBorderColor = Color.White.copy(alpha = 0.10f),
+                                        focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
+                                        focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White),
+                                    modifier = Modifier.fillMaxWidth())
+                            }
+                            // Send box — its own row, right-aligned, below the caption
+                            Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                                if (mediaUri == null) Text("Add a photo or video to post", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(end = 10.dp))
+                                FilledIconButton(enabled = mediaUri != null,
+                                    onClick = { onUpload(caption.trim(), audience, selected.toList(), song, trimStart, trimEnd, songLyrics, lyricY, lyricScale, animStyle, romanize, editedBytes, vTrimStart, vTrimEnd, videoMuted, mediaUri, mediaType) },
+                                    modifier = Modifier.size(54.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = AYX_GREEN)) { Icon(Icons.AutoMirrored.Filled.Send, "upload", tint = Color.White) }
                             }
                         }
                     }
-                }
-                // Caption — rounded frosted (light-blur) box, sitting ABOVE the send box
-                Box(Modifier.fillMaxWidth().padding(top = 8.dp).clip(uiShapeFor(24))) {
-                    Box(Modifier.matchParentSize().background(Color.White.copy(alpha = 0.07f)))
-                    // very soft sheen → subtle frosted-glass feel
-                    Box(Modifier.matchParentSize().blur(6.dp).background(
-                        Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.08f), Color.White.copy(alpha = 0.02f)))))
-                    OutlinedTextField(caption, { caption = it }, placeholder = { Text("Add a caption…", color = Color.White.copy(alpha = 0.6f)) }, maxLines = 3, shape = uiShapeFor(24),
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.White.copy(alpha = 0.22f), unfocusedBorderColor = Color.White.copy(alpha = 0.10f),
-                            focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
-                            focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White),
-                        modifier = Modifier.fillMaxWidth())
-                }
-                // Send box — its own row, right-aligned, below the caption
-                Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                    FilledIconButton(onClick = { onUpload(caption.trim(), audience, selected.toList(), song, trimStart, trimEnd, songLyrics, lyricY, lyricScale, animStyle, romanize) },
-                        modifier = Modifier.size(54.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = AYX_GREEN)) { Icon(Icons.AutoMirrored.Filled.Send, "upload", tint = Color.White) }
                 }
             }
         }
     }
     if (pickAudience) AudienceSheet(contacts, audience, selected) { a, sset -> audience = a; selected = sset; pickAudience = false }
-    if (musicOpen) MusicSearchSheet(onSelect = { songToTrim = it; musicOpen = false }, onClose = { musicOpen = false })
+    if (musicOpen) MusicSearchSheet(initialQuery = songQuery, onQueryChange = { songQuery = it }, onSelect = { songToTrim = it; musicOpen = false }, onClose = { musicOpen = false })
+    if (aiEditOpen && mediaUri != null) AiImageEditSheet(ctx, mediaUri!!, onDone = { editedBytes = it; aiEditOpen = false }, onCancel = { aiEditOpen = false })
     songToTrim?.let { sng ->
         AudioTrimmer(sng, onDone = { st, en, ly -> song = sng; trimStart = st; trimEnd = en; songLyrics = ly; songToTrim = null }, onCancel = { songToTrim = null })
     }
@@ -4638,8 +4773,9 @@ private fun ProfileScreen(myJid: String?, dpCache: MutableMap<String, ImageBitma
 
 
 @Composable
-private fun MusicSearchSheet(onSelect: (GatewayClient.Song) -> Unit, onClose: () -> Unit) {
-    var q by remember { mutableStateOf("") }
+private fun MusicSearchSheet(initialQuery: String = "", onQueryChange: (String) -> Unit = {}, onSelect: (GatewayClient.Song) -> Unit, onClose: () -> Unit) {
+    var q by remember { mutableStateOf(initialQuery) }
+    val qState = rememberUpdatedState(q)
     var results by remember { mutableStateOf<List<GatewayClient.Song>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
@@ -4648,7 +4784,7 @@ private fun MusicSearchSheet(onSelect: (GatewayClient.Song) -> Unit, onClose: ()
     val lyricsAvail = remember { mutableStateMapOf<String, Boolean>() }
     // a reliable popular artist so the suggested list is never empty on open ("default songs")
     val defaultQ = remember { listOf("arijit singh", "pritam", "atif aslam", "neha kakkar", "honey singh", "shreya ghoshal").random() }
-    DisposableEffect(Unit) { onDispose { runCatching { player.release() } } }
+    DisposableEffect(Unit) { onDispose { runCatching { player.release() }; onQueryChange(qState.value) } }
     LaunchedEffect(q) {
         val query = q.trim()
         if (query.length >= 2) { loading = true; delay(450); val r = GatewayClient.searchMusic(query); results = r.first; error = r.second; loading = false }

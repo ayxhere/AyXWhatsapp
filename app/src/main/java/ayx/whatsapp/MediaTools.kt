@@ -393,6 +393,65 @@ object MediaTools {
         }
     }
 
+    /**
+     * Trim a video (MP4) to [startMs..endMs] WITHOUT re-encoding: copies the
+     * samples in range via MediaExtractor → MediaMuxer, shifting timestamps
+     * so the output starts at 0. When [keepAudio] is false the audio track is
+     * dropped (the editor's Mute toggle) — the output is video-only.
+     * Returns false on any failure (caller falls back to the original file).
+     */
+    fun trimVideoAudio(ctx: Context, srcUri: Uri, out: File, startMs: Long, endMs: Long, keepAudio: Boolean): Boolean {
+        var ex: MediaExtractor? = null
+        var muxer: MediaMuxer? = null
+        try {
+            val startUs = (startMs.coerceAtLeast(0L)) * 1000L
+            // end <= start means "to the end of the file" (mute-only case: no trim range set).
+            val endUs = if (endMs <= startMs) Long.MAX_VALUE else endMs * 1000L
+            ex = MediaExtractor(); ex.setDataSource(ctx, srcUri, null)
+            var vTrack = -1; var vFmt: MediaFormat? = null
+            var aTrack = -1; var aFmt: MediaFormat? = null
+            for (i in 0 until ex.trackCount) {
+                val f = ex.getTrackFormat(i)
+                val mime = f.getString(MediaFormat.KEY_MIME) ?: ""
+                if (vTrack < 0 && mime.startsWith("video/")) { vTrack = i; vFmt = f }
+                else if (aTrack < 0 && mime.startsWith("audio/")) { aTrack = i; aFmt = f }
+            }
+            if (vTrack < 0 || vFmt == null) return false
+            muxer = MediaMuxer(out.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            val outV = muxer.addTrack(vFmt)
+            val outA = if (keepAudio && aTrack >= 0 && aFmt != null) muxer.addTrack(aFmt) else -1
+            ex.selectTrack(vTrack)
+            if (outA >= 0) ex.selectTrack(aTrack)
+            muxer.start()
+            val buf = ByteBuffer.allocate(1024 * 1024)
+            val info = MediaCodec.BufferInfo()
+            // Seek to the closest sync sample at/after the trim start so the
+            // output begins with a key frame (required for playback).
+            ex.seekTo(startUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+            var wrote = 0
+            while (true) {
+                val sz = ex.readSampleData(buf, 0); if (sz < 0) break
+                val pts = ex.sampleTime
+                if (pts > endUs) break
+                if (pts < startUs) { if (!ex.advance()) break; continue }
+                info.offset = 0; info.size = sz; info.presentationTimeUs = pts - startUs
+                info.flags = if (ex.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
+                val track = ex.sampleTrackIndex
+                if (track == vTrack) muxer.writeSampleData(outV, buf, info)
+                else if (track == aTrack && outA >= 0) muxer.writeSampleData(outA, buf, info)
+                wrote++
+                if (!ex.advance()) break
+            }
+            return wrote > 0 && out.length() > 0
+        } catch (e: Exception) {
+            runCatching { out.delete() }
+            return false
+        } finally {
+            try { ex?.release() } catch (_: Exception) {}
+            try { muxer?.stop(); muxer?.release() } catch (_: Exception) {}
+        }
+    }
+
     // ---------- helpers ----------
     private fun loadScaledCropped(ctx: Context, uri: Uri, w: Int, h: Int): Bitmap {
         val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
