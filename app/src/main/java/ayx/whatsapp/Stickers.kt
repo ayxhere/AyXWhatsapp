@@ -8,7 +8,6 @@ import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.net.Uri
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -80,9 +79,8 @@ import java.io.ByteArrayOutputStream
  * - 10 original packs x 10 expressions = 100 stickers.
  * - Animated with Compose infiniteTransition (cheap: graphicsLayer /
  *   alpha / offset only, never layout size).
- * - Outgoing stickers are sent as ordinary PNG IMAGES via the existing
- *   GatewayClient.sendMedia path (type "image") — never the sticker
- *   protocol, so any recipient sees a normal image.
+ * - Outgoing stickers are sent as REAL STICKERS via the sticker
+ *   protocol (animated WebP, see AnimatedWebP.kt) — never as images.
  * - Incoming Baileys sticker messages (mediaType "sticker", WebP) render
  *   as images in chat bubbles (see MessageBubble handling).
  * - Custom pack: user adds up to 10 gallery images, persisted, sent as
@@ -208,8 +206,54 @@ private fun tearPath(cx: Float, cy: Float, s: Float): Path {
 }
 
 /**
+ * Shared smooth-motion curve for stickers. ONE function drives BOTH the
+ * in-app Compose animation (AnimatedStickerArt) and the exported
+ * animated-WebP frames (renderStickerFrames), so what you see in AyX is
+ * what WhatsApp gets.
+ * - Squash-and-stretch: scaleX/scaleY in opposite phase, subtle ±4%.
+ * - Gentle bob: up to ~1.2% of size (~6px at 512px), easeInOut.
+ * - Rotation: ±3° max, only ANGRY / PARTY (others stay upright).
+ * - Blink: quick dip around phase 0.70–0.84 (eyes close, then reopen).
+ * @param phase 0..1 loop phase. @param expression the sticker expression.
+ */
+data class StickerMotion(
+    val scaleX: Float,
+    val scaleY: Float,
+    val offsetYFrac: Float,
+    val rotationDeg: Float,
+    val blink: Float,
+)
+
+fun stickerMotion(phase: Float, expression: StickerExpression): StickerMotion {
+    val p = ((phase % 1f) + 1f) % 1f
+    val t = 2 * kotlin.math.PI * p
+    val bob = (0.5 - 0.5 * kotlin.math.cos(t)).toFloat() // 0..1, easeInOut
+    val squash = 0.04f * kotlin.math.sin(t).toFloat() // ±4%
+    val rotation = if (expression == StickerExpression.ANGRY || expression == StickerExpression.PARTY) {
+        3f * kotlin.math.sin(t).toFloat()
+    } else {
+        0f
+    }
+    val blink = if (p in 0.70f..0.84f) {
+        val bt = (p - 0.70f) / 0.14f
+        1f - 0.9f * kotlin.math.sin(kotlin.math.PI * bt).toFloat()
+    } else {
+        1f
+    }
+    return StickerMotion(
+        scaleX = 1f + squash,
+        scaleY = 1f - squash,
+        offsetYFrac = -0.012f * bob,
+        rotationDeg = rotation,
+        blink = blink,
+    )
+}
+
+/**
  * Draws one sticker onto an android.graphics.Canvas.
  * @param phase 0..1 animation phase (drives floating extras).
+ * @param blink 1 = eyes fully open, 0 = eyes fully closed (from
+ *   [stickerMotion]; closed-arc eyes ignore it, open eyes scale with it).
  */
 fun drawStickerArt(
     canvas: Canvas,
@@ -217,6 +261,7 @@ fun drawStickerArt(
     expression: StickerExpression,
     sizePx: Int,
     phase: Float,
+    blink: Float = 1f,
 ) {
     val size = sizePx.toFloat().coerceAtLeast(1f)
     val u = size / 100f
@@ -312,11 +357,21 @@ fun drawStickerArt(
         }
         p.close()
         canvas.drawPath(p, fillPaint(body))
+        canvas.drawPath(p, strokePaint(accent, 2.5f * u, 120))
     } else if (pack.ears == EarStyle.PENGUIN) {
-        canvas.drawOval(RectF(cx - r * 0.96f, cy - r * 1.06f, cx + r * 0.96f, cy + r * 1.06f), fillPaint(body))
+        val penguinRect = RectF(cx - r * 0.96f, cy - r * 1.06f, cx + r * 0.96f, cy + r * 1.06f)
+        canvas.drawOval(penguinRect, fillPaint(body))
+        canvas.drawOval(penguinRect, strokePaint(accent, 2.5f * u, 120))
     } else {
         canvas.drawCircle(cx, cy, r, fillPaint(body))
+        canvas.drawCircle(cx, cy, r, strokePaint(accent, 2.5f * u, 120))
     }
+
+    // --- soft top-left highlight (glossy depth, same on every pack) ---
+    canvas.drawOval(
+        RectF(cx - 25f * u, cy - 25f * u, cx - 7f * u, cy - 13f * u),
+        fillPaint(white, 55),
+    )
 
     // --- belly ---
     val bellyOval = RectF(cx - 20f * u, cy + 6f * u, cx + 20f * u, cy + 33f * u)
@@ -343,6 +398,9 @@ fun drawStickerArt(
         hat.lineTo(cx + 13f * u, cy - r + 2f * u)
         hat.close()
         canvas.drawPath(hat, fillPaint(0xFFFF8787.toInt()))
+        // clean stripes (widths follow the triangle taper)
+        canvas.drawLine(cx - 8.1f * u, cy - r - 7f * u, cx + 8.1f * u, cy - r - 7f * u, strokePaint(white, 2.2f * u, 200))
+        canvas.drawLine(cx - 4.9f * u, cy - r - 13f * u, cx + 4.9f * u, cy - r - 13f * u, strokePaint(white, 2.2f * u, 200))
         canvas.drawCircle(cx, cy - r - 22f * u, 4f * u, fillPaint(yellow))
         canvas.drawCircle(cx - 6f * u, cy - r - 10f * u, 2.2f * u, fillPaint(white))
         canvas.drawCircle(cx + 5f * u, cy - r - 14f * u, 2.2f * u, fillPaint(blue))
@@ -355,34 +413,37 @@ fun drawStickerArt(
     val eyeStroke = strokePaint(dark, 3.4f * u)
     val eyeFill = fillPaint(dark)
     val highlight = fillPaint(white)
+    // Blink: 1 = eyes fully open, 0 = fully closed. Arc/circle eyes scale
+    // vertically with it; sunglasses (COOL) ignore it — glasses don't blink.
+    val eyeH = blink.coerceIn(0f, 1f)
     when (expression) {
         StickerExpression.HAPPY, StickerExpression.LAUGH -> {
             for (ex in listOf(ex1, ex2)) {
-                canvas.drawArc(RectF(ex - 6.5f * u, ey - 4f * u, ex + 6.5f * u, ey + 6f * u), 180f, 180f, false, eyeStroke)
+                canvas.drawArc(RectF(ex - 6.5f * u, ey - 4f * u * eyeH, ex + 6.5f * u, ey + 6f * u * eyeH), 180f, 180f, false, eyeStroke)
             }
         }
         StickerExpression.LOVE -> {
             for (ex in listOf(ex1, ex2)) {
-                canvas.drawPath(heartPath(ex, ey + 1f * u, 6.5f * u), fillPaint(red))
+                canvas.drawPath(heartPath(ex, ey + 1f * u, 6.5f * u * (0.35f + 0.65f * eyeH)), fillPaint(red))
             }
         }
         StickerExpression.ANGRY -> {
             // slanted eye lines + angled brows
             for (ex in listOf(ex1, ex2)) {
-                canvas.drawLine(ex - 5f * u, ey + 3f * u, ex + 5f * u, ey - 3f * u, eyeStroke)
+                canvas.drawLine(ex - 5f * u, ey + 3f * u * eyeH, ex + 5f * u, ey - 3f * u * eyeH, eyeStroke)
             }
             canvas.drawLine(ex1 - 7f * u, ey - 12f * u, ex1 + 6f * u, ey - 7f * u, strokePaint(dark, 3.6f * u))
             canvas.drawLine(ex2 - 6f * u, ey - 7f * u, ex2 + 7f * u, ey - 12f * u, strokePaint(dark, 3.6f * u))
         }
         StickerExpression.CRY, StickerExpression.SLEEP -> {
             for (ex in listOf(ex1, ex2)) {
-                canvas.drawArc(RectF(ex - 6.5f * u, ey - 2f * u, ex + 6.5f * u, ey + 8f * u), 0f, 180f, false, eyeStroke)
+                canvas.drawArc(RectF(ex - 6.5f * u, ey - 2f * u * eyeH, ex + 6.5f * u, ey + 8f * u * eyeH), 0f, 180f, false, eyeStroke)
             }
         }
         StickerExpression.WOW -> {
             for (ex in listOf(ex1, ex2)) {
-                canvas.drawCircle(ex, ey, 7.5f * u, eyeFill)
-                canvas.drawCircle(ex - 2f * u, ey - 2.5f * u, 2.2f * u, highlight)
+                canvas.drawCircle(ex, ey, 7.5f * u * (0.25f + 0.75f * eyeH), eyeFill)
+                canvas.drawCircle(ex - 2f * u, ey - 2.5f * u * eyeH, 2.2f * u * (0.25f + 0.75f * eyeH), highlight)
             }
             canvas.drawLine(ex1 - 7f * u, ey - 13f * u, ex1 + 7f * u, ey - 13f * u, strokePaint(dark, 3f * u))
             canvas.drawLine(ex2 - 7f * u, ey - 13f * u, ex2 + 7f * u, ey - 13f * u, strokePaint(dark, 3f * u))
@@ -400,7 +461,7 @@ fun drawStickerArt(
         }
         StickerExpression.SAD -> {
             for (ex in listOf(ex1, ex2)) {
-                canvas.drawArc(RectF(ex - 6f * u, ey - 4f * u, ex + 6f * u, ey + 6f * u), 180f, 180f, false, eyeStroke)
+                canvas.drawArc(RectF(ex - 6f * u, ey - 4f * u * eyeH, ex + 6f * u, ey + 6f * u * eyeH), 180f, 180f, false, eyeStroke)
             }
             // raised-inner brows
             canvas.drawLine(ex1 - 6f * u, ey - 13f * u, ex1 + 5f * u, ey - 9f * u, strokePaint(dark, 3f * u))
@@ -408,7 +469,7 @@ fun drawStickerArt(
         }
         StickerExpression.PARTY -> {
             for (ex in listOf(ex1, ex2)) {
-                canvas.drawPath(sparklePath(ex, ey, 7f * u), fillPaint(yellow))
+                canvas.drawPath(sparklePath(ex, ey, 7f * u * (0.35f + 0.65f * eyeH)), fillPaint(yellow))
                 canvas.drawCircle(ex, ey, 2f * u, fillPaint(dark))
             }
         }
@@ -561,17 +622,23 @@ fun StickerArt(
     expression: StickerExpression,
     modifier: Modifier = Modifier,
     phase: Float = 0.3f,
+    blink: Float = 1f,
 ) {
     Canvas(modifier) {
         drawIntoCanvas { c ->
-            drawStickerArt(c.nativeCanvas, pack, expression, size.width.toInt().coerceAtLeast(1), phase)
+            drawStickerArt(c.nativeCanvas, pack, expression, size.width.toInt().coerceAtLeast(1), phase, blink)
         }
     }
 }
 
-/** Animated sticker: one infiniteTransition per sticker instance.
- *  Cheap — only graphicsLayer scale/rotation + the phase value change,
- *  never layout size. Pass animate=false for static thumbnails. */
+/**
+ * Animated sticker: ONE infiniteTransition driving the shared
+ * [stickerMotion] curve (squash-and-stretch + bob + rotation + blink) —
+ * the exact same curve the exported animated-WebP frames use, so AyX
+ * and WhatsApp show identical motion. Cheap — only graphicsLayer
+ * transforms + the phase value change, never layout size.
+ * Pass animate=false for static thumbnails.
+ */
 @Composable
 fun AnimatedStickerArt(
     pack: StickerPackDef,
@@ -587,30 +654,21 @@ fun AnimatedStickerArt(
             animationSpec = infiniteRepeatable(tween(1800, easing = LinearEasing), RepeatMode.Restart),
             label = "stickerPhase",
         )
-        val bounce by t.animateFloat(
-            initialValue = 1f,
-            targetValue = 1.05f,
-            animationSpec = infiniteRepeatable(tween(800, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-            label = "stickerBounce",
-        )
-        val wiggle by t.animateFloat(
-            initialValue = -2.5f,
-            targetValue = 2.5f,
-            animationSpec = infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-            label = "stickerWiggle",
-        )
+        val motion = stickerMotion(phase, expression)
         StickerArt(
             pack = pack,
             expression = expression,
             modifier = modifier.graphicsLayer {
-                scaleX = bounce
-                scaleY = bounce
-                rotationZ = if (expression == StickerExpression.ANGRY || expression == StickerExpression.PARTY) wiggle else 0f
+                scaleX = motion.scaleX
+                scaleY = motion.scaleY
+                translationY = motion.offsetYFrac * size.height
+                rotationZ = motion.rotationDeg
             },
             phase = phase,
+            blink = motion.blink,
         )
     } else {
-        StickerArt(pack = pack, expression = expression, modifier = modifier, phase = 0.3f)
+        StickerArt(pack = pack, expression = expression, modifier = modifier, phase = 0.3f, blink = 1f)
     }
 }
 
