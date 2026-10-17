@@ -1,6 +1,7 @@
 package ayx.whatsapp
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -19,6 +20,8 @@ object GatewayClient {
         val hasQr: Boolean = false,
         val pairingCode: String? = null,
         val reachable: Boolean = false,
+        /** True when the Baileys session is logged out / expired — user must scan QR again. */
+        val needRelogin: Boolean = false,
     )
 
     data class Rule(val match: String, val reply: String, val mode: String = "contains")
@@ -71,6 +74,7 @@ object GatewayClient {
                 hasQr = o.optBoolean("hasQr", false),
                 pairingCode = o.optString("pairingCode").ifEmpty { null },
                 reachable = true,
+                needRelogin = o.optBoolean("needRelogin", false),
             )
         } catch (e: Exception) {
             Status(connection = "starting…", reachable = false)
@@ -113,6 +117,85 @@ object GatewayClient {
     suspend fun sendToJidDirect(jid: String, text: String): Boolean = withContext(Dispatchers.IO) {
         val o = post("/sendraw", JSONObject().put("jid", jid).put("text", text))
         if (o.optBoolean("ok", false)) true else throw RuntimeException(o.optString("error", "send failed"))
+    }
+
+    /**
+     * Reliable text send.
+     *
+     * Returns [SendOutcome.Sent] only when the gateway confirmed delivery
+     * to the Baileys socket. When the socket / Node is down, the gateway
+     * queues server-side and this returns [SendOutcome.Queued] — the
+     * caller must NOT show the message as sent. When the session itself is
+     * logged out, returns [SendOutcome.NeedRelogin] so the UI can ask for a
+     * fresh QR scan instead of queuing forever.
+     */
+    sealed class SendOutcome {
+        data object Sent : SendOutcome()
+        data class Queued(val reason: String) : SendOutcome()
+        data object NeedRelogin : SendOutcome()
+    }
+
+    private fun isLoggedOutError(msg: String): Boolean {
+        val m = msg.lowercase()
+        return m.contains("logged out") || m.contains("logged_out") || m.contains("401") ||
+            m.contains("session expired") || m.contains("not registered")
+    }
+
+    suspend fun sendTextReliable(jid: String, text: String, quotedId: String? = null): SendOutcome =
+        withContext(Dispatchers.IO) {
+            // 3 attempts: 1s, 2s backoff. Covers Node still starting up and
+            // short reconnect windows without making the user wait long.
+            repeat(3) { attempt ->
+                try {
+                    val o = if (quotedId != null) {
+                        post("/sendreply", JSONObject().put("jid", jid).put("text", text).put("quotedId", quotedId))
+                    } else {
+                        post("/sendraw", JSONObject().put("jid", jid).put("text", text))
+                    }
+                    if (o.optBoolean("ok", false)) return@withContext SendOutcome.Sent
+                    if (o.optBoolean("needRelogin", false) || isLoggedOutError(o.optString("error", ""))) {
+                        return@withContext SendOutcome.NeedRelogin
+                    }
+                    if (o.optBoolean("queued", false)) {
+                        return@withContext SendOutcome.Queued(o.optString("error", "queued"))
+                    }
+                    // Plain failure (e.g. "not connected" without queue flag):
+                    // retry once or twice, then hand to the local queue.
+                    if (attempt < 2) delay(if (attempt == 0) 1000L else 2000L)
+                } catch (e: Exception) {
+                    // Node down / connection refused: retry, then queue.
+                    if (attempt < 2) delay(if (attempt == 0) 1000L else 2000L)
+                    else return@withContext SendOutcome.Queued(e.message ?: "connection unavailable")
+                }
+            }
+            SendOutcome.Queued("connection unavailable — queued")
+        }
+
+    /**
+     * One flush attempt for every locally queued message. Called when the
+     * connection opens again. Returns how many were delivered. Failures
+     * stay queued for the next flush — never silently dropped.
+     */
+    suspend fun flushSendQueue(ctx: android.content.Context): Int = withContext(Dispatchers.IO) {
+        var sent = 0
+        for (q in SendQueue.all(ctx)) {
+            try {
+                val ok = if (q.quotedId != null) {
+                    post("/sendreply", JSONObject().put("jid", q.jid).put("text", q.text).put("quotedId", q.quotedId))
+                        .optBoolean("ok", false)
+                } else {
+                    sendToJidDirect(q.jid, q.text)
+                }
+                if (ok) {
+                    SendQueue.remove(ctx, q)
+                    sent++
+                }
+            } catch (_: Exception) {
+                // Keep queued; a later flush (or Node-side flush on open)
+                // will retry. Never drop a user message silently.
+            }
+        }
+        sent
     }
 
     fun mediaUrl(name: String) = "$base/media/$name"

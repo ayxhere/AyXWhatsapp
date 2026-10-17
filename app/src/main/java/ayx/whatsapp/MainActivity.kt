@@ -1,6 +1,12 @@
 package ayx.whatsapp
 
 import android.Manifest
+import ayx.whatsapp.ui.AyxAnimatedScreen
+import ayx.whatsapp.ui.AyxFadeInListItem
+import ayx.whatsapp.ui.BlurElement
+import ayx.whatsapp.ui.ayxDialogAlpha
+import ayx.whatsapp.ui.ayxGlassAlpha
+import ayx.whatsapp.ui.ayxMenuAlpha
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
@@ -656,7 +662,14 @@ private fun SplashScreen(dark: Boolean, onDone: () -> Unit) {
     }
 }
 
-class OptMsg(val chat: String, val text: String, val ts: Long, val quotedText: String? = null)
+class OptMsg(
+    val chat: String,
+    val text: String,
+    val ts: Long,
+    val quotedText: String? = null,
+    /** True when the message is queued, NOT sent — shown with a "Queued" banner, never faked as sent. */
+    val queued: Boolean = false,
+)
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -894,8 +907,19 @@ fun GatewayApp() {
     LaunchedEffect(Unit) {
         var triedRestore = false
         var didBackup = false
+        var toldRelogin = false
         while (true) {
             status = GatewayClient.status()
+            if (!status.reachable) {
+                // Gateway down (Node dead / still starting) — restart it
+                // instead of waiting for the user. NodeRuntime resets its
+                // `started` flag when Node exits, so this revives a dead
+                // gateway instead of being a permanent no-op.
+                withContext(Dispatchers.IO) { NodeRuntime.ensureStarted(ctx.applicationContext) }
+            }
+            if (status.needRelogin) {
+                if (!toldRelogin) { toldRelogin = true; notify("Session expired — scan QR again") }
+            } else toldRelogin = false
             if (!status.registered) {
                 settingsLoaded = false; openChat = null
                 // One-shot: restore a saved login from Download/WhatsAyX/session (survives reinstall / reset).
@@ -931,6 +955,11 @@ fun GatewayApp() {
                 }
                 messages = GatewayClient.getMessages()
                 optimistic.removeAll { opt -> messages.any { it.fromMe && it.chat == opt.chat && it.text == opt.text && it.ts >= opt.ts - 8000 } }
+                // Flush locally queued sends now that the socket is open.
+                if (status.connection == "open") {
+                    runCatching { GatewayClient.flushSendQueue(ctx) }
+                        .onSuccess { n -> if (n > 0) notify("$n queued message(s) sent") }
+                }
             }
             delay(3000)
         }
@@ -1014,7 +1043,7 @@ fun GatewayApp() {
         fun hex(c: Long): String = "#" + (c and 0xFFFFFFL).toString(16).padStart(6, '0').uppercase()
         AlertDialog(
             onDismissRequest = { textStatusDlg = false },
-            containerColor = dialogBg(),
+            containerColor = dialogBg().copy(alpha = ayxDialogAlpha()),
             shape = uiShapeFor(24),
             icon = { Icon(Icons.Filled.TextFields, null, tint = AYX_GREEN) },
             title = { Text("Text status") },
@@ -1172,7 +1201,7 @@ fun GatewayApp() {
         topBar = {
             // Glass header: translucent so the list scrolls behind it. Chat screen has its own header.
             if (openChat == null) {
-            StyledSurface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.80f), shadowElevation = 6.dp, tonalElevation = 0.dp,
+            StyledSurface(color = MaterialTheme.colorScheme.surface.copy(alpha = ayxGlassAlpha(0.80f, BlurElement.NAVIGATION)), shadowElevation = 6.dp, tonalElevation = 0.dp,
                 shape = RoundedCornerShape(bottomStart = 26.dp, bottomEnd = 26.dp), modifier = Modifier.fillMaxWidth().offset(y = (-4).dp)) {
             CenterAlignedTopAppBar(
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
@@ -1243,7 +1272,7 @@ fun GatewayApp() {
                             IconButton(onClick = { showSetName = true }) { Icon(Icons.Filled.Edit, "set name") }
                             IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "menu") }
                         }
-                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, containerColor = MaterialTheme.colorScheme.surface.copy(alpha = ayxMenuAlpha())) {
                             DropdownMenuItem(text = { Text("Change wallpaper") }, onClick = { menu = false; chatWallpaperPicker.launch("image/*") })
                             if (!isBlocked) DropdownMenuItem(text = { Text("Block contact") }, onClick = {
                                 menu = false
@@ -1268,11 +1297,16 @@ fun GatewayApp() {
         if (openChat != null && status.registered) {
             // ===== Edge-to-edge chat: wallpaper + messages full-bleed, floating glass header on top =====
             val ocChat = openChat!!
+            AyxAnimatedScreen(screenKey = "chat|$ocChat") {
             ChatDetail(
                 chat = ocChat,
                 messages = messages.filter { it.chat == ocChat } + vvLocal.filter { it.chat == ocChat },
                 optimistic = optimistic.filter { it.chat == ocChat },
-                canSend = status.connection == "open",
+                // Send stays enabled when disconnected — the message is
+                // queued (banner + retry) instead of being blocked or
+                // faked as sent. Only a logged-out session blocks sends
+                // (LinkScreen takes over then).
+                canSend = true,
                 pendingMedia = pendingMedia,
                 onClearPendingMedia = { pendingMedia = null },
                 onSend = { text ->
@@ -1306,8 +1340,30 @@ fun GatewayApp() {
                             } catch (e: Exception) { notify("VV error: " + e.message) }
                         }
                     } else {
-                    optimistic.add(OptMsg(ocChat, text, System.currentTimeMillis()))
-                    scope.launch { try { GatewayClient.sendToJid(ocChat, text) } catch (e: Exception) { notify("send error: ${e.message}") } }
+                    val ts = System.currentTimeMillis()
+                    val opt = OptMsg(ocChat, text, ts)
+                    optimistic.add(opt)
+                    scope.launch {
+                        // Make sure the gateway is up before sending — if
+                        // Node died, ensureStarted() revives it (the flag
+                        // resets when Node exits, so this is not a no-op).
+                        withContext(Dispatchers.IO) { NodeRuntime.ensureStarted(ctx.applicationContext) }
+                        when (val r = GatewayClient.sendTextReliable(ocChat, text)) {
+                            is GatewayClient.SendOutcome.Sent -> { /* poll loop swaps optimistic for the real message */ }
+                            is GatewayClient.SendOutcome.Queued -> {
+                                optimistic.remove(opt)
+                                SendQueue.enqueue(ctx, ocChat, text, null)
+                                // Keep the message visible but marked
+                                // queued — never fake it as sent.
+                                optimistic.add(OptMsg(ocChat, text, ts, queued = true))
+                                notify("Connecting… message queued — will send when reconnected")
+                            }
+                            is GatewayClient.SendOutcome.NeedRelogin -> {
+                                optimistic.remove(opt)
+                                notify("Session expired — scan QR again")
+                            }
+                        }
+                    }
                     }
                 },
                 onMedia = { openMedia(it) },
@@ -1320,8 +1376,25 @@ fun GatewayApp() {
                 onPickChatVideo = { videoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)) },
                 onCamera = { openCamera() },
                 onReplySend = { text, qid, qtext ->
-                    optimistic.add(OptMsg(ocChat, text, System.currentTimeMillis(), qtext))
-                    scope.launch { try { GatewayClient.sendReply(ocChat, text, qid) } catch (e: Exception) { notify("send error: ${e.message}") } }
+                    val ts = System.currentTimeMillis()
+                    val opt = OptMsg(ocChat, text, ts, qtext)
+                    optimistic.add(opt)
+                    scope.launch {
+                        withContext(Dispatchers.IO) { NodeRuntime.ensureStarted(ctx.applicationContext) }
+                        when (val r = GatewayClient.sendTextReliable(ocChat, text, qid)) {
+                            is GatewayClient.SendOutcome.Sent -> { /* poll loop swaps optimistic for the real message */ }
+                            is GatewayClient.SendOutcome.Queued -> {
+                                optimistic.remove(opt)
+                                SendQueue.enqueue(ctx, ocChat, text, qid)
+                                optimistic.add(OptMsg(ocChat, text, ts, qtext, queued = true))
+                                notify("Connecting… message queued — will send when reconnected")
+                            }
+                            is GatewayClient.SendOutcome.NeedRelogin -> {
+                                optimistic.remove(opt)
+                                notify("Session expired — scan QR again")
+                            }
+                        }
+                    }
                 },
                 onEditMsg = { m, txt ->
                     val mid = m.id
@@ -1336,8 +1409,11 @@ fun GatewayApp() {
                 onAvatarClick = { jid -> dpView = jid },
                 previewCache = previewCache,
                 dpCache = dpCache,
-                wallpaper = chatWp
+                wallpaper = chatWp,
+                queuedCount = optimistic.count { it.chat == ocChat && it.queued },
+                onRetryQueued = { scope.launch { val n = GatewayClient.flushSendQueue(ctx); notify(if (n > 0) "$n queued message(s) sent" else "Still connecting… will retry automatically") } },
             )
+            }
             val ocBlocked = ocChat in blockedJids
             ChatGlassHeader(
                 jid = ocChat,
@@ -1354,6 +1430,7 @@ fun GatewayApp() {
             )
         } else {
         Box(Modifier.fillMaxSize().consumeWindowInsets(pad)) {
+            AyxAnimatedScreen(screenKey = "$screen|$settingsPage|$chatsPage") {
             when {
                 // AyX Group system channel — independent of WhatsApp link state.
                 !status.registered -> Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode,
@@ -1412,12 +1489,13 @@ fun GatewayApp() {
                         } else openChat = jid
                     })
             }
+            }
         }
         }
             // Floating rounded glass Home/Status navigation — overlaid so the list scrolls behind it.
             if (status.registered && openChat == null && screen == "chats") {
                 val selC = MaterialTheme.colorScheme.primary; val dimC = MaterialTheme.colorScheme.onSurfaceVariant
-                StyledSurface(shape = uiShapeFor(30), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                StyledSurface(shape = uiShapeFor(30), color = MaterialTheme.colorScheme.surface.copy(alpha = ayxGlassAlpha(0.92f, BlurElement.NAVIGATION)),
                     tonalElevation = 0.dp, shadowElevation = 14.dp, border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)),
                     modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 12.dp)) {
                     Row(Modifier.padding(horizontal = 6.dp).height(60.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1444,7 +1522,7 @@ fun GatewayApp() {
                 var nameInput by remember(jidForName) { mutableStateOf(saved) }
                 AlertDialog(
                     onDismissRequest = { showSetName = false },
-                    containerColor = dialogBg(),
+                    containerColor = dialogBg().copy(alpha = ayxDialogAlpha()),
                     shape = uiShapeFor(24),
                     icon = { Icon(Icons.Filled.Edit, null, tint = AYX_GREEN) },
                     title = { Text("Set name") },
@@ -1510,7 +1588,7 @@ private fun ForwardPicker(messages: List<GatewayClient.Msg>, dpCache: MutableMap
     }
     val filtered = chats.filter { query.isBlank() || chatTitleOf(messages, it).contains(query, true) || it.contains(query) }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        StyledSurface(shape = uiShapeFor(24), color = dialogBg(),
+        StyledSurface(shape = uiShapeFor(24), color = dialogBg().copy(alpha = ayxDialogAlpha()),
             modifier = Modifier.fillMaxWidth(0.94f).fillMaxHeight(0.8f)) {
             Column(Modifier.fillMaxSize().padding(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1650,7 +1728,7 @@ private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<Stri
                 }
             }
         } else {
-            itemsIndexed(groups, key = { _, e -> e.key }) { _, entry ->
+            itemsIndexed(groups, key = { _, e -> e.key }) { itemIndex, entry ->
             val msgs = entry.value
             val last = msgs.maxByOrNull { it.ts }!!
             val name = chatTitle(msgs)
@@ -1658,6 +1736,7 @@ private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<Stri
             val rowCard = if (ui.isDefault) Modifier
                 else Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
                     .ayxStyled(androidx.compose.foundation.shape.RoundedCornerShape(ui.cardCorner), MaterialTheme.colorScheme.surfaceVariant)
+            AyxFadeInListItem(key = entry.key, index = itemIndex) {
             Row(Modifier.fillMaxWidth().then(rowCard).combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = { onOpen(entry.key) }, onLongClick = { menuChat = entry.key }).padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 Avatar(entry.key, name, dpCache, 50.dp)
@@ -1674,6 +1753,7 @@ private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<Stri
                     Text((if (last.fromMe) "You: " else "") + preview, style = MaterialTheme.typography.bodySmall,
                         maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+            }
             }
             // // HIDDEN
         }
@@ -1795,6 +1875,9 @@ private fun ChatDetail(
     wallpaper: ImageBitmap?,
     pendingMedia: Pair<android.net.Uri, String>?,
     onClearPendingMedia: () -> Unit,
+    /** Queued (not yet sent) messages in this chat — shown as a banner, never faked as sent. */
+    queuedCount: Int = 0,
+    onRetryQueued: () -> Unit = {},
 ) {
     val clipboard = LocalClipboardManager.current
     val ctx = LocalContext.current
@@ -1881,7 +1964,8 @@ private fun ChatDetail(
             contentPadding = PaddingValues(top = topClear, bottom = 4.dp),
             verticalArrangement = Arrangement.spacedBy(3.dp)) {
             item { Spacer(Modifier.height(6.dp)) }
-            itemsIndexed(rows, key = { i, m -> "${m.ts}-$i" }) { _, m ->
+            itemsIndexed(rows, key = { i, m -> "${m.ts}-$i" }) { itemIndex, m ->
+                AyxFadeInListItem(key = "${m.ts}-${m.id ?: m.text}", index = itemIndex) {
                 Box(Modifier.fillMaxWidth().animateItem()) {
                     MessageBubble(m, previewCache, dpCache, onMedia, onShare, onDownload,
                         onReply = { replyTo = it }, onAvatarClick = onAvatarClick,
@@ -1889,6 +1973,7 @@ private fun ChatDetail(
                         onToggleSelect = { mm -> mm.id?.let { if (it in selIds) selIds.remove(it) else selIds.add(it) } },
                         onTranslate = { onTranslateMsg(it) },
                         onLongClick = { reactMsg = it })
+                }
                 }
             }
         }
@@ -1913,7 +1998,7 @@ private fun ChatDetail(
         val plusButton: @Composable () -> Unit = {
             Box {
                 IconButton(onClick = { attachMenu = true }) { Icon(Icons.Filled.Add, "add") }
-                DropdownMenu(expanded = attachMenu, onDismissRequest = { attachMenu = false }) {
+                DropdownMenu(expanded = attachMenu, onDismissRequest = { attachMenu = false }, containerColor = MaterialTheme.colorScheme.surface.copy(alpha = ayxMenuAlpha())) {
                     DropdownMenuItem(text = { Text("Camera") }, leadingIcon = { Icon(Icons.Filled.PhotoCamera, null) }, onClick = { attachMenu = false; onCamera() })
                     DropdownMenuItem(text = { Text("Photos") }, leadingIcon = { Icon(Icons.Filled.Image, null) }, onClick = { attachMenu = false; onPickChatPhoto() })
                     DropdownMenuItem(text = { Text("Videos") }, leadingIcon = { Icon(Icons.Filled.VideoFile, null) }, onClick = { attachMenu = false; onPickChatVideo() })
@@ -1938,8 +2023,20 @@ private fun ChatDetail(
                     focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent),
                 modifier = mod.focusRequester(fieldFocus).onFocusChanged { fieldHadFocus = it.isFocused })
         }
+        // Queued banner: makes it unmistakable that these messages are NOT
+        // sent yet (they will go out when the connection is back). Never
+        // show a queued message as sent — that was the original bug.
+        if (queuedCount > 0) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp).clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.errorContainer).padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Text("⏳ $queuedCount message(s) queued — will send when reconnected", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.weight(1f))
+                TextButton(onClick = onRetryQueued) { Text("Retry now") }
+            }
+        }
         Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp).animateContentSize()
-            .clip(RoundedCornerShape(28.dp)).background(MaterialTheme.colorScheme.surface.copy(alpha = 0.90f))) {
+            .clip(RoundedCornerShape(28.dp)).background(MaterialTheme.colorScheme.surface.copy(alpha = ayxGlassAlpha(0.90f, BlurElement.BOTTOM_SHEET)))) {
             pendingMedia?.let { pm ->
                 val puri = pm.first; val pmtype = pm.second
                 val bigPlay = playPreview && pmtype == "video"

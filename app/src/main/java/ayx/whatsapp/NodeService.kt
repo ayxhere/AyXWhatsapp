@@ -7,6 +7,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.util.Log
 import android.os.IBinder
 import android.graphics.BitmapFactory
 import kotlinx.coroutines.CoroutineScope
@@ -34,7 +35,56 @@ class NodeService : Service() {
         return START_STICKY
     }
 
-    override fun onDestroy() { scope.cancel(); super.onDestroy() }
+    /**
+     * App swiped away from recents. START_STICKY alone is NOT enough on
+     * OEM skins (Xiaomi/Oppo/Vivo battery savers) — they can kill the
+     * service without redelivery. Re-start explicitly so the Baileys
+     * gateway keeps running after a swipe, as long as the user left
+     * "Run in background" ON. Force-Stop still blocks restart until the
+     * app is reopened (Android rule, cannot be bypassed).
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        restartIfAllowed("onTaskRemoved")
+    }
+
+    override fun onDestroy() {
+        scope.cancel()
+        // If the system killed us (not a user stop()), come back.
+        restartIfAllowed("onDestroy")
+        super.onDestroy()
+    }
+
+    private fun runBackgroundOn(): Boolean {
+        return try {
+            ChatStyle.init(applicationContext)
+            ChatStyle.runBackground.value
+        } catch (_: Exception) {
+            true
+        }
+    }
+
+    private fun restartIfAllowed(reason: String) {
+        if (!allowRestart || !runBackgroundOn()) return
+        try {
+            Log.i(TAG, "NodeService restarting after $reason")
+            NodeRuntime.ensureStarted(applicationContext)
+            val i = Intent(applicationContext, NodeService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                try {
+                    applicationContext.startForegroundService(i)
+                } catch (_: Exception) {
+                    // Android 12+ blocks background foreground-service
+                    // starts; the next app open revives it instead.
+                    applicationContext.startService(i)
+                }
+            } else {
+                applicationContext.startService(i)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "restart after $reason failed: ${e.message}")
+        }
+    }
 
     private fun startNotifPolling() {
         scope.launch {
@@ -81,17 +131,32 @@ class NodeService : Service() {
     }
 
     companion object {
+        private const val TAG = "NodeService"
+
+        /**
+         * False only when the user explicitly turned "Run in background"
+         * OFF (stop()). Guards onTaskRemoved/onDestroy restarts so the
+         * OFF toggle is respected instead of the service resurrecting
+         * itself forever.
+         */
+        @Volatile
+        private var allowRestart = true
+
         @Volatile var currentOpenChat: String? = null
         // new channel id so the lowered importance actually applies on devices that had the old channel
         private const val CHANNEL = "wagw_engine_min"
         private const val NOTIF_ID = 1
 
         fun start(ctx: Context) {
+            allowRestart = true
             val i = Intent(ctx, NodeService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(i)
             else ctx.startService(i)
         }
 
-        fun stop(ctx: Context) { runCatching { ctx.stopService(Intent(ctx, NodeService::class.java)) } }
+        fun stop(ctx: Context) {
+            allowRestart = false
+            runCatching { ctx.stopService(Intent(ctx, NodeService::class.java)) }
+        }
     }
 }

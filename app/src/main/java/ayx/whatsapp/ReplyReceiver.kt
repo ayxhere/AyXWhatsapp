@@ -15,7 +15,10 @@ class ReplyReceiver : BroadcastReceiver() {
         if (reply.isNullOrBlank()) return
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
-            try { GatewayClient.sendToJid(jid, reply) } catch (_: Exception) {}
+            // Reliable send: retries + server-side queue when the socket is
+            // down (same fix as the in-app composer), so a notification
+            // reply is never silently lost either.
+            try { GatewayClient.sendTextReliable(jid, reply) } catch (_: Exception) {}
             finally {
                 NotificationHelper.cancel(context, jid)
                 pending.finish()

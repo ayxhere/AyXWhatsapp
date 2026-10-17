@@ -41,6 +41,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import ayx.whatsapp.ui.AnimationStyle
+import ayx.whatsapp.ui.AyxFadeInListItem
 import ayx.whatsapp.ui.AyxZoomPage
 import ayx.whatsapp.ui.BlurElement
 import ayx.whatsapp.ui.UiAnimationSettings
@@ -158,6 +159,35 @@ fun UserInterfaceSettingsScreen() {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
             )
+            // Scroll-animation sample rows: keyed by the toggle so flipping
+            // Scroll Animation ON replays the fade-in here; OFF renders
+            // the rows plainly. This preview is live — it reflects the
+            // current settings, not a static mock.
+            Text(
+                "Scroll fade-in sample:",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+            )
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    )
+                    .padding(12.dp),
+            ) {
+                listOf("Chat one", "Chat two", "Chat three").forEachIndexed { index, label ->
+                    AyxFadeInListItem(key = "preview-$scrollAnim-$index", index = index) {
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(vertical = 4.dp),
+                        )
+                    }
+                }
+            }
         }
     }
 

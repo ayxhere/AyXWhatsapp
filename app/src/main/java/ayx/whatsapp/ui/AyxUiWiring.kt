@@ -1,0 +1,144 @@
+package ayx.whatsapp.ui
+
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.layout.Box
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
+import kotlinx.coroutines.delay
+
+/**
+ * Wiring for the Settings → User Interface options.
+ *
+ * BUG (fixed here): the settings screen + helpers existed, but NOTHING read
+ * them — prefs changed, the UI never did. Every screen switch, list item
+ * and glass surface below reads [UiAnimationSettings] live, so toggling a
+ * setting visibly changes the UI immediately.
+ *
+ * - Page transitions: [AyxAnimatedScreen] wraps the main content and picks
+ *   its transition from the saved [AnimationStyle] (Zoom / Fade / Slide /
+ *   None). Zoom = scale 0.95 → 1.0 over 300ms + fade, FastOutSlowIn.
+ * - Motion blur: APPROXIMATION — a RenderEffect blur whose radius is at max
+ *   when the transition starts and decays to 0 over ~300ms. This is a
+ *   visual approximation, not true optical motion blur.
+ * - Frosted glass: [ayxGlassAlpha] lowers a glass surface's alpha when the
+ *   Material Blur toggle applies to that element, so the frosted look
+ *   appears/disappears with the toggle.
+ * - Scroll fade-in: [AyxFadeInListItem] renders content directly when
+ *   scroll animation is OFF, else delegates to [AyxFadeInItem].
+ */
+
+/** Glass-surface alpha: lower (more frosted) when blur applies to [element]. */
+fun ayxGlassAlpha(baseAlpha: Float, element: BlurElement): Float =
+    if (UiAnimationSettings.blurAppliesTo(element)) (baseAlpha - 0.30f).coerceAtLeast(0.45f)
+    else baseAlpha
+
+/** Menu container alpha: more translucent when blur applies to Menus. */
+fun ayxMenuAlpha(baseAlpha: Float = 1f): Float =
+    if (UiAnimationSettings.blurAppliesTo(BlurElement.MENUS)) (baseAlpha - 0.22f).coerceAtLeast(0.6f)
+    else baseAlpha
+
+/** Dialog container alpha: more translucent when blur applies to Dialogs. */
+fun ayxDialogAlpha(baseAlpha: Float = 1f): Float =
+    if (UiAnimationSettings.blurAppliesTo(BlurElement.DIALOGS)) (baseAlpha - 0.18f).coerceAtLeast(0.65f)
+    else baseAlpha
+
+/**
+ * Wraps a whole screen switch with the saved page-transition animation.
+ *
+ * @param screenKey changes whenever the visible screen changes
+ * (e.g. "chats|<openChat>|<settingsPage>") so every navigation animates.
+ */
+@Composable
+fun AyxAnimatedScreen(
+    screenKey: Any,
+    content: @Composable () -> Unit,
+) {
+    val style = UiAnimationSettings.animationStyle.value
+    val motionBlur = UiAnimationSettings.motionBlurEnabled.value
+    // Transient motion-blur: max radius at switch, decays to 0 over ~300ms.
+    var blurActive by remember(screenKey) { mutableStateOf(motionBlur && style == AnimationStyle.ZOOM) }
+    LaunchedEffect(screenKey) {
+        if (motionBlur && style == AnimationStyle.ZOOM) {
+            blurActive = true
+            delay(300)
+            blurActive = false
+        } else {
+            blurActive = false
+        }
+    }
+    AnimatedContent(
+        targetState = screenKey,
+        transitionSpec = { ayxTransitionFor(style) },
+        label = "ayxScreen",
+    ) {
+        Box(
+            Modifier.then(
+                if (blurActive) Modifier.blur(AyxMotionBlurMaxRadius) else Modifier,
+            ),
+        ) {
+            content()
+        }
+    }
+}
+
+private fun ayxTransitionFor(style: AnimationStyle) =
+    when (style) {
+        AnimationStyle.ZOOM -> (
+            scaleIn(
+                animationSpec = tween(300, easing = FastOutSlowInEasing),
+                initialScale = 0.95f,
+            ) + fadeIn(animationSpec = tween(250))
+            ) togetherWith (
+            scaleOut(
+                animationSpec = tween(300, easing = FastOutSlowInEasing),
+                targetScale = 0.95f,
+            ) + fadeOut(animationSpec = tween(250))
+            )
+        AnimationStyle.FADE -> fadeIn(animationSpec = tween(250)) togetherWith
+            fadeOut(animationSpec = tween(250))
+        AnimationStyle.SLIDE -> (
+            slideInHorizontally(
+                animationSpec = tween(300, easing = FastOutSlowInEasing),
+            ) { it / 4 } + fadeIn(animationSpec = tween(250))
+            ) togetherWith (
+            slideOutHorizontally(
+                animationSpec = tween(300, easing = FastOutSlowInEasing),
+            ) { -it / 4 } + fadeOut(animationSpec = tween(250))
+            )
+        AnimationStyle.NONE -> EnterTransition.None togetherWith ExitTransition.None
+    }
+
+/**
+ * List-item wrapper: fade-in + slide-up on first appearance when scroll
+ * animation is ON, plain content when OFF. Use for chat-list rows and
+ * message bubbles so the Scroll Animation toggle visibly changes lists.
+ */
+@Composable
+fun AyxFadeInListItem(
+    key: Any,
+    index: Int = 0,
+    content: @Composable () -> Unit,
+) {
+    if (UiAnimationSettings.scrollAnimationEnabled.value) {
+        AyxFadeInItem(key = key, index = index, content = content)
+    } else {
+        content()
+    }
+}

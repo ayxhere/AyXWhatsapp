@@ -18,6 +18,9 @@ object NodeRuntime {
 
     const val PORT = 8765
 
+    /** True while the embedded Node thread is believed alive. */
+    fun isStarted(): Boolean = started.get()
+
     fun ensureStarted(ctx: Context) {
         if (!started.compareAndSet(false, true)) return
 
@@ -54,7 +57,12 @@ object NodeRuntime {
         Thread({
             Log.i(TAG, "starting node: $mainJs")
             val rc = NodeBridge.nativeStart(arrayOf("node", mainJs), projectDir.absolutePath)
-            Log.w(TAG, "node exited rc=$rc") // node::Start only returns on process exit
+            // BUG FIX: previously `started` stayed true forever after Node
+            // exited, so ensureStarted() became a permanent no-op and the
+            // gateway never came back until the whole app process died.
+            // Resetting here lets the next ensureStarted() restart Node.
+            started.set(false)
+            Log.w(TAG, "node exited rc=$rc — will restart on next ensureStarted()")
         }, "nodejs").start()
     }
 
