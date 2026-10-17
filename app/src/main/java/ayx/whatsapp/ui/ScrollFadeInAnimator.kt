@@ -51,6 +51,13 @@ private object AyxSeenItems {
 fun AyxFadeInItem(
     key: Any,
     index: Int = 0,
+    // Entrance-cascade stagger (ms): home lists pass index * 35 (capped)
+    // during the first ~900ms after mount so rows cascade in visibly.
+    // Must be 0 for rows composed later (poll/scroll) — a delayed
+    // invisible-but-laid-out row reads as a row that appears/disappears
+    // while scrolling. Delay only shifts the start; the animation itself
+    // is still graphicsLayer-only, never layout size.
+    delayMs: Int = 0,
     content: @Composable () -> Unit,
 ) {
     // First appearance only, process-wide: survives LazyColumn recycling,
@@ -65,12 +72,12 @@ fun AyxFadeInItem(
     }
     val alpha by animateFloatAsState(
         targetValue = if (targetVisible) 1f else 0f,
-        animationSpec = tween(250, easing = FastOutSlowInEasing),
+        animationSpec = tween(250, delayMillis = delayMs, easing = FastOutSlowInEasing),
         label = "ayxFadeInAlpha",
     )
     val slideY by animateFloatAsState(
         targetValue = if (targetVisible) 0f else 32f,
-        animationSpec = tween(250, easing = FastOutSlowInEasing),
+        animationSpec = tween(250, delayMillis = delayMs, easing = FastOutSlowInEasing),
         label = "ayxFadeInSlide",
     )
     // graphicsLayer changes ONLY how the item is drawn, never its layout

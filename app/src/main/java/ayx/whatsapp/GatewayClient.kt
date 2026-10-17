@@ -61,7 +61,11 @@ object GatewayClient {
     )
     data class Contact(val jid: String, val name: String, val number: String)
     data class Msg(val chat: String, val name: String, val fromMe: Boolean, val text: String, val ts: Long,
-                   val mediaName: String? = null, val mediaType: String? = null, val thumb: String? = null, val deleted: Boolean = false, val id: String? = null, val reaction: String? = null, val sender: String? = null, val quotedText: String? = null, val edited: Boolean = false, val status: Int = 0, val forwarded: Boolean = false)
+                   val mediaName: String? = null, val mediaType: String? = null, val thumb: String? = null, val deleted: Boolean = false, val id: String? = null, val reaction: String? = null, val sender: String? = null, val quotedText: String? = null, val edited: Boolean = false, val status: Int = 0, val forwarded: Boolean = false,
+                   // Group chats only: the Baileys group subject (group name) from the
+                   // gateway. NOTE: `name` on a group message is the SENDER's pushName,
+                   // never the group name — use chatName for group titles.
+                   val chatName: String? = null)
 
     suspend fun status(): Status = withContext(Dispatchers.IO) {
         try {
@@ -506,6 +510,26 @@ object GatewayClient {
         try { parseMsgs(get("/messages")) } catch (e: Exception) { emptyList() }
     }
 
+    /**
+     * Fetch a group's subject (group name) from Baileys group metadata.
+     * Result is cached in [GroupNameStore] (subjects never overwrite a user
+     * alias). Throttled to at most 1 attempt / 60s per group so the chat
+     * list never spams the gateway while the socket is down. Returns null
+     * when the name is unknown (caller shows the "Group" fallback).
+     */
+    suspend fun getGroupName(jid: String): String? = withContext(Dispatchers.IO) {
+        GroupNameStore.nameFor(jid)?.let { return@withContext it }
+        if (!GroupNameStore.shouldFetch(jid)) return@withContext null
+        GroupNameStore.markAttempted(jid)
+        try {
+            val enc = java.net.URLEncoder.encode(jid, "UTF-8")
+            val o = get("/groupname?jid=$enc")
+            val name = o.optString("name").ifEmpty { null }
+            if (name != null) GroupNameStore.putSubject(jid, name)
+            name
+        } catch (e: Exception) { null }
+    }
+
     data class StatusItem(val sender: String, val name: String, val text: String,
         val mediaName: String? = null, val mediaType: String? = null, val thumb: String? = null, val ts: Long = 0L, val mine: Boolean = false, val id: String? = null, val bg: String? = null)
     suspend fun deleteStatus(id: String): Boolean = withContext(Dispatchers.IO) {
@@ -639,6 +663,7 @@ object GatewayClient {
                     edited = m.optBoolean("edited", false),
                     status = m.optInt("status", 0),
                     forwarded = m.optBoolean("forwarded", false),
+                    chatName = m.optString("chatName").ifEmpty { null },
                 ))
             }
         }

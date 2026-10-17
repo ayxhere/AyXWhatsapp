@@ -33,6 +33,13 @@ object ContactStore {
 
     /** Look up a name for a chat jid: exact jid, then by number, then by last-10 digits. */
     fun nameFor(jid: String): String? {
+        if (jid.endsWith("@g.us")) {
+            // GROUP JIDs are not people: never run SetName / digit / fuzzy
+            // matching on them — a group id's digits could match a random
+            // person's alias and the group row would show that person's
+            // name. Group names live in GroupNameStore (exact full-JID key).
+            return map[jid]?.takeIf { it.isNotBlank() }
+        }
         SetName.get(jid)?.let { return it }   // user-set alias always wins
         map[jid]?.let { if (it.isNotBlank()) return it }
         if (jid.endsWith("@lid")) return null   // a LID is not a phone number — never fuzzy-match it to a device contact

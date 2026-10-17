@@ -232,6 +232,53 @@ function rememberName(jid, name) {
   if (jid && name && String(name).trim() && nameStore[jid] !== String(name).trim()) { nameStore[jid] = String(name).trim(); saveNamesDebounced() }
 }
 
+// Group subjects (group names), cached + persisted — same pattern as nameStore.
+// BUG (fixed here): group rows showed the LAST SENDER's name as the title.
+// Baileys' pushName on a group message is the sender's name, not the group
+// subject, and the app had no group-name source at all. Now every group
+// message entry carries chatName (the Baileys group subject), and the app
+// can also fetch it on demand via GET /groupname.
+const GROUP_SUBJECTS_FILE = path.join(path.dirname(AUTH_DIR), 'group-subjects.json')
+let groupSubjects = {}   // group jid -> { subject, ts }
+try { groupSubjects = JSON.parse(fs.readFileSync(GROUP_SUBJECTS_FILE, 'utf8')) || {} } catch (_) { groupSubjects = {} }
+let _groupSubjTimer = null
+function saveGroupSubjectsDebounced() {
+  if (_groupSubjTimer) return
+  _groupSubjTimer = setTimeout(() => { _groupSubjTimer = null; try { fs.writeFileSync(GROUP_SUBJECTS_FILE, JSON.stringify(groupSubjects)) } catch (_) {} }, 1500)
+}
+function cachedGroupSubject(jid) {
+  const e = groupSubjects[jid]
+  return (e && e.subject) ? e.subject : ''
+}
+const _groupSubjectInflight = new Map()   // jid -> Promise, so concurrent callers share one fetch
+// Baileys group subject for a group jid. Cached (24h); stale cache is
+// returned immediately while a background refresh runs. Never throws —
+// returns '' when unknown (socket down / not a group / fetch failed).
+async function fetchGroupSubject(jid) {
+  if (!jid || !String(jid).endsWith('@g.us')) return ''
+  const cached = cachedGroupSubject(jid)
+  const age = groupSubjects[jid] ? (Date.now() - (groupSubjects[jid].ts || 0)) : Infinity
+  if (cached && age < 24 * 3600 * 1000) return cached
+  if (_groupSubjectInflight.has(jid)) return _groupSubjectInflight.get(jid)
+  const p = (async () => {
+    try {
+      if (!sock || status.connection !== 'open') return cached
+      const meta = await sock.groupMetadata(jid)
+      const subject = (meta && meta.subject) || ''
+      if (subject) {
+        groupSubjects[jid] = { subject, ts: Date.now() }
+        saveGroupSubjectsDebounced()
+        return subject
+      }
+    } catch (_) { /* group gone / logged out — keep cached value */ }
+    return cached
+  })()
+  _groupSubjectInflight.set(jid, p)
+  p.finally(() => { if (_groupSubjectInflight.get(jid) === p) _groupSubjectInflight.delete(jid) }).catch(() => {})
+  if (cached) return cached   // stale cache: return now, refresh in background
+  return p
+}
+
 function saveMessagesDebounced() {
   if (saveMsgTimer) return
   saveMsgTimer = setTimeout(() => {
@@ -1106,6 +1153,11 @@ async function synthVoice(text, voice, langOverride) {
 }
 
 function remember(id, entry) {
+  // Group entries stored by other paths (echoes, edits): fill chatName from
+  // the cached subject so group rows always have a group name to show.
+  if (entry && entry.chat && String(entry.chat).endsWith('@g.us') && !entry.chatName) {
+    entry.chatName = cachedGroupSubject(entry.chat)
+  }
   if (id && msgStore.has(id) && msgLog.some(m => m && m.id === id)) {   // same message delivered twice → update, never double
     const old = msgStore.get(id); Object.assign(old, entry, { id }); saveMessagesDebounced(); return
   }
@@ -1439,6 +1491,10 @@ async function handleMessagesBatch({ messages, type }) {
       }
       const ts = msg.messageTimestamp ? Number(msg.messageTimestamp) * 1000 : Date.now()
       const entry = { chat: chatJid, name: resolveName(msg, chatJid), sender, fromMe, text: extractText(msg.message), ts, id }
+      // Group chats: attach the Baileys GROUP SUBJECT as chatName. entry.name
+      // is the SENDER's pushName for group messages — the app must use
+      // chatName (never name) for group titles, or rows show a person's name.
+      if (from && String(from).endsWith('@g.us')) entry.chatName = await fetchGroupSubject(from)
       if (fromMe) entry.status = (typeof msg.status === 'number' ? msg.status : 1)  // 1 pending,2 sent,3 delivered,4 read
       if (isForwarded(msg.message)) entry.forwarded = true
       entry.quoted = quotedOf(msg.message)
@@ -1826,6 +1882,16 @@ app.get('/presence', async (req, res) => {
   try { await sock.presenceSubscribe(jid) } catch (_) {}
   const p = presences.get(jid) || { presence: 'unavailable', lastSeen: null }
   res.json(p)
+})
+
+// Group subject (group name) for a group jid — the app's group rows and
+// chat header use this, never the sender's pushName. Returns { name: '' }
+// when unknown (not a group / socket down / fetch failed).
+app.get('/groupname', async (req, res) => {
+  const jid = String(req.query.jid || '')
+  if (!jid) return res.json({ name: '' })
+  try { res.json({ name: await fetchGroupSubject(jid) }) }
+  catch (_) { res.json({ name: cachedGroupSubject(jid) }) }
 })
 
 app.get('/session/export', (req, res) => {
@@ -2270,9 +2336,10 @@ app.post('/cleardata', async (req, res) => {
   try {
     try { if (sock) await sock.logout() } catch (_) {}
     msgLog = []; msgStore.clear(); rawStore.clear(); statuses = []; deletedList = []
+    groupSubjects = {}
     for (const k of Object.keys(statusViewers)) delete statusViewers[k]
     wipeDirContents(MEDIA_DIR)
-    for (const F of [MESSAGES_FILE, STATUS_FILE, NAMES_FILE, SETTINGS_FILE]) { try { fs.rmSync(F, { force: true }) } catch (_) {} }
+    for (const F of [MESSAGES_FILE, STATUS_FILE, NAMES_FILE, SETTINGS_FILE, GROUP_SUBJECTS_FILE]) { try { fs.rmSync(F, { force: true }) } catch (_) {} }
     wipeDirContents(AUTH_DIR)
     status.registered = false
     res.json({ ok: true })

@@ -142,10 +142,11 @@ private fun ayxTransitionFor(style: AnimationStyle) =
 fun AyxFadeInListItem(
     key: Any,
     index: Int = 0,
+    delayMs: Int = 0,
     content: @Composable () -> Unit,
 ) {
     if (UiAnimationSettings.scrollAnimationEnabled.value) {
-        AyxFadeInItem(key = key, index = index, content = content)
+        AyxFadeInItem(key = key, index = index, delayMs = delayMs, content = content)
     } else {
         content()
     }

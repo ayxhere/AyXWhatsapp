@@ -349,6 +349,7 @@ class MainActivity : ComponentActivity() {
         StatusData.init(applicationContext)
         StatusFlags.init(applicationContext)
         SetName.init(applicationContext)
+        GroupNameStore.init(applicationContext)
         ThemeStore.init(applicationContext)
         UiStyleStore.init(applicationContext)
         ayx.whatsapp.ui.UiAnimationSettings.init(applicationContext)
@@ -484,12 +485,55 @@ object TranslateStore {
 
 private fun chatTitle(msgs: List<GatewayClient.Msg>): String {
     val chat = msgs.firstOrNull()?.chat ?: return "Unknown"
+    if (chat.endsWith("@g.us")) {
+        // GROUP: the title is the GROUP SUBJECT — never the last sender's
+        // name. (Baileys' pushName on a group message is the sender's name,
+        // and ContactStore/SetName match by digit number, so both old paths
+        // could put a person's name on a group row.) Sources in order:
+        // user alias (GroupNameStore) -> Baileys subject (chatName on any
+        // message, or GroupNameStore cache) -> "Group" fallback.
+        GroupNameStore.nameFor(chat)?.let { if (it.isNotBlank()) return it }
+        msgs.firstOrNull { !it.chatName.isNullOrBlank() }?.chatName?.let { return it }
+        return "Group"
+    }
     ContactStore.nameFor(chat)?.let { if (it.isNotBlank()) return it }
     msgs.firstOrNull { !it.fromMe && it.name.isNotBlank() }?.let { return it.name }
     return when {
-        chat.endsWith("@g.us") -> "Group"
         chat.endsWith("@lid") -> "Unknown contact"   // hidden WhatsApp id, not a phone number
         else -> { val n = chat.substringBefore("@").filter { it.isDigit() }; if (n.isNotBlank()) "+" + n else "Unknown" }
+    }
+}
+
+/** Display name of a group message's sender (for the "Sender: text" preview). */
+private fun groupSenderName(m: GatewayClient.Msg): String {
+    if (!m.sender.isNullOrBlank()) {
+        ContactStore.nameFor(m.sender)?.let { if (it.isNotBlank()) return it }
+        if (m.name.isNotBlank()) return m.name
+        val n = m.sender.substringBefore("@").filter { it.isDigit() }
+        if (n.isNotBlank()) return "+$n"
+    }
+    if (m.name.isNotBlank()) return m.name
+    return "Someone"
+}
+
+/**
+ * One-line preview for a chat-list row / action sheet.
+ * Never blank when a last message exists: text -> media placeholder ->
+ * "[message]". Group rows prefix the sender ("Sender: text"); own messages
+ * prefix "You: "; 1:1 incoming messages have no prefix.
+ */
+private fun chatPreview(m: GatewayClient.Msg, isGroup: Boolean): String {
+    val body = when {
+        m.deleted -> "deleted"
+        m.text.isNotBlank() -> m.text
+        m.mediaType != null -> "[${m.mediaType}]"
+        m.mediaName != null -> "[media]"
+        else -> "[message]"
+    }
+    return when {
+        m.fromMe -> "You: $body"
+        isGroup -> "${groupSenderName(m)}: $body"
+        else -> body
     }
 }
 
@@ -1150,6 +1194,14 @@ fun GatewayApp() {
     }
 
     val chatName = openChat?.let { c -> chatTitle(messages.filter { it.chat == c }) }
+    // Opening a group with no cached subject yet: fetch the Baileys group
+    // name so the chat header shows the group name, not "Group".
+    LaunchedEffect(openChat) {
+        val c = openChat
+        if (c != null && c.endsWith("@g.us") && GroupNameStore.nameFor(c) == null) {
+            runCatching { GatewayClient.getGroupName(c) }
+        }
+    }
     val title = when {
         !status.registered -> "Link device"
         openChat != null -> chatName ?: "Chat"
@@ -1544,7 +1596,10 @@ fun GatewayApp() {
             }
             if (showSetName && openChat != null) {
                 val jidForName = openChat!!
-                val saved = SetName.get(jidForName) ?: ""
+                // Groups use GroupNameStore (full-JID key): SetName matches
+                // by digit number, which could alias a group to a person.
+                val isGroupName = jidForName.endsWith("@g.us")
+                val saved = if (isGroupName) GroupNameStore.nameFor(jidForName) ?: "" else SetName.get(jidForName) ?: ""
                 var nameInput by remember(jidForName) { mutableStateOf(saved) }
                 AlertDialog(
                     onDismissRequest = { showSetName = false },
@@ -1563,10 +1618,10 @@ fun GatewayApp() {
                                 modifier = Modifier.fillMaxWidth())
                         }
                     },
-                    confirmButton = { TextButton(onClick = { SetName.set(jidForName, nameInput); showSetName = false; notify("name saved") }, enabled = nameInput.isNotBlank() && nameInput != saved) { Text("Save", color = AYX_GREEN) } },
+                    confirmButton = { TextButton(onClick = { if (isGroupName) GroupNameStore.setAlias(jidForName, nameInput) else SetName.set(jidForName, nameInput); showSetName = false; notify("name saved") }, enabled = nameInput.isNotBlank() && nameInput != saved) { Text("Save", color = AYX_GREEN) } },
                     dismissButton = {
                         Row {
-                            if (saved.isNotEmpty()) TextButton(onClick = { SetName.clear(jidForName); showSetName = false; notify("name removed") }) { Text("Remove", color = AYX_RED) }
+                            if (saved.isNotEmpty()) TextButton(onClick = { if (isGroupName) GroupNameStore.clearAlias(jidForName) else SetName.clear(jidForName); showSetName = false; notify("name removed") }) { Text("Remove", color = AYX_RED) }
                             TextButton(onClick = { showSetName = false }) { Text("Cancel") }
                         }
                     }
@@ -1741,6 +1796,24 @@ private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<Stri
         .filter { ChatFlags.reveal || ChatFlags.hidden[it.key] != true }
         .filter { query.isBlank() || chatTitle(it.value).contains(query, true) || it.key.contains(query) }
         .sortedByDescending { it.value.maxOf { m -> m.ts } }
+    // Home-screen entrance animation: a fresh mountKey per ChatList mount,
+    // so the staggered cascade replays every time Home is entered (cold
+    // start, back from Settings/chat) — but NEVER on poll refreshes or
+    // scroll-back (same mountKey -> seen-set blocks re-animation).
+    val homeMountKey = remember { System.nanoTime() }
+    val homeMountAt = remember { System.currentTimeMillis() }
+    // Fetch Baileys group subjects for groups that have none yet. Re-runs
+    // when the poll brings new messages (messages.size in the key), but
+    // getGroupName throttles to 1 attempt / 60s per group.
+    val homeScope = rememberCoroutineScope()
+    LaunchedEffect(groups.map { it.key }, messages.size) {
+        for (e in groups) {
+            val jid = e.key
+            if (jid.endsWith("@g.us") && e.value.none { !it.chatName.isNullOrBlank() } && GroupNameStore.nameFor(jid) == null) {
+                homeScope.launch { runCatching { GatewayClient.getGroupName(jid) } }
+            }
+        }
+    }
     // long-press a chat → blur the list behind + a floating action sheet (iOS/WhatsApp style)
     var menuChat by remember { mutableStateOf<String?>(null) }
     var mutePick by remember { mutableStateOf<String?>(null) }
@@ -1762,7 +1835,13 @@ private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<Stri
             val rowCard = if (ui.isDefault) Modifier
                 else Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
                     .ayxStyled(androidx.compose.foundation.shape.RoundedCornerShape(ui.cardCorner), MaterialTheme.colorScheme.surfaceVariant)
-            AyxFadeInListItem(key = entry.key, index = itemIndex) {
+            // Staggered entrance cascade: rows fade+rise one after another
+            // (index * 35ms, capped at 350ms) — but ONLY inside the first
+            // ~900ms after this list mounted. Later compositions (poll
+            // refresh, scroll-back) get delay 0, so rows never pop in late
+            // while scrolling. graphicsLayer-only: layout size never changes.
+            val homeStaggerMs = if (ayx.whatsapp.ui.UiAnimationSettings.scrollAnimationEnabled.value && System.currentTimeMillis() - homeMountAt < 900) (itemIndex * 35).coerceAtMost(350) else 0
+            AyxFadeInListItem(key = "$homeMountKey:${entry.key}", index = itemIndex, delayMs = homeStaggerMs) {
             Row(Modifier.fillMaxWidth().then(rowCard).combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = { onOpen(entry.key) }, onLongClick = { menuChat = entry.key }).padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 Avatar(entry.key, name, dpCache, 50.dp)
@@ -1775,8 +1854,8 @@ private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<Stri
                         }
                         Text(fmt(last.ts), style = MaterialTheme.typography.labelSmall)
                     }
-                    val preview = when { last.deleted -> "deleted"; last.text.isNotBlank() -> last.text; last.mediaType != null -> "[${last.mediaType}]"; else -> "" }
-                    Text((if (last.fromMe) "You: " else "") + preview, style = MaterialTheme.typography.bodySmall,
+                    val preview = chatPreview(last, entry.key.endsWith("@g.us"))
+                    Text(preview, style = MaterialTheme.typography.bodySmall,
                         maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
@@ -1790,9 +1869,9 @@ private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<Stri
         val cmsgs = messages.filter { it.chat == jid }
         val cname = chatTitle(cmsgs)
         val clast = cmsgs.maxByOrNull { it.ts }
-        val cprev = clast?.let { when { it.deleted -> "deleted"; it.text.isNotBlank() -> it.text; it.mediaType != null -> "[${it.mediaType}]"; else -> "" } } ?: ""
+        val cprev = clast?.let { chatPreview(it, jid.endsWith("@g.us")) } ?: ""
         ChatActionSheet(
-            name = cname, jid = jid, preview = (if (clast?.fromMe == true) "You: " else "") + cprev, dpCache = dpCache,
+            name = cname, jid = jid, preview = cprev, dpCache = dpCache,
             muted = ChatFlags.isMuted(jid),
             hidden = ChatFlags.hidden[jid] == true,
             locked = ChatFlags.locked[jid] == true,
@@ -3740,8 +3819,20 @@ private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, statuses: List<Ga
         while (pager.currentPage == 1) { onLoadStatuses(); delay(5000) }
     }
     HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { pg ->
-        if (pg == 0) ChatList(messages, dpCache, query, contentPad, ayxSnippet, onToggleChatReveal, onDelete, onOpen)
-        else StatusScreen(statuses, contentPad, onOpenStatus, dpCache, onToggleStatusReveal)
+        // Tab-switch settle fade: the newly active page fades 0.6 -> 1 over
+        // 250ms after the pager slide settles. graphicsLayer-only (no
+        // layout change), skipped entirely when Animation Style == None.
+        // The pager slide itself is the tab transition; this is only a
+        // gentle settle so the switch reads as animated, never flickery.
+        // Poll refreshes never touch currentPage, so they never retrigger it.
+        val tabAlpha by animateFloatAsState(
+            targetValue = if (pg == pager.currentPage || ayx.whatsapp.ui.UiAnimationSettings.animationStyle.value == ayx.whatsapp.ui.AnimationStyle.NONE) 1f else 0.6f,
+            animationSpec = tween(250), label = "tabFade",
+        )
+        Box(Modifier.fillMaxSize().graphicsLayer { alpha = tabAlpha }) {
+            if (pg == 0) ChatList(messages, dpCache, query, contentPad, ayxSnippet, onToggleChatReveal, onDelete, onOpen)
+            else StatusScreen(statuses, contentPad, onOpenStatus, dpCache, onToggleStatusReveal)
+        }
     }
 }
 
@@ -3749,6 +3840,12 @@ private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, statuses: List<Ga
 @Composable
 private fun StatusScreen(statuses: List<GatewayClient.StatusItem>, contentPad: androidx.compose.foundation.layout.PaddingValues, onOpen: (GatewayClient.StatusItem) -> Unit, dpCache: MutableMap<String, ImageBitmap?>, onToggleReveal: () -> Unit) {
     val version = StatusData.seenVersion.value            // recompose + reorder the moment a status is viewed
+    // Same mount-keyed staggered cascade as the chat list (see ChatList):
+    // replays on every Status tab entry, never on poll/scroll-back.
+    val statusMountKey = remember { System.nanoTime() }
+    val statusMountAt = remember { System.currentTimeMillis() }
+    fun statusStaggerMs(index: Int): Int =
+        if (ayx.whatsapp.ui.UiAnimationSettings.scrollAnimationEnabled.value && System.currentTimeMillis() - statusMountAt < 900) (index * 35).coerceAtMost(350) else 0
     val mine = statuses.filter { it.mine }
     val others = statuses.filter { !it.mine }
     // group by sender, drop hidden (unless revealed), then bucket: unread on top, viewed below, muted at the bottom
@@ -3780,11 +3877,23 @@ private fun StatusScreen(statuses: List<GatewayClient.StatusItem>, contentPad: a
             HorizontalDivider()
         }
         if (unread.isNotEmpty()) item { StatusSectionHeader("Recent updates") }
-        itemsIndexed(unread.toList(), key = { _, e -> "u:" + e.key }) { _, entry -> StatusRow(entry.key, entry.value, seen = false, dpCache = dpCache, onOpen = onOpen) }
+        itemsIndexed(unread.toList(), key = { _, e -> "u:" + e.key }) { idx, entry ->
+            AyxFadeInListItem(key = "$statusMountKey:u:${entry.key}", index = idx, delayMs = statusStaggerMs(idx)) {
+                StatusRow(entry.key, entry.value, seen = false, dpCache = dpCache, onOpen = onOpen)
+            }
+        }
         if (read.isNotEmpty()) item { StatusSectionHeader("Viewed updates") }
-        itemsIndexed(read.toList(), key = { _, e -> "v:" + e.key }) { _, entry -> StatusRow(entry.key, entry.value, seen = true, dpCache = dpCache, onOpen = onOpen) }
+        itemsIndexed(read.toList(), key = { _, e -> "v:" + e.key }) { idx, entry ->
+            AyxFadeInListItem(key = "$statusMountKey:v:${entry.key}", index = unread.size + idx, delayMs = statusStaggerMs(unread.size + idx)) {
+                StatusRow(entry.key, entry.value, seen = true, dpCache = dpCache, onOpen = onOpen)
+            }
+        }
         if (muted.isNotEmpty()) item { StatusSectionHeader("Muted updates") }
-        itemsIndexed(muted.toList(), key = { _, e -> "m:" + e.key }) { _, entry -> StatusRow(entry.key, entry.value, seen = StatusData.groupSeen(entry.value), dpCache = dpCache, onOpen = onOpen) }
+        itemsIndexed(muted.toList(), key = { _, e -> "m:" + e.key }) { idx, entry ->
+            AyxFadeInListItem(key = "$statusMountKey:m:${entry.key}", index = unread.size + read.size + idx, delayMs = statusStaggerMs(unread.size + read.size + idx)) {
+                StatusRow(entry.key, entry.value, seen = StatusData.groupSeen(entry.value), dpCache = dpCache, onOpen = onOpen)
+            }
+        }
         if (unread.isEmpty() && read.isEmpty() && muted.isEmpty()) item { Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { Text("No recent updates", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
     }
 }
