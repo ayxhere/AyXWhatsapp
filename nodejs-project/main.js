@@ -101,6 +101,60 @@ try {
   const cutoff = Date.now() - 24 * 3600 * 1000
   if (Array.isArray(loaded)) statuses = loaded.filter(x => x && x.ts && x.ts > cutoff)
 } catch (_) { statuses = [] }
+
+// FULL CHAT LIST (BUG FIX: chat list showed only chats that had a message
+// in the 500-entry msgLog / 200-item /messages page — chats with no recent
+// messages, or whose messages fell out of the cap, were silently missing,
+// so the app showed fewer chats than the original WhatsApp).
+// chatMap is the canonical chat list, keyed by FULL JID:
+//   { jid, name, chatName, lastTs, lastText, lastFromMe, lastMediaType,
+//     archived, muted, unreadCount }
+// Sources (union, never a single funnel):
+//  - Baileys chats.set / chats.upsert / chats.update (the real WhatsApp
+//    chat list, incl. chats with NO messages yet + archived/muted flags)
+//  - every stored message (remember() + history) updates last-*
+// Persisted to chats.json so the list survives restarts. Contacts are
+// NEVER turned into chat rows (address book != chat list).
+const CHATS_FILE = path.join(path.dirname(AUTH_DIR), 'chats.json')
+const chatMap = new Map()
+function loadChats() {
+  try {
+    const arr = JSON.parse(fs.readFileSync(CHATS_FILE, 'utf8'))
+    if (Array.isArray(arr)) for (const c of arr) if (c && c.jid) chatMap.set(c.jid, c)
+  } catch (_) {}
+}
+let _chatsTimer = null
+function saveChatsDebounced() {
+  if (_chatsTimer) return
+  _chatsTimer = setTimeout(() => { _chatsTimer = null; try { fs.writeFileSync(CHATS_FILE, JSON.stringify([...chatMap.values()].slice(0, 2000))) } catch (_) {} }, 1500)
+}
+function touchChat(jid, f) {
+  if (!jid || jid === 'status@broadcast') return
+  const prev = chatMap.get(jid) || { jid, name: '', chatName: '', lastTs: 0, lastText: '', lastFromMe: false, lastMediaType: '', archived: false, muted: false, unreadCount: 0 }
+  const next = { ...prev, ...f, jid }
+  // Never move last-* BACKWARDS: history/older replays must not clobber
+  // a newer last message already recorded for this chat.
+  if (f && f.lastTs != null && f.lastTs < (prev.lastTs || 0)) {
+    next.lastTs = prev.lastTs; next.lastText = prev.lastText; next.lastFromMe = prev.lastFromMe; next.lastMediaType = prev.lastMediaType
+  }
+  chatMap.set(jid, next)
+  saveChatsDebounced()
+}
+function chatsList() { return [...chatMap.values()].sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0)) }
+// Map one Baileys chat object -> chatMap row (defensive: fields vary by version).
+function applyBaileysChat(c) {
+  if (!c || !c.id) return
+  const jid = canon(typeof c.id === 'string' ? c.id : String(c.id))
+  if (!jid || jid === 'status@broadcast') return
+  const ts = c.conversationTimestamp ? Number(c.conversationTimestamp) * 1000 : (c.timestamp ? Number(c.timestamp) * 1000 : 0)
+  touchChat(jid, {
+    ...(c.name ? { name: c.name } : {}),
+    ...(ts ? { lastTs: ts } : {}),
+    ...(c.archived != null ? { archived: !!c.archived } : {}),
+    ...(c.mute != null || c.muted != null ? { muted: !!(c.mute ?? c.muted) } : {}),
+    ...(c.unreadCount != null ? { unreadCount: Number(c.unreadCount) || 0 } : {}),
+  })
+}
 let _statusTimer = null
 function saveStatusesDebounced() {
   if (_statusTimer) return
@@ -283,7 +337,7 @@ function saveMessagesDebounced() {
   if (saveMsgTimer) return
   saveMsgTimer = setTimeout(() => {
     saveMsgTimer = null
-    try { fs.writeFileSync(MESSAGES_FILE, JSON.stringify(msgLog.slice(0, 500))) }
+    try { fs.writeFileSync(MESSAGES_FILE, JSON.stringify(msgLog.slice(0, 3000))) }
     catch (e) { log('saveMsg err', e?.message) }
   }, 2000)
 }
@@ -294,6 +348,9 @@ function loadMessages() {
       const seenIds = new Set()
       msgLog = arr.filter(e => { if (!e) return false; if (!e.id) return true; if (seenIds.has(e.id)) return false; seenIds.add(e.id); return true })
       for (const e of msgLog) { if (e && e.chat && String(e.chat).endsWith('@lid') && lidToPn.has(baseJid(e.chat))) e.chat = lidToPn.get(baseJid(e.chat)); if (e && e.id) msgStore.set(e.id, e) }
+      // Rebuild chat last-* from the persisted log so the chat list is
+      // complete even before Baileys re-syncs chats on reconnect.
+      for (const e of msgLog) if (e && e.chat) touchChat(e.chat, { lastTs: e.ts || 0, lastText: e.text || '', lastFromMe: !!e.fromMe, lastMediaType: (e.media && e.media.type) || '', ...(e.chatName ? { chatName: e.chatName } : {}) })
       log('loaded', arr.length, 'messages from disk')
     }
   } catch (_) {}
@@ -1159,7 +1216,9 @@ function remember(id, entry) {
     entry.chatName = cachedGroupSubject(entry.chat)
   }
   if (id && msgStore.has(id) && msgLog.some(m => m && m.id === id)) {   // same message delivered twice → update, never double
-    const old = msgStore.get(id); Object.assign(old, entry, { id }); saveMessagesDebounced(); return
+    const old = msgStore.get(id); Object.assign(old, entry, { id }); saveMessagesDebounced()
+    touchChat(entry.chat, { lastTs: entry.ts || 0, lastText: entry.text || '', lastFromMe: !!entry.fromMe, lastMediaType: (entry.media && entry.media.type) || '', ...(entry.chatName ? { chatName: entry.chatName } : {}) })
+    return
   }
   if (id) {
     entry.id = id
@@ -1167,7 +1226,8 @@ function remember(id, entry) {
     if (msgStore.size > 1500) { const k = msgStore.keys().next().value; msgStore.delete(k) }
   }
   msgLog.unshift(entry)
-  if (msgLog.length > 500) msgLog = msgLog.slice(0, 500)
+  if (msgLog.length > 3000) msgLog = msgLog.slice(0, 3000)
+  touchChat(entry.chat, { lastTs: entry.ts || 0, lastText: entry.text || '', lastFromMe: !!entry.fromMe, lastMediaType: (entry.media && entry.media.type) || '', ...(entry.chatName ? { chatName: entry.chatName } : {}) })
   saveMessagesDebounced()
 }
 
@@ -1714,11 +1774,12 @@ async function handleHistory({ messages, contacts: cts }) {
       if (fromMe) entry.status = (typeof msg.status === 'number' ? msg.status : 0)
       if (msg.key.id) msgStore.set(msg.key.id, entry)
       msgLog.push(entry)
+      touchChat(from, { lastTs: ts, lastText: entry.text || '', lastFromMe: fromMe, lastMediaType: '' })
       n++
     } catch (_) {}
   }
   msgLog.sort((a, b) => b.ts - a.ts)
-  if (msgLog.length > 500) msgLog = msgLog.slice(0, 500)
+  if (msgLog.length > 3000) msgLog = msgLog.slice(0, 3000)
   log('history.set added', n)
 }
 
@@ -1776,6 +1837,15 @@ async function startSocket() {
   sock.ev.on('contacts.upsert', addContacts)
   sock.ev.on('contacts.update', addContacts)
   sock.ev.on('contacts.set', ({ contacts: cs }) => addContacts(cs))
+  // FULL CHAT LIST: Baileys syncs the real chat list (incl. chats with NO
+  // messages yet + archived/muted flags) via chats.set/upsert/update.
+  // Without these listeners the app only knew chats that had a message in
+  // msgLog, so it showed fewer chats than the original WhatsApp.
+  // Defensive: event names/payloads vary by Baileys version — never crash.
+  try { sock.ev.on('chats.set', ({ chats: cs }) => { for (const c of cs || []) applyBaileysChat(c) }) } catch (_) {}
+  try { sock.ev.on('chats.upsert', (cs) => { for (const c of cs || []) applyBaileysChat(c) }) } catch (_) {}
+  try { sock.ev.on('chats.update', (cs) => { for (const c of cs || []) { if (c && c.id) { const jid = canon(typeof c.id === 'string' ? c.id : String(c.id)); if (jid && jid !== 'status@broadcast') touchChat(jid, { ...(c.archived != null ? { archived: !!c.archived } : {}), ...(c.mute != null || c.muted != null ? { muted: !!(c.mute ?? c.muted) } : {}), ...(c.unreadCount != null ? { unreadCount: Number(c.unreadCount) || 0 } : {}) }) } } }) } catch (_) {}
+  try { sock.ev.on('chats.delete', (jids) => { for (const j of jids || []) { const jid = canon(typeof j === 'string' ? j : String(j)); if (jid) chatMap.delete(jid) } saveChatsDebounced() }) } catch (_) {}
   sock.ev.on('message-receipt.update', (updates) => {
     for (const u of updates || []) {
       try {
@@ -1957,6 +2027,10 @@ app.post('/chat/delete', (req, res) => {
   msgLog = msgLog.filter(m => m.chat !== jid)
   for (const [k, v] of msgStore) if (v.chat === jid) msgStore.delete(k)
   chatHistory.delete(jid)
+  // The chat itself must go too — otherwise /chats keeps returning it
+  // and the deleted chat reappears in the list with a stale preview.
+  chatMap.delete(jid)
+  saveChatsDebounced()
   saveMessagesDebounced()
   res.json({ ok: true })
 })
@@ -2336,10 +2410,11 @@ app.post('/cleardata', async (req, res) => {
   try {
     try { if (sock) await sock.logout() } catch (_) {}
     msgLog = []; msgStore.clear(); rawStore.clear(); statuses = []; deletedList = []
+    chatMap.clear()
     groupSubjects = {}
     for (const k of Object.keys(statusViewers)) delete statusViewers[k]
     wipeDirContents(MEDIA_DIR)
-    for (const F of [MESSAGES_FILE, STATUS_FILE, NAMES_FILE, SETTINGS_FILE, GROUP_SUBJECTS_FILE]) { try { fs.rmSync(F, { force: true }) } catch (_) {} }
+    for (const F of [MESSAGES_FILE, STATUS_FILE, NAMES_FILE, SETTINGS_FILE, GROUP_SUBJECTS_FILE, CHATS_FILE]) { try { fs.rmSync(F, { force: true }) } catch (_) {} }
     wipeDirContents(AUTH_DIR)
     status.registered = false
     res.json({ ok: true })
@@ -2697,7 +2772,24 @@ app.get('/statuses', (req, res) => {
   })
   res.json({ items })
 })
-app.get('/messages', (req, res) => res.json({ items: msgLog.slice(0, 200) }))
+app.get('/messages', (req, res) => {
+  // Per-chat pagination for the open chat (ChatDetail "load older"):
+  // ?chat=<jid>&before=<ts>&limit=<n> returns that chat's messages older
+  // than `before` (newest-first, max 500). Without ?chat, behaviour is
+  // unchanged (newest 200 across all chats — the 3s poll feed).
+  const chat = String(req.query.chat || '')
+  if (chat) {
+    const before = Number(req.query.before || 0) || Infinity
+    const limit = Math.min(Math.max(Number(req.query.limit || 200) || 200, 1), 500)
+    const items = msgLog.filter(m => m && m.chat === chat && (m.ts || 0) < before).slice(0, limit)
+    return res.json({ items })
+  }
+  res.json({ items: msgLog.slice(0, 200) })
+})
+// FULL CHAT LIST: every chat Baileys knows (1:1 + groups, incl. chats
+// with no messages yet + archived/muted), newest activity first.
+// The app merges this with message-derived chats — never drops a chat.
+app.get('/chats', (req, res) => res.json({ items: chatsList() }))
 app.get('/deleted', (req, res) => res.json({ items: deletedList }))
 
 app.get('/media/:name', async (req, res) => {
@@ -2725,7 +2817,9 @@ app.post('/logout', async (req, res) => {
     fs.rmSync(AUTH_DIR, { recursive: true, force: true })
     sock = null; currentQr = null; pairingCode = null; pairingNumber = null
     msgStore.clear(); rawStore.clear(); deletedList = []; msgLog = []; chatHistory.clear(); dpCache.clear(); presences.clear(); statuses = []
+    chatMap.clear()
     try { fs.rmSync(MESSAGES_FILE, { force: true }) } catch (_) {}
+    try { fs.rmSync(CHATS_FILE, { force: true }) } catch (_) {}
     status = { connection: 'close', registered: false, me: null, lastError: null }
     await loadAuth(); await startSocket()
     res.json({ ok: true })
@@ -2737,7 +2831,7 @@ app.use((err, req, res, next) => { log('http err', err?.message); res.status(500
 
 app.listen(PORT, '127.0.0.1', async () => {
   log('server on 127.0.0.1:' + PORT, 'auth=', AUTH_DIR)
-  loadSettings(); loadMessages(); loadAiMem(); await loadAuth()
+  loadSettings(); loadChats(); loadMessages(); loadAiMem(); await loadAuth()
   startSocket().catch(e => log('initial start err', e?.message))
 })
 

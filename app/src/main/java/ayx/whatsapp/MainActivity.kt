@@ -87,6 +87,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.FlowRow
@@ -726,6 +727,11 @@ fun GatewayApp() {
     var lastQrHash by remember { mutableStateOf(0) }
     var settings by remember { mutableStateOf(GatewayClient.Settings()) }
     var messages by remember { mutableStateOf(listOf<GatewayClient.Msg>()) }
+    // FULL CHAT LIST (BUG FIX): the chat list was built ONLY from messages,
+    // so chats with no recent messages never appeared. The gateway now
+    // returns every chat Baileys knows via /chats — merged with messages
+    // in ChatList, never a replacement for it.
+    var chats by remember { mutableStateOf(listOf<GatewayClient.ChatInfo>()) }
     var settingsLoaded by remember { mutableStateOf(false) }
 
     var screen by remember { mutableStateOf("chats") }
@@ -998,6 +1004,9 @@ fun GatewayApp() {
                     runCatching { val js = GatewayClient.exportSession(); if (js.isNotBlank() && js != "{}") SessionBackup.save(ctx, js) }
                 }
                 messages = GatewayClient.getMessages()
+                // Full chat list (incl. chats with no messages) — failure
+                // must never kill the poll; the last good list persists.
+                runCatching { chats = GatewayClient.getChats() }
                 optimistic.removeAll { opt -> messages.any { it.fromMe && it.chat == opt.chat && it.text == opt.text && it.ts >= opt.ts - 8000 } }
                 // Flush locally queued sends now that the socket is open.
                 if (status.connection == "open") {
@@ -1529,7 +1538,7 @@ fun GatewayApp() {
                 screen == "profile" -> Box(Modifier.padding(pad)) { ProfileScreen(myJid, dpCache,
                     onPickPhoto = { profilePicPicker.launch("image/*") },
                     onSaveName = { n -> scope.launch { runCatching { GatewayClient.setProfileName(n) }.onSuccess { notify("name updated") }.onFailure { notify("name: ${it.message}") } } }) }
-                else -> ChatsWithStatus(messages, statuses, dpCache, searchQuery, chatsPage, topInset = pad.calculateTopPadding(),
+                else -> ChatsWithStatus(messages, chats, statuses, dpCache, searchQuery, chatsPage, topInset = pad.calculateTopPadding(),
                     ayxSnippet = ayxSnippet,
                     onPageChange = { chatsPage = it },
                     onLoadStatuses = { scope.launch { val fresh = GatewayClient.getStatuses(); statuses = if (fresh.isNotEmpty()) StatusData.merge(fresh) else StatusData.load() } },
@@ -1789,13 +1798,58 @@ private fun HiddenReveal(label: String, revealed: Boolean, onClick: () -> Unit) 
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<String, ImageBitmap?>, query: String, contentPad: androidx.compose.foundation.layout.PaddingValues, ayxSnippet: String, onToggleReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit) {
-    val allKeys = messages.map { it.chat }.toSet()
+// One chat-list row: message-derived chats carry their messages (title +
+// preview come from them); gateway-only chats (no messages yet) carry
+// just their ChatInfo. Neither source may drop a chat the other knows.
+private data class ChatRow(val jid: String, val msgs: List<GatewayClient.Msg>, val info: GatewayClient.ChatInfo?) {
+    val lastTs: Long get() = maxOf(msgs.maxOfOrNull { it.ts } ?: 0L, info?.lastTs ?: 0L)
+    val lastMsg: GatewayClient.Msg? get() = msgs.maxByOrNull { it.ts }
+    val isGroup: Boolean get() = jid.endsWith("@g.us")
+}
+
+// Title for a row: with messages, the existing rules (group subject, never
+// sender name); without messages, the gateway's chat name / contact name.
+private fun chatTitleOfRow(row: ChatRow): String {
+    if (row.msgs.isNotEmpty()) return chatTitle(row.msgs)
+    val jid = row.jid
+    if (row.isGroup) {
+        GroupNameStore.nameFor(jid)?.let { if (it.isNotBlank()) return it }
+        if (!row.info?.chatName.isNullOrBlank()) return row.info!!.chatName
+        if (!row.info?.name.isNullOrBlank()) return row.info!!.name
+        return "Group"
+    }
+    ContactStore.nameFor(jid)?.let { if (it.isNotBlank()) return it }
+    if (!row.info?.name.isNullOrBlank()) return row.info!!.name
+    return when {
+        jid.endsWith("@lid") -> "Unknown contact"
+        else -> { val n = jid.substringBefore("@").filter { it.isDigit() }; if (n.isNotBlank()) "+$n" else "Unknown" }
+    }
+}
+
+@Composable
+private fun ChatList(messages: List<GatewayClient.Msg>, chats: List<GatewayClient.ChatInfo> = emptyList(), dpCache: MutableMap<String, ImageBitmap?>, query: String, contentPad: androidx.compose.foundation.layout.PaddingValues, ayxSnippet: String, onToggleReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit) {
+    // MERGED chat list (BUG FIX: rows used to come ONLY from messages, so
+    // chats with no recent messages never appeared — fewer chats than the
+    // original WhatsApp). Union of message-derived chats + gateway /chats.
+    val rows = remember(messages, chats) {
+        val byJid = LinkedHashMap<String, ChatRow>()
+        for ((jid, msgs) in messages.groupBy { it.chat }) {
+            if (jid == "status@broadcast") continue
+            byJid[jid] = ChatRow(jid, msgs, null)
+        }
+        for (info in chats) {
+            if (info.jid == "status@broadcast") continue
+            val cur = byJid[info.jid]
+            byJid[info.jid] = if (cur == null) ChatRow(info.jid, emptyList(), info) else cur.copy(info = info)
+        }
+        byJid.values.toList()
+    }
+    val allKeys = rows.map { it.jid }.toSet()
     val hiddenCount = allKeys.count { ChatFlags.hidden[it] == true }
-    val groups = messages.groupBy { it.chat }.entries
-        .filter { ChatFlags.reveal || ChatFlags.hidden[it.key] != true }
-        .filter { query.isBlank() || chatTitle(it.value).contains(query, true) || it.key.contains(query) }
-        .sortedByDescending { it.value.maxOf { m -> m.ts } }
+    val groups = rows
+        .filter { ChatFlags.reveal || ChatFlags.hidden[it.jid] != true }
+        .filter { query.isBlank() || chatTitleOfRow(it).contains(query, true) || it.jid.contains(query) }
+        .sortedByDescending { it.lastTs }
     // Home-screen entrance animation: a fresh mountKey per ChatList mount,
     // so the staggered cascade replays every time Home is entered (cold
     // start, back from Settings/chat) — but NEVER on poll refreshes or
@@ -1806,10 +1860,10 @@ private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<Stri
     // when the poll brings new messages (messages.size in the key), but
     // getGroupName throttles to 1 attempt / 60s per group.
     val homeScope = rememberCoroutineScope()
-    LaunchedEffect(groups.map { it.key }, messages.size) {
+    LaunchedEffect(groups.map { it.jid }, messages.size) {
         for (e in groups) {
-            val jid = e.key
-            if (jid.endsWith("@g.us") && e.value.none { !it.chatName.isNullOrBlank() } && GroupNameStore.nameFor(jid) == null) {
+            val jid = e.jid
+            if (jid.endsWith("@g.us") && e.msgs.none { !it.chatName.isNullOrBlank() } && GroupNameStore.nameFor(jid) == null) {
                 homeScope.launch { runCatching { GatewayClient.getGroupName(jid) } }
             }
         }
@@ -1827,10 +1881,8 @@ private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<Stri
                 }
             }
         } else {
-            itemsIndexed(groups, key = { _, e -> e.key }) { itemIndex, entry ->
-            val msgs = entry.value
-            val last = msgs.maxByOrNull { it.ts }!!
-            val name = chatTitle(msgs)
+            itemsIndexed(groups, key = { _, e -> e.jid }) { itemIndex, entry ->
+            val name = chatTitleOfRow(entry)
             val ui = LocalUiStyle.current
             val rowCard = if (ui.isDefault) Modifier
                 else Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
@@ -1841,20 +1893,24 @@ private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<Stri
             // refresh, scroll-back) get delay 0, so rows never pop in late
             // while scrolling. graphicsLayer-only: layout size never changes.
             val homeStaggerMs = if (ayx.whatsapp.ui.UiAnimationSettings.scrollAnimationEnabled.value && System.currentTimeMillis() - homeMountAt < 900) (itemIndex * 35).coerceAtMost(350) else 0
-            AyxFadeInListItem(key = "$homeMountKey:${entry.key}", index = itemIndex, delayMs = homeStaggerMs) {
-            Row(Modifier.fillMaxWidth().then(rowCard).combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = { onOpen(entry.key) }, onLongClick = { menuChat = entry.key }).padding(horizontal = 14.dp, vertical = 12.dp),
+            AyxFadeInListItem(key = "$homeMountKey:${entry.jid}", index = itemIndex, delayMs = homeStaggerMs) {
+            Row(Modifier.fillMaxWidth().then(rowCard).combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = { onOpen(entry.jid) }, onLongClick = { menuChat = entry.jid }).padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically) {
-                Avatar(entry.key, name, dpCache, 50.dp)
+                Avatar(entry.jid, name, dpCache, 50.dp)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                             Text(name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, false))
-                            if (ChatFlags.isMuted(entry.key)) { Spacer(Modifier.width(5.dp)); Icon(Icons.Filled.NotificationsOff, "muted", modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+                            if (ChatFlags.isMuted(entry.jid) || entry.info?.muted == true) { Spacer(Modifier.width(5.dp)); Icon(Icons.Filled.NotificationsOff, "muted", modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
                         }
-                        Text(fmt(last.ts), style = MaterialTheme.typography.labelSmall)
+                        // No-message chats have no time yet — show nothing,
+                        // never a 1970 epoch date.
+                        if (entry.lastTs > 0) Text(fmt(entry.lastTs), style = MaterialTheme.typography.labelSmall)
                     }
-                    val preview = chatPreview(last, entry.key.endsWith("@g.us"))
+                    // No-message chats have an honestly empty preview —
+                    // never a fake "[message]".
+                    val preview = entry.lastMsg?.let { chatPreview(it, entry.isGroup) } ?: ""
                     Text(preview, style = MaterialTheme.typography.bodySmall,
                         maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -1866,9 +1922,9 @@ private fun ChatList(messages: List<GatewayClient.Msg>, dpCache: MutableMap<Stri
     }
 
     menuChat?.let { jid ->
-        val cmsgs = messages.filter { it.chat == jid }
-        val cname = chatTitle(cmsgs)
-        val clast = cmsgs.maxByOrNull { it.ts }
+        val row = rows.find { it.jid == jid }
+        val cname = row?.let { chatTitleOfRow(it) } ?: jid.substringBefore("@")
+        val clast = row?.lastMsg
         val cprev = clast?.let { chatPreview(it, jid.endsWith("@g.us")) } ?: ""
         ChatActionSheet(
             name = cname, jid = jid, preview = cprev, dpCache = dpCache,
@@ -2043,6 +2099,30 @@ private fun ChatDetail(
     }
     editMsg?.let { em -> EditMessageDialog(em, onDismiss = { editMsg = null }, onSave = { txt -> onEditMsg(em, txt); editMsg = null }) }
     infoMsg?.let { im -> MessageInfoDialog(im) { infoMsg = null } }
+    // Per-chat paged history (BUG FIX: rows used to come ONLY from the
+    // global 200-message poll feed — scrolling up hit a hard end and
+    // "stopped" because older messages were never loaded. The open chat
+    // now pages its own history from the gateway, 200 at a time).
+    var pagedMsgs by remember(chat) { mutableStateOf<List<GatewayClient.Msg>>(emptyList()) }
+    var hasMoreHistory by remember(chat) { mutableStateOf(true) }
+    var loadingOlder by remember(chat) { mutableStateOf(false) }
+    // Initial page: newest 200 of THIS chat. If the gateway has nothing
+    // (offline / old build), the global poll feed still shows what it has.
+    LaunchedEffect(chat) {
+        val fresh = GatewayClient.getChatMessages(chat, limit = 200)
+        if (fresh.isNotEmpty()) { pagedMsgs = fresh; hasMoreHistory = fresh.size >= 200 }
+    }
+    // Merge paged history + live poll messages for this chat (new arrivals
+    // while the chat is open), deduped by Baileys id — never shown twice.
+    val serverMsgs = remember(pagedMsgs, messages) {
+        val byId = LinkedHashMap<String, GatewayClient.Msg>()
+        val noId = mutableListOf<GatewayClient.Msg>()
+        for (m in pagedMsgs + messages) {
+            val id = m.id
+            if (id != null) byId[id] = m else noId.add(m)
+        }
+        (byId.values + noId).sortedByDescending { it.ts }
+    }
     // newest first (reverseLayout shows newest at bottom, opens there, no jump)
     // 1:1 optimistic-vs-echo dedupe (DISPLAY guard): an optimistic bubble
     // is dropped when a server fromMe message with the same text and a
@@ -2050,17 +2130,40 @@ private fun ChatDetail(
     // ONE optimistic, so sending the same text twice keeps both bubbles.
     // Without this, a late echo (or a flushed queued send) showed the
     // same text twice, stacked/overlapping with the optimistic bubble.
-    val rows = remember(messages, optimistic) {
-        val echoes = messages.filter { it.fromMe }.toMutableList()
+    val rows = remember(serverMsgs, optimistic) {
+        val echoes = serverMsgs.filter { it.fromMe }.toMutableList()
         val liveOptimistic = optimistic.filterNot { opt ->
             val idx = echoes.indexOfFirst { e ->
                 e.text == opt.text && e.ts >= opt.ts - 8000 && e.ts <= opt.ts + 120_000
             }
             if (idx >= 0) { echoes.removeAt(idx); true } else false
         }
-        (messages + liveOptimistic.map { GatewayClient.Msg(chat, "", true, it.text, it.ts, quotedText = it.quotedText) }).sortedByDescending { it.ts }
+        (serverMsgs + liveOptimistic.map { GatewayClient.Msg(chat, "", true, it.text, it.ts, quotedText = it.quotedText) }).sortedByDescending { it.ts }
     }
-    val listState = rememberLazyListState()
+    // Keyed by chat: an unkeyed list state let one chat's scroll position
+    // leak into the next chat opened in the same composition.
+    val listState = remember(chat) { LazyListState() }
+    // Load older history when the user scrolls near the OLD end (highest
+    // index — reverseLayout puts the oldest messages there). Older pages
+    // are APPENDED at the end, so visible indices never shift and the
+    // scroll NEVER jumps or resets. Poll refreshes only merge by id.
+    // No auto-scroll-to-bottom anywhere: a new message arriving while the
+    // user is scrolled up reading history must not hijack their scroll.
+    LaunchedEffect(listState, chat) {
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
+            .collect { lastVisible ->
+                if (!hasMoreHistory || loadingOlder || rows.isEmpty()) return@collect
+                if (lastVisible >= rows.size - 5) {
+                    loadingOlder = true
+                    val before = rows.minOf { it.ts }   // oldest currently shown
+                    val older = GatewayClient.getChatMessages(chat, before = before, limit = 200)
+                    val fresh = older.filter { o -> o.id == null || pagedMsgs.none { it.id == o.id } }
+                    if (fresh.isNotEmpty()) pagedMsgs = (pagedMsgs + fresh).sortedByDescending { it.ts }
+                    if (older.size < 200) hasMoreHistory = false
+                    loadingOlder = false
+                }
+            }
+    }
     // clear the floating header: status bar + header card height, so the top message is never hidden
     val topClear = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 78.dp
 
@@ -3808,7 +3911,7 @@ private fun NewChatScreen(contacts: List<DeviceContact>, loading: Boolean, dpCac
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, statuses: List<GatewayClient.StatusItem>, dpCache: MutableMap<String, ImageBitmap?>, query: String, page: Int, topInset: androidx.compose.ui.unit.Dp, ayxSnippet: String, onPageChange: (Int) -> Unit, onLoadStatuses: () -> Unit, onOpenStatus: (GatewayClient.StatusItem) -> Unit, onToggleStatusReveal: () -> Unit, onToggleChatReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit) {
+private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, chats: List<GatewayClient.ChatInfo> = emptyList(), statuses: List<GatewayClient.StatusItem>, dpCache: MutableMap<String, ImageBitmap?>, query: String, page: Int, topInset: androidx.compose.ui.unit.Dp, ayxSnippet: String, onPageChange: (Int) -> Unit, onLoadStatuses: () -> Unit, onOpenStatus: (GatewayClient.StatusItem) -> Unit, onToggleStatusReveal: () -> Unit, onToggleChatReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit) {
     val pager = rememberPagerState(initialPage = page) { 2 }
     // content scrolls BEHIND the glass header (topInset) and the floating bottom nav (bottom)
     val contentPad = androidx.compose.foundation.layout.PaddingValues(top = topInset + 6.dp, bottom = 118.dp)
@@ -3830,7 +3933,7 @@ private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, statuses: List<Ga
             animationSpec = tween(250), label = "tabFade",
         )
         Box(Modifier.fillMaxSize().graphicsLayer { alpha = tabAlpha }) {
-            if (pg == 0) ChatList(messages, dpCache, query, contentPad, ayxSnippet, onToggleChatReveal, onDelete, onOpen)
+            if (pg == 0) ChatList(messages, chats, dpCache, query, contentPad, ayxSnippet, onToggleChatReveal, onDelete, onOpen)
             else StatusScreen(statuses, contentPad, onOpenStatus, dpCache, onToggleStatusReveal)
         }
     }

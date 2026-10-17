@@ -42,7 +42,15 @@ private object AyxSeenItems {
     private val keys = Collections.synchronizedSet(mutableSetOf<Any>())
     fun has(key: Any): Boolean = keys.contains(key)
     fun mark(key: Any) {
-        if (keys.size > 1000) keys.clear()
+        // Evict the OLDEST ~1000 keys, never clear-all: a clear-all made
+        // every row in a long chat re-animate at once (scroll jank) once
+        // the set grew past the cap. mutableSetOf is a LinkedHashSet, so
+        // iteration order is insertion order = oldest first.
+        if (keys.size > 5000) {
+            val it = keys.iterator()
+            var n = 0
+            while (it.hasNext() && n < 1000) { it.next(); it.remove(); n++ }
+        }
         keys.add(key)
     }
 }

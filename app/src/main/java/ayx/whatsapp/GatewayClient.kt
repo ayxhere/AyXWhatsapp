@@ -511,6 +511,48 @@ object GatewayClient {
     }
 
     /**
+     * FULL CHAT LIST (BUG FIX: the app built the chat list ONLY from
+     * messages — chats with no recent messages, or whose messages fell out
+     * of the gateway's log cap, never appeared, so AyX showed fewer chats
+     * than the original WhatsApp). The gateway now returns every chat
+     * Baileys knows (1:1 + groups, incl. no-message chats) via /chats.
+     */
+    data class ChatInfo(
+        val jid: String, val name: String, val chatName: String,
+        val lastTs: Long, val lastText: String, val lastFromMe: Boolean,
+        val lastMediaType: String, val archived: Boolean, val muted: Boolean,
+    )
+
+    suspend fun getChats(): List<ChatInfo> = withContext(Dispatchers.IO) {
+        try {
+            val arr = get("/chats").optJSONArray("items") ?: return@withContext emptyList()
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                ChatInfo(
+                    o.optString("jid"), o.optString("name"), o.optString("chatName"),
+                    o.optLong("ts", o.optLong("lastTs", 0L)), o.optString("lastText"),
+                    o.optBoolean("lastFromMe", false), o.optString("lastMediaType"),
+                    o.optBoolean("archived", false), o.optBoolean("muted", false),
+                )
+            }
+        } catch (e: Exception) { emptyList() }
+    }
+
+    /**
+     * Per-chat history page (ChatDetail "load older"): messages of [jid]
+     * older than [before] (0 = newest page), newest-first, max 500.
+     * The global /messages feed only carries the newest 200 across ALL
+     * chats, so a long chat's older history must be paged this way —
+     * otherwise scrolling up hits a hard end and "stops".
+     */
+    suspend fun getChatMessages(jid: String, before: Long = 0, limit: Int = 200): List<Msg> = withContext(Dispatchers.IO) {
+        try {
+            val enc = java.net.URLEncoder.encode(jid, "UTF-8")
+            parseMsgs(get("/messages?chat=$enc&before=$before&limit=$limit"))
+        } catch (e: Exception) { emptyList() }
+    }
+
+    /**
      * Fetch a group's subject (group name) from Baileys group metadata.
      * Result is cached in [GroupNameStore] (subjects never overwrite a user
      * alias). Throttled to at most 1 attempt / 60s per group so the chat
