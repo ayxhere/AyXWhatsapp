@@ -1113,7 +1113,7 @@ fun GatewayApp() {
                             } else adjusted0
                             val vOk = if (t == "image") {
                                 // AI-edited photo: render the video from the edited bytes, not the raw file.
-                                var imgUri = u
+                                var imgUri = u!! // u is non-null here: null-checked at `if (u == null)` above, and u is a val
                                 var editedTmp: File? = null
                                 if (editedBytes != null) {
                                     editedTmp = File(dir, "edited_$stamp.jpg").also { it.writeBytes(editedBytes) }

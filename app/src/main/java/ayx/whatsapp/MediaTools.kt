@@ -394,7 +394,7 @@ object MediaTools {
     }
 
     /**
-     * Trim a video (MP4) to [startMs..endMs] WITHOUT re-encoding: copies the
+     * Trim a video (MP4) to `startMs..endMs` WITHOUT re-encoding: copies the
      * samples in range via MediaExtractor → MediaMuxer, shifting timestamps
      * so the output starts at 0. When [keepAudio] is false the audio track is
      * dropped (the editor's Mute toggle) — the output is video-only.
