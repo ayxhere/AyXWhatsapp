@@ -1,10 +1,8 @@
 package ayx.whatsapp.ui
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -13,55 +11,71 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import kotlinx.coroutines.delay
+import androidx.compose.ui.graphics.graphicsLayer
+import java.util.Collections
 
 /**
  * Fresh scroll fade-in for list items.
  *
  * General technique: each item fades alpha 0 -> 1 and slides
  * translationY +16dp -> 0 over ~250ms with FastOutSlowIn easing.
- * The animation runs ONLY on first appearance for a given [key] —
- * recompositions and scroll-back do not re-animate, so lists never
- * flicker while scrolling.
+ * The animation runs ONLY on first appearance for a given [key].
  *
- * Usage inside a LazyColumn item:
- * ```
- * AyxFadeInItem(key = chat.jid, index = index) { ChatRow(chat) }
- * ```
- * When [UiAnimationSettings.scrollAnimationEnabled] is false, callers
- * should render content directly without this wrapper.
+ * BUG FIX (video: bubbles overlapping + lists flickering):
+ * the old version used AnimatedVisibility (slideInVertically + fadeIn).
+ * AnimatedVisibility animates LAYOUT SIZE: an item starts at 0 height and
+ * expands while neighbours shift — inside a reverseLayout LazyColumn with
+ * animateItem() that made bubbles overlap, jump and flicker, and every
+ * poll-driven list rebuild re-triggered it. It also lost its "seen" state
+ * when LazyColumn recycled an off-screen composition, so scroll-back
+ * re-animated rows (flicker while scrolling).
+ *
+ * New version animates ONLY graphicsLayer alpha/translationY — the item
+ * occupies its full layout size from frame 1, so neighbours NEVER move and
+ * bubbles can NEVER overlap because of the animation. "Seen" keys live in
+ * a process-wide set (not per-composition remember), so scroll-back,
+ * recomposition and poll refreshes never re-animate an existing row.
+ * No stagger delay: a delayed invisible-but-laid-out row reads as a
+ * row that appears/disappears while scrolling.
  */
+private object AyxSeenItems {
+    private val keys = Collections.synchronizedSet(mutableSetOf<Any>())
+    fun has(key: Any): Boolean = keys.contains(key)
+    fun mark(key: Any) {
+        if (keys.size > 1000) keys.clear()
+        keys.add(key)
+    }
+}
+
 @Composable
 fun AyxFadeInItem(
     key: Any,
     index: Int = 0,
     content: @Composable () -> Unit,
 ) {
-    // Per-key "already shown" flag survives recomposition but is scoped to
-    // this item's composition, so each list item animates once.
-    val seen = remember(key) { mutableStateOf(false) }
-    var visible by remember(key) { mutableStateOf(false) }
+    // First appearance only, process-wide: survives LazyColumn recycling,
+    // recomposition and poll refreshes. Seen items start fully visible
+    // (no animation); new items start invisible and animate to visible.
+    var targetVisible by remember(key) { mutableStateOf(AyxSeenItems.has(key)) }
     LaunchedEffect(key) {
-        if (!seen.value) {
-            // Small stagger (capped) so items cascade in as the list appears.
-            delay((index * 25).coerceAtMost(200).toLong())
-            seen.value = true
-            visible = true
-        } else {
-            visible = true
+        if (!AyxSeenItems.has(key)) {
+            AyxSeenItems.mark(key)
+            targetVisible = true
         }
     }
-    if (!seen.value && !visible) {
-        // Not yet shown: keep layout space but render nothing until the
-        // stagger delay elapses. AnimatedVisibility handles the entrance.
-    }
-    AnimatedVisibility(
-        visible = visible,
-        enter = slideInVertically(
-            animationSpec = tween(250, easing = FastOutSlowInEasing),
-            initialOffsetY = { 32 },
-        ) + fadeIn(animationSpec = tween(250)),
-    ) {
-        Box { content() }
+    val alpha by animateFloatAsState(
+        targetValue = if (targetVisible) 1f else 0f,
+        animationSpec = tween(250, easing = FastOutSlowInEasing),
+        label = "ayxFadeInAlpha",
+    )
+    val slideY by animateFloatAsState(
+        targetValue = if (targetVisible) 0f else 32f,
+        animationSpec = tween(250, easing = FastOutSlowInEasing),
+        label = "ayxFadeInSlide",
+    )
+    // graphicsLayer changes ONLY how the item is drawn, never its layout
+    // size — neighbours stay put, so no overlap / jump / flicker.
+    Box(Modifier.graphicsLayer { this.alpha = alpha; translationY = slideY }) {
+        content()
     }
 }

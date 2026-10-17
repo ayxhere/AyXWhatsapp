@@ -958,7 +958,17 @@ fun GatewayApp() {
                 // Flush locally queued sends now that the socket is open.
                 if (status.connection == "open") {
                     runCatching { GatewayClient.flushSendQueue(ctx) }
-                        .onSuccess { n -> if (n > 0) notify("$n queued message(s) sent") }
+                        .onSuccess { delivered ->
+                            if (delivered.isNotEmpty()) {
+                                // The server echo now represents these —
+                                // drop their optimistic bubbles so the
+                                // same text is NEVER shown twice.
+                                delivered.forEach { q ->
+                                    optimistic.removeAll { it.chat == q.jid && it.text == q.text && it.ts == q.ts }
+                                }
+                                notify("${delivered.size} queued message(s) sent")
+                            }
+                        }
                 }
             }
             delay(3000)
@@ -1297,7 +1307,9 @@ fun GatewayApp() {
         if (openChat != null && status.registered) {
             // ===== Edge-to-edge chat: wallpaper + messages full-bleed, floating glass header on top =====
             val ocChat = openChat!!
-            AyxAnimatedScreen(screenKey = "chat|$ocChat") {
+            // isChat = fade-only: a scale transition here lays old + new
+            // chat out together (overlapping bubbles, ghost input text).
+            AyxAnimatedScreen(screenKey = "chat|$ocChat", isChat = true) {
             ChatDetail(
                 chat = ocChat,
                 messages = messages.filter { it.chat == ocChat } + vvLocal.filter { it.chat == ocChat },
@@ -1348,11 +1360,15 @@ fun GatewayApp() {
                         // Node died, ensureStarted() revives it (the flag
                         // resets when Node exits, so this is not a no-op).
                         withContext(Dispatchers.IO) { NodeRuntime.ensureStarted(ctx.applicationContext) }
-                        when (val r = GatewayClient.sendTextReliable(ocChat, text)) {
+                        // ONE stable id for this send: shared by the retry
+                        // attempts AND the later queue flush, so the
+                        // gateway dedupes instead of delivering twice.
+                        val mid = GatewayClient.newClientMsgId()
+                        when (val r = GatewayClient.sendTextReliable(ocChat, text, clientMsgId = mid)) {
                             is GatewayClient.SendOutcome.Sent -> { /* poll loop swaps optimistic for the real message */ }
                             is GatewayClient.SendOutcome.Queued -> {
                                 optimistic.remove(opt)
-                                SendQueue.enqueue(ctx, ocChat, text, null)
+                                SendQueue.enqueue(ctx, ocChat, text, null, mid)
                                 // Keep the message visible but marked
                                 // queued — never fake it as sent.
                                 optimistic.add(OptMsg(ocChat, text, ts, queued = true))
@@ -1381,11 +1397,12 @@ fun GatewayApp() {
                     optimistic.add(opt)
                     scope.launch {
                         withContext(Dispatchers.IO) { NodeRuntime.ensureStarted(ctx.applicationContext) }
-                        when (val r = GatewayClient.sendTextReliable(ocChat, text, qid)) {
+                        val mid = GatewayClient.newClientMsgId()
+                        when (val r = GatewayClient.sendTextReliable(ocChat, text, qid, clientMsgId = mid)) {
                             is GatewayClient.SendOutcome.Sent -> { /* poll loop swaps optimistic for the real message */ }
                             is GatewayClient.SendOutcome.Queued -> {
                                 optimistic.remove(opt)
-                                SendQueue.enqueue(ctx, ocChat, text, qid)
+                                SendQueue.enqueue(ctx, ocChat, text, qid, mid)
                                 optimistic.add(OptMsg(ocChat, text, ts, qtext, queued = true))
                                 notify("Connecting… message queued — will send when reconnected")
                             }
@@ -1411,7 +1428,11 @@ fun GatewayApp() {
                 dpCache = dpCache,
                 wallpaper = chatWp,
                 queuedCount = optimistic.count { it.chat == ocChat && it.queued },
-                onRetryQueued = { scope.launch { val n = GatewayClient.flushSendQueue(ctx); notify(if (n > 0) "$n queued message(s) sent" else "Still connecting… will retry automatically") } },
+                onRetryQueued = { scope.launch {
+                    val delivered = GatewayClient.flushSendQueue(ctx)
+                    delivered.forEach { q -> optimistic.removeAll { it.chat == q.jid && it.text == q.text && it.ts == q.ts } }
+                    notify(if (delivered.isNotEmpty()) "${delivered.size} queued message(s) sent" else "Still connecting… will retry automatically")
+                } },
             )
             }
             val ocBlocked = ocChat in blockedJids
@@ -1430,7 +1451,12 @@ fun GatewayApp() {
             )
         } else {
         Box(Modifier.fillMaxSize().consumeWindowInsets(pad)) {
-            AyxAnimatedScreen(screenKey = "$screen|$settingsPage|$chatsPage") {
+            // chatsPage intentionally NOT in the key: the HorizontalPager
+            // already animates Chats<->Status swipes. Including it made
+            // every pager swipe ALSO run a full-screen scale+fade
+            // AnimatedContent transition on top — double animation =
+            // flicker/jump on the Chats + Status lists.
+            AyxAnimatedScreen(screenKey = "$screen|$settingsPage") {
             when {
                 // AyX Group system channel — independent of WhatsApp link state.
                 !status.registered -> Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode,
@@ -1881,7 +1907,10 @@ private fun ChatDetail(
 ) {
     val clipboard = LocalClipboardManager.current
     val ctx = LocalContext.current
-    var input by remember { mutableStateOf("") }
+    // Keyed by chat: each chat gets its own composer state. An unkeyed
+    // remember let one chat's typed text ghost into another chat during
+    // the screen-switch transition ("garbled leftover text").
+    var input by remember(chat) { mutableStateOf("") }
     var attachMenu by remember { mutableStateOf(false) }
     var replyTo by remember { mutableStateOf<GatewayClient.Msg?>(null) }
     var reactMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
@@ -1936,8 +1965,21 @@ private fun ChatDetail(
     editMsg?.let { em -> EditMessageDialog(em, onDismiss = { editMsg = null }, onSave = { txt -> onEditMsg(em, txt); editMsg = null }) }
     infoMsg?.let { im -> MessageInfoDialog(im) { infoMsg = null } }
     // newest first (reverseLayout shows newest at bottom, opens there, no jump)
+    // 1:1 optimistic-vs-echo dedupe (DISPLAY guard): an optimistic bubble
+    // is dropped when a server fromMe message with the same text and a
+    // timestamp in [opt-8s, opt+2min] exists — each echo covers exactly
+    // ONE optimistic, so sending the same text twice keeps both bubbles.
+    // Without this, a late echo (or a flushed queued send) showed the
+    // same text twice, stacked/overlapping with the optimistic bubble.
     val rows = remember(messages, optimistic) {
-        (messages + optimistic.map { GatewayClient.Msg(chat, "", true, it.text, it.ts, quotedText = it.quotedText) }).sortedByDescending { it.ts }
+        val echoes = messages.filter { it.fromMe }.toMutableList()
+        val liveOptimistic = optimistic.filterNot { opt ->
+            val idx = echoes.indexOfFirst { e ->
+                e.text == opt.text && e.ts >= opt.ts - 8000 && e.ts <= opt.ts + 120_000
+            }
+            if (idx >= 0) { echoes.removeAt(idx); true } else false
+        }
+        (messages + liveOptimistic.map { GatewayClient.Msg(chat, "", true, it.text, it.ts, quotedText = it.quotedText) }).sortedByDescending { it.ts }
     }
     val listState = rememberLazyListState()
     // clear the floating header: status bar + header card height, so the top message is never hidden
@@ -1964,9 +2006,17 @@ private fun ChatDetail(
             contentPadding = PaddingValues(top = topClear, bottom = 4.dp),
             verticalArrangement = Arrangement.spacedBy(3.dp)) {
             item { Spacer(Modifier.height(6.dp)) }
-            itemsIndexed(rows, key = { i, m -> "${m.ts}-$i" }) { itemIndex, m ->
-                AyxFadeInListItem(key = "${m.ts}-${m.id ?: m.text}", index = itemIndex) {
-                Box(Modifier.fillMaxWidth().animateItem()) {
+            // STABLE keys (never the list index): index-based keys made
+            // every poll insert shift all keys below it, so Compose
+            // recycled the WRONG bubble compositions — text landing in
+            // the wrong bubble / bubbles stacked on each other.
+            // Server messages key by Baileys id (unique, survives edits);
+            // optimistic ones (no id yet) by ts + text hash.
+            // NO animateItem(): placement animation on every 3s poll
+            // reorder made the whole list slide/jump constantly.
+            itemsIndexed(rows, key = { _, m -> m.id ?: "opt-${m.ts}-${m.text.hashCode()}" }) { itemIndex, m ->
+                AyxFadeInListItem(key = m.id ?: "opt-${m.ts}-${m.text.hashCode()}", index = itemIndex) {
+                Box(Modifier.fillMaxWidth()) {
                     MessageBubble(m, previewCache, dpCache, onMedia, onShare, onDownload,
                         onReply = { replyTo = it }, onAvatarClick = onAvatarClick,
                         selMode = selMode, selected = m.id != null && m.id in selIds,

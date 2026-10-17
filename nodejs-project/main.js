@@ -107,42 +107,33 @@ function saveStatusesDebounced() {
   _statusTimer = setTimeout(() => { _statusTimer = null; try { fs.writeFileSync(STATUS_FILE, JSON.stringify(statuses.slice(0, 120))) } catch (_) {} }, 1500)
 }
 
-// Outgoing outbox: messages that could not be sent because the socket was
-// down are queued here (in-memory + persisted to outbox.json) and flushed
-// when the connection opens. Baileys is a linked-device session — it does
-// NOT need the original WhatsApp app open. If the session is logged out,
-// messages are NOT queued (needRelogin is set instead) so nothing waits
-// forever for a dead session.
+// BUG FIX (double-send): the gateway used to queue unsent messages in its
+// own outbox.json AND the app queued the same message in its SendQueue —
+// on reconnect BOTH flushed, so the recipient got the message TWICE.
+// Single owner now: the app's SendQueue owns the queue. The gateway NEVER
+// queues from HTTP handlers; it returns {ok:false, queued:false} and the
+// app queues + flushes. Legacy outbox.json entries (from older builds)
+// are dropped at startup WITHOUT sending — the app's SendQueue already
+// holds those same messages, so sending them here would duplicate them.
 const OUTBOX_FILE = path.join(path.dirname(AUTH_DIR), 'outbox.json')
-let outbox = []
-try { const loaded = JSON.parse(fs.readFileSync(OUTBOX_FILE, 'utf8')); if (Array.isArray(loaded)) outbox = loaded.filter(x => x && x.jid && x.text) } catch (_) { outbox = [] }
-function saveOutbox() { try { fs.writeFileSync(OUTBOX_FILE, JSON.stringify(outbox.slice(0, 100))) } catch (_) {} }
-function enqueueOutbox(jid, text, quotedId) {
-  const item = { jid, text, quotedId: quotedId || null, ts: Date.now() }
-  if (outbox.some(o => o.jid === jid && o.text === text && Date.now() - o.ts < 10000)) return false
-  outbox.push(item); saveOutbox(); log('outbox queued for', jid)
-  return true
-}
+try { if (fs.existsSync(OUTBOX_FILE)) { fs.unlinkSync(OUTBOX_FILE); log('legacy outbox.json dropped (SendQueue owns queue now)') } } catch (_) {}
 function isLoggedOutError(e) { const m = String(e?.message || e || '').toLowerCase(); return m.includes('logged out') || m.includes('logged_out') || m.includes('401') || m.includes('session expired') }
-async function flushOutbox() {
-  if (!sock || status.connection !== 'open' || outbox.length === 0) return 0
-  let sent = 0
-  const remaining = []
-  for (const item of outbox) {
-    try {
-      const quoted = item.quotedId ? rawStore.get(item.quotedId) : null
-      if (quoted && quoted.message) await sock.sendMessage(item.jid, { text: item.text }, { quoted })
-      else await sock.sendMessage(item.jid, { text: item.text })
-      sent++
-    } catch (e) {
-      if (isLoggedOutError(e)) status.needRelogin = true
-      remaining.push(item)
-    }
-  }
-  outbox = remaining; saveOutbox()
-  if (sent) log('outbox flushed', sent)
-  return sent
+// Send dedupe: one clientMsgId per LOGICAL send, reused across the app's
+// retry attempts + flush attempts. If attempt 1 actually sent but its HTTP
+// reply was lost (timeout), attempt 2 returns ok:true WITHOUT re-sending.
+// CRITICAL: the id is marked ONLY after sock.sendMessage SUCCEEDS.
+// Marking before the send would turn a failed send into a fake
+// "duplicate" on retry — the message would be LOST, never delivered.
+// In-memory only: covers the retry/flush window (seconds); a gateway
+// restart loses it, which is acceptable — the app queue still dedupes.
+const recentSendIds = new Map() // clientMsgId -> ts
+function hasSeenSendId(clientMsgId) {
+  if (!clientMsgId) return false
+  const now = Date.now()
+  for (const [k, v] of recentSendIds) if (now - v > 10 * 60 * 1000) recentSendIds.delete(k)
+  return recentSendIds.has(clientMsgId)
 }
+function markSendId(clientMsgId) { if (clientMsgId) recentSendIds.set(clientMsgId, Date.now()) }
 
 
 function pushHistory(jid, role, content) {
@@ -1173,7 +1164,8 @@ function handleConnUpdate(u) {
     currentQr = null; pairingCode = null; pairingNumber = null
     log('CONNECTED as', status.me)
     _retry = 0
-    flushOutbox().catch(e => log('outbox flush err', e?.message))
+    // No gateway-side outbox flush: the app's SendQueue owns the queue
+    // (see note above) and flushes on its own poll loop.
     setTimeout(async () => { try { const ls = new Set(); for (const e of msgLog) if (e && String(e.chat).endsWith('@lid')) ls.add(e.chat); for (const st of statuses) if (st && !st.mine && String(st.sender).endsWith('@lid')) ls.add(baseJid(st.sender)); for (const l of ls) await resolveLid(l) } catch (_) {} }, 4000)
     applyPresence()
   }
@@ -1808,19 +1800,23 @@ app.post('/send', async (req, res) => {
     const text = String(req.body?.text || '')
     if (!to || !text) return res.status(400).json({ error: 'to and text required' })
     const jid = to + '@s.whatsapp.net'
+    // Retry dedupe: same clientMsgId = same logical send, never send twice.
+    if (hasSeenSendId(String(req.body?.clientMsgId || ''))) return res.json({ ok: true, duplicate: true })
     if (!sock || status.connection !== 'open') {
       if (status.needRelogin) return res.json({ ok: false, needRelogin: true, error: 'session expired — scan QR again' })
-      enqueueOutbox(jid, text, null)
-      return res.json({ ok: false, queued: true, error: 'not connected — queued, will send when reconnected' })
+      // NEVER queue here: the app's SendQueue owns the queue (see note
+      // above). Return queued:false so the app queues it exactly once.
+      return res.json({ ok: false, queued: false, error: 'not connected — app will queue' })
     }
     const r = await sock.sendMessage(jid, { text })
+    markSendId(String(req.body?.clientMsgId || ''))
     res.json({ ok: true, id: r?.key?.id || null })
   } catch (e) {
     log('send error', e?.message)
     if (isLoggedOutError(e)) { status.needRelogin = true; return res.json({ ok: false, needRelogin: true, error: 'session expired — scan QR again' }) }
-    const to = String(req.body?.to || '').replace(/\D/g, ''); const text = String(req.body?.text || '')
-    if (to && text) { enqueueOutbox(to + '@s.whatsapp.net', text, null); return res.json({ ok: false, queued: true, error: e?.message || 'send failed — queued' }) }
-    res.status(500).json({ error: e?.message || 'send failed' })
+    // Do NOT enqueue on failure either — the app retries with the SAME
+    // clientMsgId, and the dedupe above drops it if it already sent.
+    res.json({ ok: false, queued: false, error: e?.message || 'send failed' })
   }
 })
 
@@ -2199,22 +2195,21 @@ app.post('/sendreply', async (req, res) => {
     const text = String(req.body?.text || '')
     const quotedId = String(req.body?.quotedId || '')
     if (!jid || !text) return res.status(400).json({ error: 'jid,text required' })
+    if (hasSeenSendId(String(req.body?.clientMsgId || ''))) return res.json({ ok: true, duplicate: true })
     if (!sock || status.connection !== 'open') {
       if (status.needRelogin) return res.json({ ok: false, needRelogin: true, error: 'session expired — scan QR again' })
-      enqueueOutbox(jid, text, quotedId || null)
-      return res.json({ ok: false, queued: true, error: 'not connected — queued, will send when reconnected' })
+      return res.json({ ok: false, queued: false, error: 'not connected — app will queue' })
     }
     const quoted = rawStore.get(quotedId)
     try {
       if (quoted && quoted.message) await sock.sendMessage(jid, { text }, { quoted })
       else await sock.sendMessage(jid, { text })
     } catch (e) { await sock.sendMessage(jid, { text }) }
+    markSendId(String(req.body?.clientMsgId || ''))
     res.json({ ok: true })
   } catch (e) {
     if (isLoggedOutError(e)) { status.needRelogin = true; return res.json({ ok: false, needRelogin: true, error: 'session expired — scan QR again' }) }
-    const jid = String(req.body?.jid || ''); const text = String(req.body?.text || ''); const quotedId = String(req.body?.quotedId || '')
-    if (jid && text) { enqueueOutbox(jid, text, quotedId || null); return res.json({ ok: false, queued: true, error: e?.message || 'send failed — queued' }) }
-    res.status(500).json({ error: e?.message })
+    res.json({ ok: false, queued: false, error: e?.message || 'send failed' })
   }
 })
 
@@ -2289,19 +2284,18 @@ app.post('/sendraw', async (req, res) => {
     const jid = String(req.body?.jid || '')
     const text = String(req.body?.text || '')
     if (!jid || !text) return res.status(400).json({ error: 'jid and text required' })
+    if (hasSeenSendId(String(req.body?.clientMsgId || ''))) return res.json({ ok: true, duplicate: true })
     if (!sock || status.connection !== 'open') {
       if (status.needRelogin) return res.json({ ok: false, needRelogin: true, error: 'session expired — scan QR again' })
-      enqueueOutbox(jid, text, null)
-      return res.json({ ok: false, queued: true, error: 'not connected — queued, will send when reconnected' })
+      return res.json({ ok: false, queued: false, error: 'not connected — app will queue' })
     }
     const r = await sock.sendMessage(jid, { text })
+    markSendId(String(req.body?.clientMsgId || ''))
     res.json({ ok: true, id: r?.key?.id || null })
   } catch (e) {
     log('sendraw error', e?.message)
     if (isLoggedOutError(e)) { status.needRelogin = true; return res.json({ ok: false, needRelogin: true, error: 'session expired — scan QR again' }) }
-    const jid = String(req.body?.jid || ''); const text = String(req.body?.text || '')
-    if (jid && text) { enqueueOutbox(jid, text, null); return res.json({ ok: false, queued: true, error: e?.message || 'send failed — queued' }) }
-    res.status(500).json({ error: e?.message || 'send failed' })
+    res.json({ ok: false, queued: false, error: e?.message || 'send failed' })
   }
 })
 

@@ -114,10 +114,22 @@ object GatewayClient {
     }
 
     /** Raw send without reminder interception — used by the reminder fire worker. */
-    suspend fun sendToJidDirect(jid: String, text: String): Boolean = withContext(Dispatchers.IO) {
-        val o = post("/sendraw", JSONObject().put("jid", jid).put("text", text))
+    suspend fun sendToJidDirect(jid: String, text: String, clientMsgId: String = ""): Boolean = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("jid", jid).put("text", text)
+        if (clientMsgId.isNotBlank()) body.put("clientMsgId", clientMsgId)
+        val o = post("/sendraw", body)
         if (o.optBoolean("ok", false)) true else throw RuntimeException(o.optString("error", "send failed"))
     }
+
+    /** Serializes queue flushes: two concurrent flushes (3s poll loop +
+     * "Retry now" tap) must never send the same queued message twice. The
+     * gateway's clientMsgId dedupe is the second guard; this is the first. */
+    private val flushMutex = kotlinx.coroutines.sync.Mutex()
+
+    /** One stable id per logical send. Reused across the 3 retry attempts
+     * and every later flush, so the gateway can dedupe a retry whose
+     * first attempt actually sent (reply lost to a timeout). */
+    fun newClientMsgId(): String = java.util.UUID.randomUUID().toString()
 
     /**
      * Reliable text send.
@@ -141,16 +153,19 @@ object GatewayClient {
             m.contains("session expired") || m.contains("not registered")
     }
 
-    suspend fun sendTextReliable(jid: String, text: String, quotedId: String? = null): SendOutcome =
+    suspend fun sendTextReliable(jid: String, text: String, quotedId: String? = null, clientMsgId: String = newClientMsgId()): SendOutcome =
         withContext(Dispatchers.IO) {
             // 3 attempts: 1s, 2s backoff. Covers Node still starting up and
             // short reconnect windows without making the user wait long.
+            // All 3 attempts carry the SAME clientMsgId: if attempt 1
+            // actually sent but its HTTP reply was lost, the gateway
+            // dedupes attempt 2 instead of delivering twice.
             repeat(3) { attempt ->
                 try {
                     val o = if (quotedId != null) {
-                        post("/sendreply", JSONObject().put("jid", jid).put("text", text).put("quotedId", quotedId))
+                        post("/sendreply", JSONObject().put("jid", jid).put("text", text).put("quotedId", quotedId).put("clientMsgId", clientMsgId))
                     } else {
-                        post("/sendraw", JSONObject().put("jid", jid).put("text", text))
+                        post("/sendraw", JSONObject().put("jid", jid).put("text", text).put("clientMsgId", clientMsgId))
                     }
                     if (o.optBoolean("ok", false)) return@withContext SendOutcome.Sent
                     if (o.optBoolean("needRelogin", false) || isLoggedOutError(o.optString("error", ""))) {
@@ -173,29 +188,40 @@ object GatewayClient {
 
     /**
      * One flush attempt for every locally queued message. Called when the
-     * connection opens again. Returns how many were delivered. Failures
-     * stay queued for the next flush — never silently dropped.
+     * connection opens again. Returns the queued messages that were
+     * delivered, so the caller can drop their optimistic bubbles (the
+     * server echo now represents them) instead of showing both.
+     * Failures stay queued for the next flush — never silently dropped.
+     * Serialized by [flushMutex] so overlapping flushes cannot double-send.
      */
-    suspend fun flushSendQueue(ctx: android.content.Context): Int = withContext(Dispatchers.IO) {
-        var sent = 0
-        for (q in SendQueue.all(ctx)) {
-            try {
-                val ok = if (q.quotedId != null) {
-                    post("/sendreply", JSONObject().put("jid", q.jid).put("text", q.text).put("quotedId", q.quotedId))
-                        .optBoolean("ok", false)
-                } else {
-                    sendToJidDirect(q.jid, q.text)
+    suspend fun flushSendQueue(ctx: android.content.Context): List<QueuedMessage> = withContext(Dispatchers.IO) {
+        flushMutex.lock()
+        try {
+            val delivered = mutableListOf<QueuedMessage>()
+            for (q in SendQueue.all(ctx)) {
+                try {
+                    // Same stable id on every flush attempt: a flush that
+                    // overlaps an in-flight retry dedupes at the gateway.
+                    val mid = q.clientMsgId.ifBlank { "legacy-${q.jid}-${q.ts}" }
+                    val ok = if (q.quotedId != null) {
+                        post("/sendreply", JSONObject().put("jid", q.jid).put("text", q.text).put("quotedId", q.quotedId).put("clientMsgId", mid))
+                            .optBoolean("ok", false)
+                    } else {
+                        sendToJidDirect(q.jid, q.text, mid)
+                    }
+                    if (ok) {
+                        SendQueue.remove(ctx, q)
+                        delivered.add(q)
+                    }
+                } catch (_: Exception) {
+                    // Keep queued; a later flush will retry. Never drop
+                    // a user message silently.
                 }
-                if (ok) {
-                    SendQueue.remove(ctx, q)
-                    sent++
-                }
-            } catch (_: Exception) {
-                // Keep queued; a later flush (or Node-side flush on open)
-                // will retry. Never drop a user message silently.
             }
+            delivered
+        } finally {
+            flushMutex.unlock()
         }
-        sent
     }
 
     fun mediaUrl(name: String) = "$base/media/$name"

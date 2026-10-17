@@ -29,6 +29,14 @@ data class QueuedMessage(
     val text: String,
     val quotedId: String?,
     val ts: Long,
+    /**
+     * Stable id for ONE logical send, reused across every retry / flush
+     * attempt. The gateway dedupes on it, so a retry after a lost HTTP
+     * response (message actually sent, reply lost) can NEVER deliver the
+     * message twice. Empty for queue entries saved by older builds —
+     * flush falls back to a deterministic "legacy-<jid>-<ts>" id.
+     */
+    val clientMsgId: String = "",
 )
 
 object SendQueue {
@@ -53,6 +61,7 @@ object SendQueue {
                     text = o.optString("text"),
                     quotedId = o.optString("quotedId").ifEmpty { null },
                     ts = o.optLong("ts"),
+                    clientMsgId = o.optString("mid"),
                 )
             }.filter { it.jid.isNotBlank() && it.text.isNotBlank() }
         } catch (_: Exception) {
@@ -61,12 +70,14 @@ object SendQueue {
     }
 
     @Synchronized
-    fun enqueue(ctx: Context, jid: String, text: String, quotedId: String?): Boolean {
+    fun enqueue(ctx: Context, jid: String, text: String, quotedId: String?, clientMsgId: String = ""): Boolean {
         val current = all(ctx).toMutableList()
-        // Dedupe: same chat + same text within 10s is the same tap, not two sends.
+        // Dedupe: same stable send id, or same chat + same text within 10s,
+        // is the same tap — never two queue entries for one send.
         val now = System.currentTimeMillis()
+        if (clientMsgId.isNotBlank() && current.any { it.clientMsgId == clientMsgId }) return false
         if (current.any { it.jid == jid && it.text == text && now - it.ts < 10_000 }) return false
-        current.add(QueuedMessage(jid, text, quotedId, now))
+        current.add(QueuedMessage(jid, text, quotedId, now, clientMsgId))
         save(ctx, current)
         return true
     }
@@ -90,7 +101,8 @@ object SendQueue {
                     .put("jid", q.jid)
                     .put("text", q.text)
                     .put("quotedId", q.quotedId ?: "")
-                    .put("ts", q.ts),
+                    .put("ts", q.ts)
+                    .put("mid", q.clientMsgId),
             )
         }
         prefs(ctx).edit().putString(KEY, arr.toString()).apply()

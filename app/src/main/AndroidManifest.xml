@@ -11,6 +11,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Restart the gateway after reboot (BootReceiver) and after a swipe
+         from recents (exact-alarm restart). Both are best-effort: Force-Stop
+         and OEM battery savers can still block them. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <application
         android:allowBackup="false"
@@ -64,6 +69,18 @@
                 android:resource="@xml/file_paths" />
         </provider>
         <receiver android:name=".ReplyReceiver" android:exported="false" />
+        <!-- Gateway restart: reboot / app update / swipe-away alarm.
+             exported=true is REQUIRED for the system BOOT_COMPLETED
+             broadcast to reach it. It only starts the service when
+             "Run in background" is ON. -->
+        <receiver android:name=".NodeRestartReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="ayx.whatsapp.ACTION_RESTART_NODE" />
+            </intent-filter>
+        </receiver>
 
         <!-- Disable emoji2's auto-init so our picked emoji font controls EmojiCompat (see EmojiStore). -->
         <provider

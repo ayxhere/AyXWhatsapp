@@ -64,15 +64,23 @@ fun ayxDialogAlpha(baseAlpha: Float = 1f): Float =
  *
  * @param screenKey changes whenever the visible screen changes
  * (e.g. "chats|<openChat>|<settingsPage>") so every navigation animates.
+ * @param isChat true for full-screen chat content: chat switches ALWAYS
+ * use fade-only (no scale, no motion blur). AnimatedContent lays old +
+ * new content out together during a scale transition, so a Zoom switch
+ * between two chats showed both composers/bubbles overlapped and the
+ * input field's old text ghosting over the new chat ("garbled leftover
+ * text"). Fade-only keeps exactly one chat visible at a time.
  */
 @Composable
 fun AyxAnimatedScreen(
     screenKey: Any,
+    isChat: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val style = UiAnimationSettings.animationStyle.value
-    val motionBlur = UiAnimationSettings.motionBlurEnabled.value
+    val motionBlur = UiAnimationSettings.motionBlurEnabled.value && !isChat
     // Transient motion-blur: max radius at switch, decays to 0 over ~300ms.
+    // Skipped for chat screens (see isChat) and for non-Zoom styles.
     var blurActive by remember(screenKey) { mutableStateOf(motionBlur && style == AnimationStyle.ZOOM) }
     LaunchedEffect(screenKey) {
         if (motionBlur && style == AnimationStyle.ZOOM) {
@@ -85,7 +93,7 @@ fun AyxAnimatedScreen(
     }
     AnimatedContent(
         targetState = screenKey,
-        transitionSpec = { ayxTransitionFor(style) },
+        transitionSpec = { ayxTransitionFor(if (isChat) AnimationStyle.FADE else style) },
         label = "ayxScreen",
     ) {
         Box(

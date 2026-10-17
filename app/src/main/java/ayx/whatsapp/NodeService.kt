@@ -38,20 +38,27 @@ class NodeService : Service() {
     /**
      * App swiped away from recents. START_STICKY alone is NOT enough on
      * OEM skins (Xiaomi/Oppo/Vivo battery savers) — they can kill the
-     * service without redelivery. Re-start explicitly so the Baileys
-     * gateway keeps running after a swipe, as long as the user left
-     * "Run in background" ON. Force-Stop still blocks restart until the
-     * app is reopened (Android rule, cannot be bypassed).
+     * service without redelivery. Two restart paths, in order:
+     * 1. Direct re-start (works when the process survives the swipe).
+     * 2. AlarmManager restart via NodeRestartReceiver (works when the
+     *    process is killed: the alarm fires in a fresh process and a
+     *    receiver IS allowed to start a foreground service, unlike a
+     *    direct startForegroundService() from the dying process which
+     *    Android 12+ blocks). Force-Stop still blocks ALL restarts until
+     *    the app is reopened (Android rule, cannot be bypassed).
      */
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
+        Log.i(TAG, "onTaskRemoved (swipe) — scheduling restart")
         restartIfAllowed("onTaskRemoved")
+        if (allowRestart && runBackgroundOn()) NodeRestartReceiver.scheduleRestart(applicationContext)
     }
 
     override fun onDestroy() {
         scope.cancel()
         // If the system killed us (not a user stop()), come back.
         restartIfAllowed("onDestroy")
+        if (allowRestart && runBackgroundOn()) NodeRestartReceiver.scheduleRestart(applicationContext)
         super.onDestroy()
     }
 
@@ -86,7 +93,14 @@ class NodeService : Service() {
         }
     }
 
+    // Guard: onStartCommand can run twice on one service instance
+    // (START_STICKY redelivery) — without this, two polling loops run,
+    // doubling gateway traffic and notification work.
+    @Volatile private var pollingStarted = false
+
     private fun startNotifPolling() {
+        if (pollingStarted) return
+        pollingStarted = true
         scope.launch {
             val prefs = getSharedPreferences("wagw", Context.MODE_PRIVATE)
             var lastTs = prefs.getLong("notif_ts", System.currentTimeMillis())
