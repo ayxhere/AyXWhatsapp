@@ -2105,6 +2105,32 @@ app.post('/sendmedia', async (req, res) => {
   } catch (e) { log('sendmedia error', e?.message); res.status(500).json({ error: e?.message || 'send failed' }) }
 })
 
+// REAL sticker send (sticker protocol, NOT image): the app sends animated
+// WebP bytes (muxed in AnimatedWebP.kt) and Baileys delivers them as a
+// sticker — transparent, animated, long-press shows sticker actions.
+// Never queued (SendQueue is text-only): on failure the app shows the
+// error and drops the optimistic row. clientMsgId dedupe mirrors
+// /sendraw so a retry whose first attempt actually sent never doubles.
+// 1MB cap on the decoded buffer (animated stickers are ~50-300KB).
+app.post('/sendsticker', async (req, res) => {
+  try {
+    if (!sock || status.connection !== 'open') return res.status(409).json({ error: 'not connected' })
+    const clientMsgId = String(req.body?.clientMsgId || '')
+    if (hasSeenSendId(clientMsgId)) return res.json({ ok: true, duplicate: true })
+    const jid = String(req.body?.jid || '')
+    const b64 = String(req.body?.data || '')
+    if (!jid || !b64) return res.status(400).json({ error: 'jid and data required' })
+    const buf = Buffer.from(b64, 'base64')
+    if (buf.length === 0 || buf.length > 1024 * 1024) return res.status(400).json({ error: 'sticker too large (max 1MB)' })
+    const r = await sock.sendMessage(jid, { sticker: buf })
+    // Mark ONLY after a successful send (same as /send): if the send
+    // throws, the id stays unmarked so the app's retry really re-sends
+    // instead of being dropped as a false "duplicate".
+    markSendId(clientMsgId)
+    res.json({ ok: true, id: r?.key?.id || null })
+  } catch (e) { log('sendsticker error', e?.message); res.status(500).json({ error: e?.message || 'sticker send failed' }) }
+})
+
 // .vv command: the app sends ONLY the text; the gateway makes the speech (Sarvam → OGG/Opus) and sends
 // it as a real voice note (ptt). The typed ".vv ..." text is never sent. Audio stays in memory — no temp file.
 app.post('/sendvoice', async (req, res) => {

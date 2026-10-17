@@ -723,6 +723,7 @@ fun CustomStickerImage(uri: String, modifier: Modifier = Modifier) {
 
 object StickerSentStore {
     private const val PREFS = "ayx_stickers_sent"
+    private const val ID_PREFS = "ayx_stickers_sent_ids"
     private const val WINDOW_BEFORE_MS = 8_000L
     private const val WINDOW_AFTER_MS = 120_000L
     private const val PRUNE_AFTER_MS = 600_000L
@@ -738,6 +739,38 @@ object StickerSentStore {
             if (ts < cutoff) editor.remove(k)
         }
         editor.apply()
+    }
+
+    /**
+     * EXACT echo match (preferred): the gateway returns the Baileys message
+     * id for a sent sticker (POST /sendsticker -> { ok, id }). The echo
+     * carries the SAME id, so this matches exactly — no time window, no
+     * chance of matching the wrong sticker when two are sent close
+     * together. Stored as "pack:expr:recordedTs" so old entries prune.
+     */
+    fun recordById(ctx: Context, baileysId: String, packId: String, expressionName: String) {
+        if (baileysId.isBlank()) return
+        val prefs = ctx.getSharedPreferences(ID_PREFS, Context.MODE_PRIVATE)
+        val editor = prefs.edit()
+        editor.putString(baileysId, "$packId:$expressionName:${System.currentTimeMillis()}")
+        val cutoff = System.currentTimeMillis() - PRUNE_AFTER_MS
+        for ((k, v) in prefs.all) {
+            val recordedTs = (v as? String)?.split(":")?.getOrNull(2)?.toLongOrNull() ?: continue
+            if (recordedTs < cutoff) editor.remove(k)
+        }
+        editor.apply()
+    }
+
+    /** Exact lookup by Baileys id. Null when this message is not our sticker. */
+    fun lookupById(ctx: Context, baileysId: String?): Pair<StickerPackDef, StickerExpression>? {
+        if (baileysId.isNullOrBlank()) return null
+        val raw = ctx.getSharedPreferences(ID_PREFS, Context.MODE_PRIVATE)
+            .getString(baileysId, null) ?: return null
+        val parts = raw.split(":")
+        if (parts.size < 2) return null
+        val pack = StickerCatalog.pack(parts[0]) ?: return null
+        val expr = runCatching { StickerExpression.valueOf(parts[1]) }.getOrNull() ?: return null
+        return pack to expr
     }
 
     /** Find the sticker sent nearest to [ts] inside the echo window. */
@@ -762,8 +795,18 @@ object StickerSentStore {
     }
 }
 
-/** Top-level helper used by ChatDetail: which animated sticker (if any)
- *  does a chat message at timestamp [ts] correspond to? */
+/**
+ * Top-level helper used by ChatDetail: which animated sticker (if any)
+ * does this chat message correspond to?
+ * Order: EXACT Baileys-id match first (recorded from /sendsticker's
+ * returned id — robust even when two stickers are sent seconds apart),
+ * then the legacy timestamp-window lookup as a fallback (covers stickers
+ * sent before this update, or echoes whose id the gateway didn't return).
+ */
+fun stickerRefForMsg(ctx: Context, m: GatewayClient.Msg): Pair<StickerPackDef, StickerExpression>? =
+    StickerSentStore.lookupById(ctx, m.id) ?: StickerSentStore.lookup(ctx, m.ts)
+
+/** Legacy timestamp lookup, kept for optimistic rows (no Baileys id yet). */
 fun stickerRefFor(ctx: Context, ts: Long): Pair<StickerPackDef, StickerExpression>? =
     StickerSentStore.lookup(ctx, ts)
 
@@ -796,7 +839,8 @@ data class StickerHost(
     val onSendCustomSticker: (CustomSticker) -> Unit,
     val onAddCustomSticker: () -> Unit,
     val onRemoveCustomSticker: (String) -> Unit,
-    val stickerRefFor: (Long) -> Pair<StickerPackDef, StickerExpression>?,
+    /** Which animated sticker (if any) a chat message is — id match first, ts-window fallback. */
+    val stickerRefFor: (GatewayClient.Msg) -> Pair<StickerPackDef, StickerExpression>?,
 )
 
 

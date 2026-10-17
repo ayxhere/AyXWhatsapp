@@ -1507,24 +1507,31 @@ fun GatewayApp() {
                     delivered.forEach { q -> optimistic.removeAll { it.chat == q.jid && it.text == q.text && it.ts == q.ts } }
                     notify(if (delivered.isNotEmpty()) "${delivered.size} queued message(s) sent" else "Still connecting… will retry automatically")
                 } },
-                // Premium stickers (Stickers.kt): picker + send-as-image + custom pack.
+                // Premium stickers (Stickers.kt + AnimatedWebP.kt): REAL sticker
+                // protocol — animated WebP via /sendsticker, never image.
                 stickerHost = StickerHost(
                     customStickers = customStickers,
                     onSendSticker = { pack, expr ->
                         val mjid = openChat ?: return@StickerHost
                         val ts = System.currentTimeMillis()
-                        StickerSentStore.record(ctx, ts, pack.id, expr.name)
                         val opt = OptMsg(ocChat, "", ts)
                         optimistic.add(opt)
                         scope.launch {
                             try {
-                                val png = withContext(Dispatchers.IO) { renderStickerPng(pack, expr) }
-                                if (png == null) {
+                                // Animated WebP (falls back to static WebP inside
+                                // renderAnimatedStickerWebP — still sticker protocol).
+                                val webp = withContext(Dispatchers.IO) { renderAnimatedStickerWebP(pack, expr) }
+                                if (webp == null) {
                                     optimistic.remove(opt)
                                     notify("Sticker render failed")
                                     return@launch
                                 }
-                                GatewayClient.sendMedia(mjid, Base64.encodeToString(png, Base64.NO_WRAP), "image", "ayx-sticker-${pack.id}-${expr.name}.png", "")
+                                val sentId = GatewayClient.sendSticker(mjid, Base64.encodeToString(webp, Base64.NO_WRAP))
+                                // Exact echo match via Baileys id (robust even
+                                // when two stickers are sent seconds apart);
+                                // ts record stays as a fallback.
+                                if (sentId != null) StickerSentStore.recordById(ctx, sentId, pack.id, expr.name)
+                                StickerSentStore.record(ctx, ts, pack.id, expr.name)
                                 // poll loop swaps the optimistic row for the
                                 // server echo (still animated via stickerRefFor)
                             } catch (e: Exception) {
@@ -1538,11 +1545,11 @@ fun GatewayApp() {
                         scope.launch {
                             try {
                                 notify("sending…")
-                                val bytes = withContext(Dispatchers.IO) {
-                                    ctx.contentResolver.openInputStream(Uri.parse(cs.uri))?.use { it.readBytes() }
-                                }
-                                if (bytes == null) { notify("can't read sticker"); return@launch }
-                                GatewayClient.sendMedia(mjid, Base64.encodeToString(bytes, Base64.NO_WRAP), "image", "ayx-custom-sticker.png", "")
+                                // Gallery image -> static WebP sticker (Fit,
+                                // never cropped) -> REAL sticker protocol.
+                                val webp = withContext(Dispatchers.IO) { uriToStickerWebP(ctx, cs.uri) }
+                                if (webp == null) { notify("can't read sticker"); return@launch }
+                                GatewayClient.sendSticker(mjid, Base64.encodeToString(webp, Base64.NO_WRAP))
                                 notify("sent")
                             } catch (e: Exception) { notify("send failed: ${e.message}") }
                         }
@@ -1553,7 +1560,7 @@ fun GatewayApp() {
                         customStickers = CustomStickerStore.list(ctx)
                         notify("Sticker removed")
                     },
-                    stickerRefFor = { ts -> stickerRefFor(ctx, ts) },
+                    stickerRefFor = { m -> stickerRefForMsg(ctx, m) },
                 ),
             )
             }
@@ -2269,7 +2276,7 @@ private fun ChatDetail(
                         onToggleSelect = { mm -> mm.id?.let { if (it in selIds) selIds.remove(it) else selIds.add(it) } },
                         onTranslate = { onTranslateMsg(it) },
                         onLongClick = { reactMsg = it },
-                        stickerRefFor = { ts -> stickerHost?.stickerRefFor?.invoke(ts) })
+                        stickerRefFor = { m -> stickerHost?.stickerRefFor?.invoke(m) })
                 }
                 }
             }
@@ -2767,7 +2774,7 @@ private fun styleSpec(fromMe: Boolean, dark: Boolean, recvGrey: Color, recvText:
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String, ImageBitmap?>, dpCache: MutableMap<String, ImageBitmap?>, onMedia: (GatewayClient.Msg) -> Unit, onShare: (GatewayClient.Msg) -> Unit, onDownload: (GatewayClient.Msg) -> Unit, onReply: (GatewayClient.Msg) -> Unit, onAvatarClick: (String) -> Unit, selMode: Boolean = false, selected: Boolean = false, onToggleSelect: (GatewayClient.Msg) -> Unit = {}, onTranslate: (GatewayClient.Msg) -> Unit = {}, onLongClick: (GatewayClient.Msg) -> Unit, stickerRefFor: (Long) -> Pair<StickerPackDef, StickerExpression>? = { null }) {
+private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String, ImageBitmap?>, dpCache: MutableMap<String, ImageBitmap?>, onMedia: (GatewayClient.Msg) -> Unit, onShare: (GatewayClient.Msg) -> Unit, onDownload: (GatewayClient.Msg) -> Unit, onReply: (GatewayClient.Msg) -> Unit, onAvatarClick: (String) -> Unit, selMode: Boolean = false, selected: Boolean = false, onToggleSelect: (GatewayClient.Msg) -> Unit = {}, onTranslate: (GatewayClient.Msg) -> Unit = {}, onLongClick: (GatewayClient.Msg) -> Unit, stickerRefFor: (GatewayClient.Msg) -> Pair<StickerPackDef, StickerExpression>? = { null }) {
     val ctx = LocalContext.current
     val dark = isSystemInDarkTheme()
     val spec = bubbleSpec(m.fromMe, dark)
@@ -2780,13 +2787,17 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
     val name = m.mediaName
     LaunchedEffect(name) { if (name != null && !previewCache.containsKey(name)) previewCache[name] = loadPreview(ctx, m) }
     val preview = (name?.let { previewCache[it] }) ?: remember(m.thumb) { decodeThumb(m.thumb) }
-    // Premium stickers (Stickers.kt): OUR OWN sent stickers are plain image
-    // messages on the wire — the local sent-record maps the timestamp window
-    // back to the pack + expression so they render ANIMATED in chat.
-    // Optimistic sticker rows have mediaType == null; echoes have "image".
+    // Premium stickers (Stickers.kt + AnimatedWebP.kt): OUR OWN sent
+    // stickers are real sticker-protocol messages on the wire — the local
+    // sent-record maps the echo (exact Baileys id first, ts-window
+    // fallback) back to the pack + expression so they render ANIMATED.
+    // Optimistic rows have mediaType == null; echoes have "sticker".
+    // NOTE: the old check excluded mediaType "sticker" here, so own
+    // sent stickers fell through to the static first-frame branch and
+    // looked static — that is why they never animated.
     val isStickerMsg = m.mediaType == "sticker"
-    val ayxStickerRef = remember(m.ts, m.fromMe, m.mediaType, m.text) {
-        if (m.fromMe && m.text.isBlank() && (m.mediaType == "image" || m.mediaType == null)) stickerRefFor(m.ts) else null
+    val ayxStickerRef = remember(m.id, m.ts, m.fromMe, m.mediaType, m.text) {
+        if (m.fromMe && m.text.isBlank() && (m.mediaType == "sticker" || m.mediaType == "image" || m.mediaType == null)) stickerRefFor(m) else null
     }
 
     var swipeX by remember(m.id) { mutableStateOf(0f) }
@@ -2840,8 +2851,8 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                 }
                 if (ayxStickerRef != null) {
                     // Our own premium sticker — animated vector art (Stickers.kt).
-                    // Never the bitmap: the echo is a plain image, the local
-                    // sent-record is what makes it animate.
+                    // Never the bitmap: the echo is a sticker WebP (first
+                    // frame only), the local sent-record is what makes it animate.
                     Box(Modifier.padding(2.dp), contentAlignment = Alignment.Center) {
                         AnimatedStickerArt(ayxStickerRef.first, ayxStickerRef.second, Modifier.size(170.dp))
                     }

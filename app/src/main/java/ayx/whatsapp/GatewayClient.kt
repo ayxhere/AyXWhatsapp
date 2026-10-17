@@ -255,6 +255,23 @@ object GatewayClient {
         if (o.optBoolean("ok", false)) true else throw RuntimeException(o.optString("error", "send failed"))
     }
 
+    /**
+     * REAL sticker send (sticker protocol, NOT image).
+     * @param webpB64 base64 of an animated (or static) WebP sticker.
+     * @return the Baileys message id of the sent sticker (for exact echo
+     *   matching in chat), or null when the gateway didn't return one.
+     * @throws RuntimeException on any failure — caller removes the
+     *   optimistic row and shows the error, never fake-sent.
+     * The stable [clientMsgId] lets the gateway dedupe a retry whose
+     * first attempt actually sent (reply lost) — same mechanism as text.
+     */
+    suspend fun sendSticker(jid: String, webpB64: String, clientMsgId: String = newClientMsgId()): String? = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("jid", jid).put("data", webpB64).put("clientMsgId", clientMsgId)
+        val o = post("/sendsticker", body)
+        if (!o.optBoolean("ok", false)) throw RuntimeException(o.optString("error", "sticker send failed"))
+        o.optString("id").ifBlank { null }
+    }
+
     // .vv: gateway does text→speech and sends it as a voice note (the ".vv" text is never sent)
     suspend fun sendVoice(jid: String, text: String): Boolean = withContext(Dispatchers.IO) {
         val o = post("/sendvoice", JSONObject().put("jid", jid).put("text", text))
