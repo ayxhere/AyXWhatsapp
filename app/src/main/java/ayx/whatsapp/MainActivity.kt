@@ -358,6 +358,7 @@ class MainActivity : ComponentActivity() {
         TranslateStore.init(applicationContext)
         FontStore.init(applicationContext)
         EmojiStore.init(applicationContext)
+        StickerSettings.init(applicationContext)
         setContent {
             val sysDark = isSystemInDarkTheme()
             val mode = ThemeStore.mode.value
@@ -527,7 +528,7 @@ private fun chatPreview(m: GatewayClient.Msg, isGroup: Boolean): String {
     val body = when {
         m.deleted -> "deleted"
         m.text.isNotBlank() -> m.text
-        m.mediaType != null -> "[${m.mediaType}]"
+        m.mediaType != null -> if (m.mediaType == "sticker") "Sticker" else "[${m.mediaType}]"
         m.mediaName != null -> "[media]"
         else -> "[message]"
     }
@@ -768,6 +769,8 @@ fun GatewayApp() {
 
     // file picker for sending media
     var pendingMedia by remember { mutableStateOf<Pair<Uri, String>?>(null) }
+    // premium stickers (Stickers.kt): custom pack survives restart via prefs
+    var customStickers by remember { mutableStateOf(CustomStickerStore.list(ctx)) }
     // an attachment staged in one chat must NEVER follow you into another chat → drop it whenever the open chat changes
     LaunchedEffect(openChat) { pendingMedia = null }
     var chatsPage by remember { mutableStateOf(0) }
@@ -815,6 +818,16 @@ fun GatewayApp() {
     var wallpaper by remember { mutableStateOf<ImageBitmap?>(null) }
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? -> if (uri != null && openChat != null) pendingMedia = uri to "image" }
     val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? -> if (uri != null && openChat != null) pendingMedia = uri to "video" }
+    // premium stickers (Stickers.kt): gallery pick for the custom pack.
+    // Persistable URI permission so the sticker survives app restarts.
+    val customStickerPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        if (uri != null) {
+            runCatching { ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            val added = CustomStickerStore.add(ctx, uri.toString())
+            customStickers = CustomStickerStore.list(ctx)
+            notify(if (added) "Sticker added (${customStickers.size}/10)" else "Custom pack full (10/10) — remove one first")
+        }
+    }
     fun loadWallpaper() {
         val f = File(ctx.filesDir, "wallpaper.jpg")
         wallpaper = if (f.exists()) runCatching { decodeScaled(f.absolutePath, 1440)?.asImageBitmap() }.getOrNull() else null
@@ -1494,6 +1507,54 @@ fun GatewayApp() {
                     delivered.forEach { q -> optimistic.removeAll { it.chat == q.jid && it.text == q.text && it.ts == q.ts } }
                     notify(if (delivered.isNotEmpty()) "${delivered.size} queued message(s) sent" else "Still connecting… will retry automatically")
                 } },
+                // Premium stickers (Stickers.kt): picker + send-as-image + custom pack.
+                stickerHost = StickerHost(
+                    customStickers = customStickers,
+                    onSendSticker = { pack, expr ->
+                        val mjid = openChat ?: return@StickerHost
+                        val ts = System.currentTimeMillis()
+                        StickerSentStore.record(ctx, ts, pack.id, expr.name)
+                        val opt = OptMsg(ocChat, "", ts)
+                        optimistic.add(opt)
+                        scope.launch {
+                            try {
+                                val png = withContext(Dispatchers.IO) { renderStickerPng(pack, expr) }
+                                if (png == null) {
+                                    optimistic.remove(opt)
+                                    notify("Sticker render failed")
+                                    return@launch
+                                }
+                                GatewayClient.sendMedia(mjid, Base64.encodeToString(png, Base64.NO_WRAP), "image", "ayx-sticker-${pack.id}-${expr.name}.png", "")
+                                // poll loop swaps the optimistic row for the
+                                // server echo (still animated via stickerRefFor)
+                            } catch (e: Exception) {
+                                optimistic.remove(opt)
+                                notify("send failed: ${e.message}")
+                            }
+                        }
+                    },
+                    onSendCustomSticker = { cs ->
+                        val mjid = openChat ?: return@StickerHost
+                        scope.launch {
+                            try {
+                                notify("sending…")
+                                val bytes = withContext(Dispatchers.IO) {
+                                    ctx.contentResolver.openInputStream(Uri.parse(cs.uri))?.use { it.readBytes() }
+                                }
+                                if (bytes == null) { notify("can't read sticker"); return@launch }
+                                GatewayClient.sendMedia(mjid, Base64.encodeToString(bytes, Base64.NO_WRAP), "image", "ayx-custom-sticker.png", "")
+                                notify("sent")
+                            } catch (e: Exception) { notify("send failed: ${e.message}") }
+                        }
+                    },
+                    onAddCustomSticker = { customStickerPicker.launch("image/*") },
+                    onRemoveCustomSticker = { id ->
+                        CustomStickerStore.remove(ctx, id)
+                        customStickers = CustomStickerStore.list(ctx)
+                        notify("Sticker removed")
+                    },
+                    stickerRefFor = { ts -> stickerRefFor(ctx, ts) },
+                ),
             )
             }
             val ocBlocked = ocChat in blockedJids
@@ -2038,6 +2099,8 @@ private fun ChatDetail(
     /** Queued (not yet sent) messages in this chat — shown as a banner, never faked as sent. */
     queuedCount: Int = 0,
     onRetryQueued: () -> Unit = {},
+    /** Premium stickers (Stickers.kt) — null hides the sticker button. */
+    stickerHost: StickerHost? = null,
 ) {
     val clipboard = LocalClipboardManager.current
     val ctx = LocalContext.current
@@ -2046,6 +2109,8 @@ private fun ChatDetail(
     // the screen-switch transition ("garbled leftover text").
     var input by remember(chat) { mutableStateOf("") }
     var attachMenu by remember { mutableStateOf(false) }
+    // premium sticker picker (Stickers.kt) — keyed by chat like the composer
+    var showStickers by remember(chat) { mutableStateOf(false) }
     var replyTo by remember { mutableStateOf<GatewayClient.Msg?>(null) }
     var reactMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
     var editMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
@@ -2203,7 +2268,8 @@ private fun ChatDetail(
                         selMode = selMode, selected = m.id != null && m.id in selIds,
                         onToggleSelect = { mm -> mm.id?.let { if (it in selIds) selIds.remove(it) else selIds.add(it) } },
                         onTranslate = { onTranslateMsg(it) },
-                        onLongClick = { reactMsg = it })
+                        onLongClick = { reactMsg = it },
+                        stickerRefFor = { ts -> stickerHost?.stickerRefFor?.invoke(ts) })
                 }
                 }
             }
@@ -2237,6 +2303,15 @@ private fun ChatDetail(
                 }
             }
         }
+        // Premium sticker button (Stickers.kt) — toggles the picker panel.
+        val stickerButton: @Composable () -> Unit = {
+            if (stickerHost != null) {
+                IconButton(onClick = { showStickers = !showStickers }) {
+                    Icon(Icons.Filled.EmojiEmotions, "stickers",
+                        tint = if (showStickers) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
         val sendButton: @Composable () -> Unit = {
             FilledIconButton(onClick = {
                 if (pendingMedia != null) {
@@ -2265,6 +2340,11 @@ private fun ChatDetail(
                     color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.weight(1f))
                 TextButton(onClick = onRetryQueued) { Text("Retry now") }
             }
+        }
+        // Premium sticker picker panel (Stickers.kt) — sits above the composer.
+        if (showStickers && stickerHost != null) {
+            StickerPicker(host = stickerHost, onDismiss = { showStickers = false },
+                modifier = Modifier.padding(horizontal = 8.dp).padding(bottom = 6.dp))
         }
         Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp).animateContentSize()
             .clip(RoundedCornerShape(28.dp)).background(MaterialTheme.colorScheme.surface.copy(alpha = ayxGlassAlpha(0.90f, BlurElement.BOTTOM_SHEET)))) {
@@ -2317,12 +2397,12 @@ private fun ChatDetail(
                 // expanded (Claude-style): attachment on top → text → [+] ........ [send]
                 textField(Modifier.fillMaxWidth())
                 Row(Modifier.fillMaxWidth().padding(start = 6.dp, end = 8.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    plusButton(); Spacer(Modifier.weight(1f)); sendButton()
+                    plusButton(); stickerButton(); Spacer(Modifier.weight(1f)); sendButton()
                 }
             } else {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    plusButton(); textField(Modifier.weight(1f)); sendButton()
+                    plusButton(); stickerButton(); textField(Modifier.weight(1f)); sendButton()
                 }
             }
         }
@@ -2438,7 +2518,7 @@ private fun MessageActionSheet(
                 Spacer(Modifier.height(10.dp))
                 // floating copy of the long-pressed message
                 Surface(color = spec.first, shape = spec.third, shadowElevation = 8.dp, modifier = Modifier.widthIn(max = 300.dp)) {
-                    val preview = when { m.deleted -> "This message was deleted"; m.text.isNotBlank() -> m.text; m.mediaType != null -> "[${m.mediaType}]"; else -> "" }
+                    val preview = when { m.deleted -> "This message was deleted"; m.text.isNotBlank() -> m.text; m.mediaType == "sticker" -> "Sticker"; m.mediaType != null -> "[${m.mediaType}]"; else -> "" }
                     Text(preview, color = spec.second, style = MaterialTheme.typography.bodyLarge, maxLines = 10, overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
                 }
@@ -2687,7 +2767,7 @@ private fun styleSpec(fromMe: Boolean, dark: Boolean, recvGrey: Color, recvText:
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String, ImageBitmap?>, dpCache: MutableMap<String, ImageBitmap?>, onMedia: (GatewayClient.Msg) -> Unit, onShare: (GatewayClient.Msg) -> Unit, onDownload: (GatewayClient.Msg) -> Unit, onReply: (GatewayClient.Msg) -> Unit, onAvatarClick: (String) -> Unit, selMode: Boolean = false, selected: Boolean = false, onToggleSelect: (GatewayClient.Msg) -> Unit = {}, onTranslate: (GatewayClient.Msg) -> Unit = {}, onLongClick: (GatewayClient.Msg) -> Unit) {
+private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String, ImageBitmap?>, dpCache: MutableMap<String, ImageBitmap?>, onMedia: (GatewayClient.Msg) -> Unit, onShare: (GatewayClient.Msg) -> Unit, onDownload: (GatewayClient.Msg) -> Unit, onReply: (GatewayClient.Msg) -> Unit, onAvatarClick: (String) -> Unit, selMode: Boolean = false, selected: Boolean = false, onToggleSelect: (GatewayClient.Msg) -> Unit = {}, onTranslate: (GatewayClient.Msg) -> Unit = {}, onLongClick: (GatewayClient.Msg) -> Unit, stickerRefFor: (Long) -> Pair<StickerPackDef, StickerExpression>? = { null }) {
     val ctx = LocalContext.current
     val dark = isSystemInDarkTheme()
     val spec = bubbleSpec(m.fromMe, dark)
@@ -2700,6 +2780,14 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
     val name = m.mediaName
     LaunchedEffect(name) { if (name != null && !previewCache.containsKey(name)) previewCache[name] = loadPreview(ctx, m) }
     val preview = (name?.let { previewCache[it] }) ?: remember(m.thumb) { decodeThumb(m.thumb) }
+    // Premium stickers (Stickers.kt): OUR OWN sent stickers are plain image
+    // messages on the wire — the local sent-record maps the timestamp window
+    // back to the pack + expression so they render ANIMATED in chat.
+    // Optimistic sticker rows have mediaType == null; echoes have "image".
+    val isStickerMsg = m.mediaType == "sticker"
+    val ayxStickerRef = remember(m.ts, m.fromMe, m.mediaType, m.text) {
+        if (m.fromMe && m.text.isBlank() && (m.mediaType == "image" || m.mediaType == null)) stickerRefFor(m.ts) else null
+    }
 
     var swipeX by remember(m.id) { mutableStateOf(0f) }
     Row(Modifier.fillMaxWidth()
@@ -2750,7 +2838,30 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                     Text(SetName.get(m.sender ?: "") ?: m.name, style = MaterialTheme.typography.labelMedium, color = IOS_BLUE,
                         modifier = Modifier.padding(horizontal = 8.dp))
                 }
-                if (hasMedia && preview != null) {
+                if (ayxStickerRef != null) {
+                    // Our own premium sticker — animated vector art (Stickers.kt).
+                    // Never the bitmap: the echo is a plain image, the local
+                    // sent-record is what makes it animate.
+                    Box(Modifier.padding(2.dp), contentAlignment = Alignment.Center) {
+                        AnimatedStickerArt(ayxStickerRef.first, ayxStickerRef.second, Modifier.size(170.dp))
+                    }
+                } else if (isStickerMsg && preview != null) {
+                    // Incoming Baileys sticker (WebP) — rendered as an IMAGE,
+                    // Fit (never Crop: stickers have transparency + padding).
+                    Box(Modifier.clip(uiShapeFor(14)).clickable { onMedia(m) }, contentAlignment = Alignment.Center) {
+                        Image(preview, "sticker", Modifier.size(180.dp), contentScale = ContentScale.Fit)
+                    }
+                } else if (isStickerMsg) {
+                    // Sticker bytes could not be decoded — placeholder, never
+                    // a blank bubble and never a crash.
+                    Box(Modifier.size(150.dp).clip(uiShapeFor(14)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                        contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Filled.EmojiEmotions, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(44.dp))
+                            Text("Sticker", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                } else if (hasMedia && preview != null) {
                     Box(Modifier.clip(uiShapeFor(14)).clickable { onMedia(m) }, contentAlignment = Alignment.Center) {
                         Image(preview, "media", Modifier.widthIn(min = 220.dp, max = 280.dp).heightIn(max = 340.dp), contentScale = ContentScale.Crop)
                         if (isVideo) Box(Modifier.size(52.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape), contentAlignment = Alignment.Center) {
@@ -2764,7 +2875,7 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                         else Text("Voice message (enable Save media)", color = textColor, style = MaterialTheme.typography.bodySmall)
                     }
                     if (m.text.isNotBlank()) LinkText(m.text, textColor)
-                    else if (hasMedia && preview == null && m.mediaType != "audio") Text("[${m.mediaType}]", color = textColor, style = MaterialTheme.typography.bodySmall)
+                    else if (hasMedia && preview == null && m.mediaType != "audio" && m.mediaType != "sticker" && ayxStickerRef == null) Text("[${m.mediaType}]", color = textColor, style = MaterialTheme.typography.bodySmall)
                     // translated text (double-tap) shown under the original with a translate icon
                     val tr = m.id?.let { TranslateStore.cache[it] }
                     if (!tr.isNullOrBlank()) {
