@@ -35,7 +35,7 @@ object MediaTools {
     // animStyle: 0=None, 1=Pop (scale+fade), 2=Slide up, 3=Typewriter, 4=Fade
     fun photosToVideo(ctx: Context, uris: List<Uri>, out: File, durationMs: Long, lyrics: List<Pair<Long, String>>, lyricY: Float = 0.80f, lyricScale: Float = 1f, animStyle: Int = 0, onProgress: (Float) -> Unit): Boolean {
         val W = 720; val H = 1280; val FPS = 30; val BITRATE = 6_000_000
-        val bmps = uris.mapNotNull { runCatching { loadScaledCropped(ctx, it, W, H) }.getOrNull() }
+        val bmps = uris.mapNotNull { runCatching { loadScaledFit(ctx, it, W, H) }.getOrNull() }
         if (bmps.isEmpty()) return false
         var encoder: MediaCodec? = null
         var muxer: MediaMuxer? = null
@@ -453,7 +453,7 @@ object MediaTools {
     }
 
     // ---------- helpers ----------
-    private fun loadScaledCropped(ctx: Context, uri: Uri, w: Int, h: Int): Bitmap {
+    private fun loadScaledFit(ctx: Context, uri: Uri, w: Int, h: Int): Bitmap {
         val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
         var sample = 1
@@ -462,11 +462,12 @@ object MediaTools {
         val o2 = BitmapFactory.Options().apply { inSampleSize = sample }
         val src = ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, o2) }
             ?: throw RuntimeException("decode failed")
-        // center-crop into w x h
+        // FIT (no crop): the whole image stays visible, letterboxed on black —
+        // the editor preview (ContentScale.Fit) matches exactly what gets uploaded.
         val target = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(target)
         canvas.drawColor(android.graphics.Color.BLACK)
-        val scale = maxOf(w.toFloat() / src.width, h.toFloat() / src.height)
+        val scale = minOf(w.toFloat() / src.width, h.toFloat() / src.height)
         val dw = src.width * scale; val dh = src.height * scale
         val left = (w - dw) / 2f; val top = (h - dh) / 2f
         val m = Matrix().apply { setScale(scale, scale); postTranslate(left, top) }

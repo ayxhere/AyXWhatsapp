@@ -173,6 +173,7 @@ import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -4294,8 +4295,8 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     var videoPos by remember { mutableStateOf(0L) }
     var videoPlaying by remember { mutableStateOf(false) }
     var videoView by remember { mutableStateOf<VideoView?>(null) }
-    // ---- Collapsible controls panel (header tap = expand/collapse) ----
-    var controlsExpanded by remember { mutableStateOf(true) }
+    // ---- Song tap toggles the AI Lyrics Translate button below the song row ----
+    var showTranslateRow by remember { mutableStateOf(false) }
     var songQuery by remember { mutableStateOf("") }   // last song-search query (preserved across replace)
     val pickPhoto = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { u ->
         if (u != null) { mediaUri = u; mediaType = "image"; editedBytes = null }
@@ -4341,18 +4342,12 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     val audLabel = when (audience) { "except" -> "Except " + selected.size; "only" -> "Only " + selected.size; else -> "My contacts" }
     Dialog(onDismissRequest = onCancel, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize(), color = Color.Black) {
-            Column(Modifier.fillMaxSize().blur(editorBlur).statusBarsPadding().navigationBarsPadding().imePadding().padding(12.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onCancel) { Icon(Icons.Filled.Close, "close", tint = Color.White) }
-                    Text("New status", color = Color.White, fontWeight = FontWeight.Bold)
-                    TextButton(onClick = { pickAudience = true }) { Text(audLabel, color = IOS_BLUE) }
-                }
-                // ---- Image 2: media area (photo / video / empty) — FIXED height, collapse never moves it ----
-                BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-                    val mediaH = maxHeight * 0.55f
-                    val panelH = maxHeight * 0.45f
-                    Column(Modifier.fillMaxSize()) {
-                Box(Modifier.fillMaxWidth().height(mediaH).clip(uiShapeFor(14)).background(Color(0xFF111111)), contentAlignment = Alignment.Center) {
+            // ---- Full-bleed overlay layout: media fills the screen; top bar + controls float above it ----
+            Box(Modifier.fillMaxSize().blur(editorBlur)) {
+                val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+                val overlayTopPad = statusTop + 64.dp   // corner buttons sit below the overlaid top bar
+                // ---- Media layer: full-bleed, no crop (ContentScale.Fit — preview matches the uncropped upload) ----
+                Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
                     val curUri = mediaUri
                     if (curUri == null) {
                             // Empty state: add a photo or video again.
@@ -4360,22 +4355,23 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                 Text("Add a photo or video", color = Color.White.copy(alpha = 0.7f))
                                 Spacer(Modifier.height(10.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    TextButton(onClick = { pickPhoto.launch("image/*") }) { Text("Add photo", color = IOS_BLUE) }
-                                    TextButton(onClick = { pickVideo.launch("video/*") }) { Text("Add video", color = IOS_BLUE) }
+                                    TextButton(onClick = { pickPhoto.launch("image/*") }) { Text("Add photo", color = Color.White) }
+                                    TextButton(onClick = { pickVideo.launch("video/*") }) { Text("Add video", color = Color.White) }
                                 }
                             }
                         }
                         else if (mediaType == "image") {
                             val editedBmp = remember(editedBytes) { editedBytes?.let { runCatching { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }.getOrNull() } }
                             val bmp = editedBmp ?: remember(curUri) { runCatching { ctx.contentResolver.openInputStream(curUri)?.use { BitmapFactory.decodeStream(it)?.asImageBitmap() } }.getOrNull() }
-                            if (bmp != null) Image(bmp, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) else Text("Preview unavailable", color = Color.White)
-                            // LEFT-side X: remove the photo.
-                            IconButton(onClick = { mediaUri = null; editedBytes = null }, modifier = Modifier.align(Alignment.TopStart).padding(8.dp)) {
+                            if (bmp != null) Image(bmp, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit) else Text("Preview unavailable", color = Color.White)
+                            // LEFT-side X: remove the photo (below the overlaid top bar).
+                            IconButton(onClick = { mediaUri = null; editedBytes = null }, modifier = Modifier.align(Alignment.TopStart).padding(top = overlayTopPad, start = 8.dp)) {
                                 Icon(Icons.Filled.Close, "remove photo", tint = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(4.dp))
                             }
                             if (editedBytes != null) Text("Edited ✓", color = Color.White, style = MaterialTheme.typography.labelSmall,
-                                modifier = Modifier.align(Alignment.TopEnd).padding(10.dp).background(Color.Black.copy(alpha = 0.5f), uiShapeFor(8)).padding(horizontal = 8.dp, vertical = 4.dp))
-                            TextButton(onClick = { aiEditOpen = true }, modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)) {
+                                modifier = Modifier.align(Alignment.TopStart).padding(top = overlayTopPad + 54.dp, start = 12.dp).background(Color.Black.copy(alpha = 0.5f), uiShapeFor(8)).padding(horizontal = 8.dp, vertical = 4.dp))
+                            // AI Edit lives on the IMAGE HEADER (top-right, below the top bar) — same real OpenRouter backend.
+                            TextButton(onClick = { aiEditOpen = true }, modifier = Modifier.align(Alignment.TopEnd).padding(top = overlayTopPad, end = 8.dp)) {
                                 Text("✨ Edit image with AI", color = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), uiShapeFor(16)).padding(horizontal = 10.dp, vertical = 6.dp))
                             }
                         }
@@ -4407,9 +4403,9 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                     modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(12.dp))
                             }
                             Text(if (videoMuted) "🔇 Muted" else "🔊 Sound", color = Color.White, style = MaterialTheme.typography.labelSmall,
-                                modifier = Modifier.align(Alignment.TopEnd).padding(10.dp).background(Color.Black.copy(alpha = 0.5f), uiShapeFor(8)).padding(horizontal = 8.dp, vertical = 4.dp))
-                            // LEFT-side X: remove the video.
-                            IconButton(onClick = { runCatching { videoView?.stopPlayback() }; videoPlaying = false; mediaUri = null }, modifier = Modifier.align(Alignment.TopStart).padding(8.dp)) {
+                                modifier = Modifier.align(Alignment.TopEnd).padding(top = overlayTopPad, end = 10.dp).background(Color.Black.copy(alpha = 0.5f), uiShapeFor(8)).padding(horizontal = 8.dp, vertical = 4.dp))
+                            // LEFT-side X: remove the video (below the overlaid top bar).
+                            IconButton(onClick = { runCatching { videoView?.stopPlayback() }; videoPlaying = false; mediaUri = null }, modifier = Modifier.align(Alignment.TopStart).padding(top = overlayTopPad, start = 8.dp)) {
                                 Icon(Icons.Filled.Close, "remove video", tint = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(4.dp))
                             }
                         }
@@ -4443,31 +4439,31 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                 modifier = Modifier.align(Alignment.TopCenter).padding(top = 6.dp))
                         }
                     }
-                }
-                // ---- Collapsible controls panel: FIXED area — expanding never moves the media above ----
-                val videoBars = remember(mediaUri) { val r = java.util.Random((mediaUri?.toString() ?: "").hashCode().toLong()); FloatArray(64) { 0.22f + r.nextFloat() * 0.78f } }
-                Column(Modifier.fillMaxWidth().height(panelH).verticalScroll(rememberScrollState()).padding(top = 6.dp)) {
-                    Row(Modifier.fillMaxWidth().clickable { controlsExpanded = !controlsExpanded }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(if (controlsExpanded) "▴" else "▾", color = Color.White.copy(alpha = 0.7f))
-                        Spacer(Modifier.width(8.dp))
-                        Text("♪ " + (song?.title ?: "No song"), color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                        Text(if (mediaType == "video") "🎬 Video" else "🖼 Photo", color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelSmall)
+                }   // media layer (full-bleed) done
+                // ---- Top bar overlay (readability scrim) ----
+                Box(Modifier.align(Alignment.TopCenter).fillMaxWidth()
+                    .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent)))
+                    .statusBarsPadding()) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = onCancel) { Icon(Icons.Filled.Close, "close", tint = Color.White) }
+                        Text("New status", color = Color.White, fontWeight = FontWeight.Bold)
+                        TextButton(onClick = { pickAudience = true }) { Text(audLabel, color = IOS_BLUE) }
                     }
-                    AnimatedVisibility(visible = controlsExpanded, enter = expandVertically(), exit = shrinkVertically()) {
-                        Column {
-                            // ---- Image 1: SONG row. Title + artist, "Replace song" (reopens search) + separate "Remove song".
+                }
+                // ---- Bottom controls overlay: always visible (no collapse), readability scrim ----
+                val videoBars = remember(mediaUri) { val r = java.util.Random((mediaUri?.toString() ?: "").hashCode().toLong()); FloatArray(64) { 0.22f + r.nextFloat() * 0.78f } }
+                Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                    .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.78f))))
+                    .navigationBarsPadding().imePadding()) {
+                    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 10.dp)) {
+                            // ---- SONG row: tap toggles the AI Lyrics Translate button below. Actions are ICONS (no text).
                             // X buttons anywhere in this flow are NAVIGATION only — never a remove action.
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Row(Modifier.fillMaxWidth().clickable { if (song != null) showTranslateRow = !showTranslateRow }, verticalAlignment = Alignment.CenterVertically) {
                                 val sg = song
                                 if (sg == null) {
-                                    TextButton(onClick = { musicOpen = true }) { Text("♪  Add music", color = IOS_BLUE) }
+                                    TextButton(onClick = { musicOpen = true }) { Text("♪  Add music", color = Color.White) }
                                 } else {
-                                    Column(Modifier.weight(1f)) {
-                                        Text("♪ " + sg.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        Text(sg.artist, color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    }
-                                    if (songLyrics.isNotEmpty()) Text("© lyrics", color = IOS_BLUE, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(end = 4.dp))
-                                    TextButton(onClick = {
+                                    IconButton(onClick = {
                                         if (playing) { runCatching { player.pause() }; playing = false }
                                         else runCatching {
                                             player.reset(); player.setDataSource(sg.url)
@@ -4476,27 +4472,31 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                             player.setOnErrorListener { _, _, _ -> playing = false; true }
                                             player.prepareAsync()
                                         }
-                                    }) { Text(if (playing) "⏸" else "▶", color = IOS_BLUE) }
-                                    TextButton(onClick = { musicOpen = true }) { Text("Replace song", color = IOS_BLUE) }
-                                    TextButton(onClick = {
+                                    }) { Icon(if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "play", tint = Color.White) }
+                                    Column(Modifier.weight(1f)) {
+                                        Text("♪ " + sg.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(sg.artist, color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                    if (songLyrics.isNotEmpty()) Text("© lyrics", color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(end = 4.dp))
+                                    IconButton(onClick = { musicOpen = true }) { Icon(Icons.Filled.Refresh, "Replace song", tint = Color.White) }
+                                    IconButton(onClick = {
                                         runCatching { player.reset() }; playing = false
                                         song = null; songLyrics = emptyList(); translatedLyrics = null; translatedActive = false
-                                        trimStart = 0L; trimEnd = 15000L
-                                    }) { Text("Remove song", color = AYX_RED) }
+                                        trimStart = 0L; trimEnd = 15000L; showTranslateRow = false
+                                    }) { Icon(Icons.Filled.Delete, "Remove song", tint = Color.White) }
                                 }
                             }
-                            // ---- AI tools: AI Edit (photo) + AI Lyrics Translate ----
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                TextButton(onClick = {
-                                    if (mediaType == "image" && mediaUri != null) aiEditOpen = true
-                                    else Toast.makeText(ctx, "Add a photo first", Toast.LENGTH_SHORT).show()
-                                }) { Text("✨ AI Edit", color = IOS_BLUE) }
-                                TextButton(onClick = {
-                                    if (song == null || songLyrics.isEmpty()) { Toast.makeText(ctx, "Add a song first", Toast.LENGTH_SHORT).show() }
-                                    else translateOpen = true
-                                }) { Text(if (translatedActive) "✓ AI Lyrics Translated" else "🌐 AI Lyrics Translate", color = IOS_BLUE) }
+                            // ---- AI Lyrics Translate: appears below the song row on song tap ----
+                            if (showTranslateRow && song != null) {
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    TextButton(onClick = {
+                                        if (songLyrics.isEmpty()) { Toast.makeText(ctx, "Add a song first", Toast.LENGTH_SHORT).show() }
+                                        else translateOpen = true
+                                    }) { Text(if (translatedActive) "✓ AI Lyrics Translated" else "🌐 AI Lyrics Translate", color = Color.White) }
+                                }
+                                if (translatedActive) Text("Translated ✓ — translated lyrics will be posted", color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 8.dp))
                             }
-                            if (translatedActive) Text("Translated ✓ — translated lyrics will be posted", color = IOS_BLUE, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 8.dp))
+                            // (AI Edit now lives on the image header; AI Lyrics Translate toggles under the song row.)
                             // ---- Video: fixed-box trimmer + mute ----
                             if (mediaType == "video" && mediaUri != null && videoDuration > 0L) {
                                 WaveformTrimmer(videoBars, videoDuration, vTrimStart, vTrimEnd, videoPos) { ns, ne -> vTrimStart = ns; vTrimEnd = ne }
@@ -4516,7 +4516,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                 }
                                 Text(fmtMs(vTrimStart) + "  →  " + fmtMs(vTrimEnd) + "   •   swipe the waveform to move", color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                    TextButton(onClick = { videoMuted = !videoMuted }) { Text(if (videoMuted) "🔇 Muted" else "🔊 Sound", color = IOS_BLUE) }
+                                    TextButton(onClick = { videoMuted = !videoMuted }) { Text(if (videoMuted) "🔇 Muted" else "🔊 Sound", color = Color.White) }
                                     Text(if (videoMuted) "Video audio will be off in the posted status" else "Video audio will be kept", color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall)
                                 }
                             }
@@ -4532,8 +4532,8 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                         focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White),
                                     modifier = Modifier.fillMaxWidth())
                             }
-                            // Send box — its own row, right-aligned, below the caption
-                            Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                            // Send — anchored bottom-right with safe padding (never cut off, never overlapping the caption)
+                            Row(Modifier.fillMaxWidth().padding(top = 10.dp, end = 4.dp, bottom = 4.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                                 if (mediaUri == null) Text("Add a photo or video to post", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(end = 10.dp))
                                 FilledIconButton(enabled = mediaUri != null,
                                     onClick = { onUpload(caption.trim(), audience, selected.toList(), song, trimStart, trimEnd, displayLyrics, lyricY, lyricScale, animStyle, romanize, editedBytes, vTrimStart, vTrimEnd, videoMuted, mediaUri, mediaType) },
@@ -4542,11 +4542,8 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                         }
                     }
                 }
-                    }
-                }
             }
         }
-    }
     if (pickAudience) AudienceSheet(contacts, audience, selected) { a, sset -> audience = a; selected = sset; pickAudience = false }
     if (musicOpen) MusicSearchSheet(initialQuery = songQuery, autoFocus = true, onQueryChange = { songQuery = it }, onSelect = { songToTrim = it; musicOpen = false }, onClose = { musicOpen = false })
     if (aiEditOpen && mediaUri != null) AiImageEditSheet(ctx, mediaUri!!, onDone = { editedBytes = it; aiEditOpen = false }, onCancel = { aiEditOpen = false }, onOpenSettings = { aiEditOpen = false; showAiSettingsDlg = true })
@@ -4557,7 +4554,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
         onCancel = { translateOpen = false },
         onOpenApiSettings = { translateOpen = false; showGroqDlg = true })
     songToTrim?.let { sng ->
-        AudioTrimmer(sng, onDone = { st, en, ly -> song = sng; trimStart = st; trimEnd = en; songLyrics = ly; translatedLyrics = null; translatedActive = false; songToTrim = null }, onCancel = { songToTrim = null; musicOpen = true })
+        AudioTrimmer(sng, onDone = { st, en, ly -> song = sng; trimStart = st; trimEnd = en; songLyrics = ly; translatedLyrics = null; translatedActive = false; showTranslateRow = false; songToTrim = null }, onCancel = { songToTrim = null; musicOpen = true })
     }
 }
 
@@ -4626,9 +4623,21 @@ private fun AiLyricsTranslateSheet(songTitle: String, lyrics: List<Pair<Long, St
                         modifier = Modifier.fillMaxWidth().weight(1f))
                 }
                 Spacer(Modifier.height(10.dp))
+                // quick-select chips for the two most-used languages
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("Hindi", "English").forEach { l ->
+                        val sel = lang == l
+                        TextButton(onClick = { lang = l; translated = null },
+                            modifier = Modifier.border(1.dp, if (sel) Color.White else Color.White.copy(alpha = 0.3f), uiShapeFor(16))
+                                .background(if (sel) Color.White.copy(alpha = 0.15f) else Color.Transparent, uiShapeFor(16))) {
+                            Text(l, color = Color.White, fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
                 // language picker (simple, no experimental API)
                 Box {
-                    TextButton(onClick = { langOpen = !langOpen }) { Text("🌐 $lang ▾", color = IOS_BLUE) }
+                    TextButton(onClick = { langOpen = !langOpen }) { Text("🌐 $lang ▾", color = Color.White) }
                     if (langOpen) {
                         Surface(shape = uiShapeFor(12), color = Color(0xFF1C1C1C), shadowElevation = 8.dp, modifier = Modifier.padding(top = 40.dp)) {
                             Column(Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState())) {
@@ -4649,12 +4658,12 @@ private fun AiLyricsTranslateSheet(songTitle: String, lyrics: List<Pair<Long, St
                 if (needKey) {
                     Spacer(Modifier.height(6.dp))
                     Text("Translation needs an AI key.", color = Color(0xFFFFB84D), style = MaterialTheme.typography.bodySmall)
-                    TextButton(onClick = onOpenApiSettings) { Text("Open API settings", color = IOS_BLUE) }
+                    TextButton(onClick = onOpenApiSettings) { Text("Open API settings", color = Color.White) }
                 }
                 if (error != null) {
                     Spacer(Modifier.height(6.dp))
                     Text(error!!, color = Color(0xFFFF8A80), style = MaterialTheme.typography.bodySmall)
-                    TextButton(onClick = { runTranslate() }, enabled = !translating) { Text("Retry", color = IOS_BLUE) }
+                    TextButton(onClick = { runTranslate() }, enabled = !translating) { Text("Retry", color = Color.White) }
                 }
                 val tr = translated
                 if (tr != null) {
