@@ -308,14 +308,26 @@ object GatewayClient {
     }
     /** Same as [translateLines] but also returns the backend error (null when ok) so the UI can show real states. */
     suspend fun translateLinesEx(lines: List<String>, romanize: Boolean, lang: String = "English"): Pair<List<String>, String?> = withContext(Dispatchers.IO) {
-        try {
-            val arr = JSONArray(); lines.forEach { arr.put(it) }
-            val o = post("/translatelines", JSONObject().put("lines", arr).put("romanize", romanize).put("lang", lang))
-            if (o.optBoolean("ok", false)) {
-                val out = o.optJSONArray("lines") ?: return@withContext lines to "bad response"
-                (0 until out.length()).map { out.optString(it) } to null
-            } else lines to o.optString("error", "failed").ifBlank { "failed" }
-        } catch (e: Exception) { lines to (e.message ?: "connection error") }
+        // Translate calls hit a real AI API (long lyric lists can take 30s+): generous read timeout
+        // + ONE automatic retry on timeout only. Other errors are returned as-is (no retry).
+        fun attempt(): Pair<List<String>, String?> {
+            return try {
+                val arr = JSONArray(); lines.forEach { arr.put(it) }
+                val o = post("/translatelines", JSONObject().put("lines", arr).put("romanize", romanize).put("lang", lang), readTimeoutMs = 90000)
+                if (o.optBoolean("ok", false)) {
+                    val out = o.optJSONArray("lines") ?: return lines to "bad response"
+                    (0 until out.length()).map { out.optString(it) } to null
+                } else lines to o.optString("error", "failed").ifBlank { "failed" }
+            } catch (e: java.net.SocketTimeoutException) { lines to "timeout" }
+            catch (e: Exception) { lines to (e.message ?: "connection error") }
+        }
+        val first = attempt()
+        if (first.second == "timeout") {
+            // one automatic retry on transient AI slowness; keep the manual Retry button too
+            val second = attempt()
+            if (second.second == null) return@withContext second
+        }
+        first
     }
     data class Song(val title: String, val artist: String, val image: String?, val url: String)
     // returns synced lyrics as (timeMs, line); falls back to PLAIN (untimed) lyrics with
@@ -766,10 +778,10 @@ object GatewayClient {
         return readJson(c)
     }
 
-    private fun post(path: String, body: JSONObject): JSONObject {
+    private fun post(path: String, body: JSONObject, readTimeoutMs: Int = 20000): JSONObject {
         val c = (URL(base + path).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"; doOutput = true
-            connectTimeout = 3000; readTimeout = 20000
+            connectTimeout = 3000; readTimeout = readTimeoutMs
             setRequestProperty("Content-Type", "application/json")
             GatewayAuth.token()?.let { setRequestProperty("X-Api-Token", it) }
         }

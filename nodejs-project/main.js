@@ -2593,6 +2593,50 @@ function devanagariToLatin(s) {
   }
   return out
 }
+// Deterministic Gurmukhi (Punjabi) → Latin transliteration — same scheme as devanagariToLatin:
+// phonetic, keeps English/Latin words and punctuation exactly as-is. Gurmukhi nukta consonants are
+// precomposed (0x0A59–0x0A5E), so no separate nukta table is needed. No AI required.
+function gurmukhiToLatin(s) {
+  const C = {0x0A15:'k',0x0A16:'kh',0x0A17:'g',0x0A18:'gh',0x0A19:'ng',0x0A1A:'ch',0x0A1B:'chh',0x0A1C:'j',0x0A1D:'jh',0x0A1E:'ny',0x0A1F:'t',0x0A20:'th',0x0A21:'d',0x0A22:'dh',0x0A23:'n',0x0A24:'t',0x0A25:'th',0x0A26:'d',0x0A27:'dh',0x0A28:'n',0x0A2A:'p',0x0A2B:'ph',0x0A2C:'b',0x0A2D:'bh',0x0A2E:'m',0x0A2F:'y',0x0A30:'r',0x0A32:'l',0x0A33:'l',0x0A35:'v',0x0A36:'sh',0x0A38:'s',0x0A39:'h',0x0A59:'kh',0x0A5A:'g',0x0A5B:'z',0x0A5C:'r',0x0A5E:'f'}
+  const V = {0x0A05:'a',0x0A06:'aa',0x0A07:'i',0x0A08:'ee',0x0A09:'u',0x0A0A:'oo',0x0A0F:'e',0x0A10:'ai',0x0A13:'o',0x0A14:'au'}
+  const M = {0x0A3E:'aa',0x0A3F:'i',0x0A40:'ee',0x0A41:'u',0x0A42:'oo',0x0A47:'e',0x0A48:'ai',0x0A4B:'o',0x0A4C:'au'}
+  const SIGN = {0x0A02:'n',0x0A70:'n',0x0A03:'h'}
+  const DIG = {0x0A66:'0',0x0A67:'1',0x0A68:'2',0x0A69:'3',0x0A6A:'4',0x0A6B:'5',0x0A6C:'6',0x0A6D:'7',0x0A6E:'8',0x0A6F:'9'}
+  const HALANT = 0x0A4D, NUKTA = 0x0A3C
+  const cp = Array.from(s).map(c => c.codePointAt(0))
+  let out = ''
+  for (let i = 0; i < cp.length; i++) {
+    const c = cp[i]
+    if (C[c] !== undefined) {
+      out += C[c]
+      const nx = cp[i + 1]
+      if (nx === HALANT) { i++ }                       // conjunct → drop inherent vowel
+      else if (M[nx] !== undefined) { out += M[nx]; i++ }
+      else if (nx !== undefined && nx >= 0x0A00 && nx <= 0x0A63) { out += 'a' }   // mid-word → keep inherent 'a'
+      // else: word-final consonant → delete the schwa (not "tuma/pyaara")
+    } else if (V[c] !== undefined) out += V[c]
+    else if (M[c] !== undefined) out += M[c]
+    else if (SIGN[c] !== undefined) out += SIGN[c]
+    else if (DIG[c] !== undefined) out += DIG[c]
+    else if (c === 0x0A64 || c === 0x0A65) out += ' '  // danda
+    else if (c === 0x0A71) {
+      // addak: geminate (double) the following consonant — ਅੱਖਾਂ → akkhaan, ਉੱਤੇ → utte
+      const nc = cp[i + 1], base = C[nc]
+      if (base !== undefined) {
+        out += base[0] + base
+        const nx = cp[i + 2]
+        if (nx === HALANT) { i += 2 }
+        else if (M[nx] !== undefined) { out += M[nx]; i += 2 }
+        else if (nx !== undefined && nx >= 0x0A00 && nx <= 0x0A63) { out += 'a'; i += 1 }
+        else i += 1
+      }
+      // else: stray addak → skip
+    }
+    else if (c === NUKTA || c === HALANT) { /* stray mark → skip */ }
+    else out += String.fromCodePoint(c)                // English / spaces / punctuation / emoji kept as-is
+  }
+  return out
+}
 app.post('/translatelines', async (req, res) => {
   try {
     const lines = Array.isArray(req.body && req.body.lines) ? req.body.lines.map(x => String(x)) : []
@@ -2601,11 +2645,13 @@ app.post('/translatelines', async (req, res) => {
     if (!lines.length) return res.json({ ok: false, error: 'no lines' })
     const NATIVE = /[ऀ-ൿ]/        // any native Indic script
     const DEVA = /[ऀ-ॿ]/ // Devanagari (Hindi/Marathi)
+    const GURU = /[\u0A00-\u0A7F]/ // Gurmukhi (Punjabi)
 
     if (romanize) {
       // 1) Hindi (Devanagari) → Latin deterministically — ALWAYS works, no AI key required
-      let work = lines.map(l => DEVA.test(l) ? devanagariToLatin(l) : l)
-      // 2) any line still in a NON-Devanagari native script (Bengali/Gurmukhi/Tamil…) → AI if we have a key
+      // 1b) Punjabi (Gurmukhi) → Latin deterministically — same, no AI key required
+      let work = lines.map(l => DEVA.test(l) ? devanagariToLatin(l) : (GURU.test(l) ? gurmukhiToLatin(l) : l))
+      // 2) any line still in a native script NEITHER Devanagari NOR Gurmukhi (Bengali/Tamil/Telugu…) → AI if we have a key
       const remain = []
       work.forEach((l, i) => { if (NATIVE.test(l)) remain.push(i) })
       if (remain.length && settings.aiApiUrl && settings.aiApiKey) {

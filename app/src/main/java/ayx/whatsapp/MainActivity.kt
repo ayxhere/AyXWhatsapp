@@ -4291,8 +4291,8 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     var showAiSettingsDlg by remember { mutableStateOf(false) }
     var showGroqDlg by remember { mutableStateOf(false) }
     val displayLyrics = if (translatedActive) (translatedLyrics ?: songLyrics) else songLyrics
-    // Lyrics are romanized at fetch time; this is a safety net for any Devanagari that slipped through.
-    val romanize = displayLyrics.any { hasDevanagari(it.second) }
+    // Lyrics are romanized at fetch time; this is a safety net for any native script that slipped through.
+    val romanize = displayLyrics.any { hasNativeScript(it.second) }
     // ---- Video: trim + mute (honest — applied to the posted file) ----
     var videoMuted by remember { mutableStateOf(false) }
     var videoDuration by remember { mutableStateOf(0L) }
@@ -4531,7 +4531,9 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                     Text(if (videoMuted) "Video audio will be off in the posted status" else "Video audio will be kept", color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall)
                                 }
                             }
-                            // Caption — rounded frosted (light-blur) box, sitting ABOVE the send box
+                            if (mediaUri == null) Text("Add a photo or video to post", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
+                            // Caption + send — WhatsApp chat-input style: the green send button sits INSIDE
+                            // the caption box at its right end. No separate floating button, no big black bar below.
                             Box(Modifier.fillMaxWidth().padding(top = 8.dp).clip(uiShapeFor(24))) {
                                 Box(Modifier.matchParentSize().background(Color.White.copy(alpha = 0.07f)))
                                 // very soft sheen → subtle frosted-glass feel
@@ -4541,14 +4543,12 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.White.copy(alpha = 0.22f), unfocusedBorderColor = Color.White.copy(alpha = 0.10f),
                                         focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
                                         focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White),
+                                    trailingIcon = {
+                                        FilledIconButton(enabled = mediaUri != null,
+                                            onClick = { onUpload(caption.trim(), audience, selected.toList(), song, trimStart, trimEnd, displayLyrics, lyricY, lyricScale, animStyle, romanize, editedBytes, vTrimStart, vTrimEnd, videoMuted, mediaUri, mediaType) },
+                                            modifier = Modifier.size(44.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = AYX_GREEN)) { Icon(Icons.AutoMirrored.Filled.Send, "upload", tint = Color.White) }
+                                    },
                                     modifier = Modifier.fillMaxWidth())
-                            }
-                            // Send — anchored bottom-right with safe padding (never cut off, never overlapping the caption)
-                            Row(Modifier.fillMaxWidth().padding(top = 10.dp, end = 4.dp, bottom = 4.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                                if (mediaUri == null) Text("Add a photo or video to post", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(end = 10.dp))
-                                FilledIconButton(enabled = mediaUri != null,
-                                    onClick = { onUpload(caption.trim(), audience, selected.toList(), song, trimStart, trimEnd, displayLyrics, lyricY, lyricScale, animStyle, romanize, editedBytes, vTrimStart, vTrimEnd, videoMuted, mediaUri, mediaType) },
-                                    modifier = Modifier.size(54.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = AYX_GREEN)) { Icon(Icons.AutoMirrored.Filled.Send, "upload", tint = Color.White) }
                             }
                         }
                     }
@@ -4588,7 +4588,18 @@ private fun AiLyricsTranslateSheet(songTitle: String, lyrics: List<Pair<Long, St
     var translated by remember { mutableStateOf<List<String>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var needKey by remember { mutableStateOf(false) }
-    val srcLines = if (hasLyrics) lyrics.map { it.second } else manual.lines().map { it.trim() }.filter { it.isNotEmpty() }
+    // Original lyrics are ALWAYS shown romanized (Roman letters), like everywhere else in the app.
+    // If fetch-time romanization is still in-flight when the sheet opens, show the raw lines first
+    // and swap in the romanized ones when ready — no endless spinner, no fake text.
+    var romanOrig by remember(lyrics) { mutableStateOf<List<String>?>(null) }
+    LaunchedEffect(lyrics) {
+        romanOrig = null
+        if (lyrics.any { hasNativeScript(it.second) }) {
+            romanOrig = romanizeLyricPairs(lyrics).map { it.second }
+        }
+    }
+    val shownOrig = romanOrig ?: lyrics.map { it.second }
+    val srcLines = if (hasLyrics) shownOrig else manual.lines().map { it.trim() }.filter { it.isNotEmpty() }
     fun runTranslate() {
         error = null; needKey = false
         if (srcLines.isEmpty()) { error = if (hasLyrics) "No lyrics to translate." else "Type or paste the lyrics first, one line per row."; return }
@@ -4606,7 +4617,8 @@ private fun AiLyricsTranslateSheet(songTitle: String, lyrics: List<Pair<Long, St
         }
     }
     Dialog(onDismissRequest = onCancel, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.fillMaxSize(), color = Color(0xFF0A0A0A)) {
+        // Subtle dark teal → charcoal gradient so the sheet doesn't look flat pure-black.
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF0E2A28), Color(0xFF101418), Color(0xFF08090B))))) {
             Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(16.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = onCancel) { Text("Cancel", color = Color.White) }
@@ -4618,10 +4630,10 @@ private fun AiLyricsTranslateSheet(songTitle: String, lyrics: List<Pair<Long, St
                 }
                 Spacer(Modifier.height(8.dp))
                 if (hasLyrics) {
-                    Text("Original lyrics:", color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelMedium)
+                    Text("Original lyrics:", color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.labelMedium)
                     Spacer(Modifier.height(4.dp))
                     Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())) {
-                        lyrics.forEach { pr -> Text(pr.second, color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(vertical = 2.dp)) }
+                        shownOrig.forEach { line -> Text(line, color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(vertical = 2.dp)) }
                     }
                 } else {
                     Text("No lyrics found for this song.", color = Color(0xFFFFB84D), style = MaterialTheme.typography.bodyMedium)
@@ -5205,7 +5217,10 @@ private fun AudioTrimmer(song: GatewayClient.Song, onDone: (Long, Long, List<Pai
             delay(80)
         }
     }
-    val curLyric = lyrics.indexOfLast { it.first <= posMs }
+    // Karaoke shows re-anchored lyrics so the highlighted line matches the audio actually
+    // playing (untimed lyrics are fabricated from song start; playback starts at startMs).
+    val karaokeLyrics = remember(lyrics, startMs) { reanchorUntimedLyrics(lyrics, startMs) }
+    val curLyric = karaokeLyrics.indexOfLast { it.first <= posMs }
     Dialog(onDismissRequest = onCancel, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize(), color = Color(0xFF0A0A0A)) {
             Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(16.dp)) {
@@ -5215,7 +5230,7 @@ private fun AudioTrimmer(song: GatewayClient.Song, onDone: (Long, Long, List<Pai
                         Text(song.title, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(song.artist, color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    TextButton(onClick = { runCatching { player.stop() }; onDone(startMs, endMs, lyrics) }, enabled = ready) { Text("Done", color = IOS_BLUE, fontWeight = FontWeight.Bold) }
+                    TextButton(onClick = { runCatching { player.stop() }; onDone(startMs, endMs, reanchorUntimedLyrics(lyrics, startMs)) }, enabled = ready) { Text("Done", color = IOS_BLUE, fontWeight = FontWeight.Bold) }
                 }
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     if (!lyricsLoaded) CircularProgressIndicator(color = Color.White)
@@ -5232,7 +5247,7 @@ private fun AudioTrimmer(song: GatewayClient.Song, onDone: (Long, Long, List<Pai
                     else Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         for (off in -2..2) {
                             val idx = curLyric + off
-                            if (idx in lyrics.indices) Text(lyrics[idx].second,
+                            if (idx in karaokeLyrics.indices) Text(karaokeLyrics[idx].second,
                                 color = if (off == 0) Color.White else Color.White.copy(alpha = 0.3f),
                                 fontWeight = if (off == 0) FontWeight.Bold else FontWeight.Normal,
                                 style = if (off == 0) MaterialTheme.typography.titleLarge else MaterialTheme.typography.bodyMedium,
@@ -5367,15 +5382,19 @@ private fun WaveformTrimmer(bars: FloatArray, durationMs: Long, startMs: Long, e
 private fun fmtMs(ms: Long): String { val s = (ms / 1000).coerceAtLeast(0); return (s / 60).toString() + ":" + (s % 60).toString().padStart(2, '0') }
 
 /** Devanagari (Hindi) script detector — U+0900..U+097F. */
-private fun hasDevanagari(s: String): Boolean = s.any { it in '\u0900'..'\u097F' }
+/** Any native Indic script (Devanagari, Gurmukhi, Bengali, Tamil, …) — mirrors Node's NATIVE range
+ *  (U+0900–U+0D7F). Devanagari + Gurmukhi are transliterated deterministically on-device-side via
+ *  Node (no AI key needed); other scripts fall back to the AI path when a key exists. */
+private fun hasNativeScript(s: String): Boolean = s.any { it in '\u0900'..'\u0D7F' }
 
 /**
- * Romanize any Devanagari lines via the EXISTING backend ([GatewayClient.translateLines] with romanize=true).
- * English (non-Devanagari) lines are left untouched. On any failure the ORIGINAL lines come back —
- * never a crash, never fake text.
+ * Romanize any native-script lines via the EXISTING backend ([GatewayClient.translateLines] with romanize=true).
+ * Devanagari + Gurmukhi are transliterated deterministically (no AI key needed); other native scripts
+ * use the AI path when a key exists. English (non-native) lines are left untouched. On any failure the
+ * ORIGINAL lines come back — never a crash, never fake text.
  */
 private suspend fun romanizeStrings(lines: List<String>): List<String> {
-    if (lines.none { hasDevanagari(it) }) return lines
+    if (lines.none { hasNativeScript(it) }) return lines
     val rom = runCatching { GatewayClient.translateLines(lines, romanize = true) }.getOrNull()
     if (rom == null || rom.size != lines.size) return lines
     return lines.mapIndexed { i, s -> rom[i].ifBlank { s } }
@@ -5385,6 +5404,23 @@ private suspend fun romanizeLyricPairs(lines: List<Pair<Long, String>>): List<Pa
     val texts = lines.map { it.second }
     val rom = romanizeStrings(texts)
     return if (rom === texts) lines else lines.mapIndexed { i, pr -> pr.first to rom[i] }
+}
+
+/**
+ * Untimed (plain/manual) lyrics carry fabricated `i * 4000ms` timestamps anchored at song start (0).
+ * Playback, however, starts at the trim window — so without re-anchoring, the karaoke/preview shows
+ * lines from the wrong part of the song ("another"/wrong lyrics) whenever trimStart > 0.
+ * This shifts them so line 0 lands exactly on trimStart (4s cadence kept). Synced lyrics, whose
+ * timestamps are real, pass through untouched. Idempotent: already-shifted lists never match the
+ * fabricated pattern, so double-application is impossible.
+ */
+private fun isUntimedLyrics(lyrics: List<Pair<Long, String>>): Boolean {
+    if (lyrics.isEmpty()) return false
+    return lyrics.indices.all { i -> lyrics[i].first == i * 4000L }
+}
+private fun reanchorUntimedLyrics(lyrics: List<Pair<Long, String>>, trimStart: Long): List<Pair<Long, String>> {
+    if (trimStart <= 0L || !isUntimedLyrics(lyrics)) return lyrics
+    return lyrics.map { (it.first + trimStart) to it.second }
 }
 
 /**
