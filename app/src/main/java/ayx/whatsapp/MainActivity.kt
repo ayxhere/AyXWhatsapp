@@ -4278,8 +4278,6 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     var lyricScale by remember { mutableStateOf(1f) }
     // Lyrics animation is ALWAYS Reveal (the one built-in style) — no style selector.
     val animStyle = 1
-    // Lyrics are romanized at fetch time; this is a safety net for any Devanagari that slipped through.
-    val romanize = displayLyrics.any { hasDevanagari(it.second) }
     var previewPos by remember { mutableStateOf(0L) }
     // ---- Media (Image 2): re-pickable + removable inside the editor ----
     var mediaUri by remember { mutableStateOf<Uri?>(uri) }
@@ -4293,6 +4291,8 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     var showAiSettingsDlg by remember { mutableStateOf(false) }
     var showGroqDlg by remember { mutableStateOf(false) }
     val displayLyrics = if (translatedActive) (translatedLyrics ?: songLyrics) else songLyrics
+    // Lyrics are romanized at fetch time; this is a safety net for any Devanagari that slipped through.
+    val romanize = displayLyrics.any { hasDevanagari(it.second) }
     // ---- Video: trim + mute (honest — applied to the posted file) ----
     var videoMuted by remember { mutableStateOf(false) }
     var videoDuration by remember { mutableStateOf(0L) }
