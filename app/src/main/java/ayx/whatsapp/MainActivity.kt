@@ -191,6 +191,10 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontStyle
@@ -1105,7 +1109,9 @@ fun GatewayApp() {
                             val aFile = File(dir, "ta_$stamp.m4a")
                             val outFile = File(dir, "final_$stamp.mp4")
                             val durMs = (tEnd - tStart).coerceAtLeast(3000L)
-                            val ly = if (lyrics.isNotEmpty()) lyrics else runCatching { GatewayClient.getLyrics(song.title, song.artist) }.getOrDefault(emptyList())
+                            val lyFetched = if (lyrics.isNotEmpty()) lyrics else runCatching { GatewayClient.getLyrics(song.title, song.artist) }.getOrDefault(emptyList())
+                            // Safety net: romanize any Devanagari that slipped through (lyrics are normally romanized at fetch time).
+                            val ly = romanizeLyricPairs(lyFetched)
                             val adjusted0 = ly.filter { it.first in tStart..tEnd }.map { ((it.first - tStart - 450L).coerceAtLeast(0L)) to it.second }
                             // Hindi (or any) lyrics → English letters when requested
                             val adjusted = if (romanize && adjusted0.isNotEmpty()) {
@@ -4272,8 +4278,8 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     var lyricScale by remember { mutableStateOf(1f) }
     // Lyrics animation is ALWAYS Reveal (the one built-in style) — no style selector.
     val animStyle = 1
-    // No transliteration toggle — lyrics post exactly as fetched.
-    val romanize = false
+    // Lyrics are romanized at fetch time; this is a safety net for any Devanagari that slipped through.
+    val romanize = displayLyrics.any { hasDevanagari(it.second) }
     var previewPos by remember { mutableStateOf(0L) }
     // ---- Media (Image 2): re-pickable + removable inside the editor ----
     var mediaUri by remember { mutableStateOf<Uri?>(uri) }
@@ -4295,6 +4301,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     var videoPos by remember { mutableStateOf(0L) }
     var videoPlaying by remember { mutableStateOf(false) }
     var videoView by remember { mutableStateOf<VideoView?>(null) }
+    var videoTrimOpen by remember { mutableStateOf(false) }   // V3: trimmer panel toggled from the ✂ Trim button in the video header
     // ---- Song tap toggles the AI Lyrics Translate button below the song row ----
     var showTranslateRow by remember { mutableStateOf(false) }
     var songQuery by remember { mutableStateOf("") }   // last song-search query (preserved across replace)
@@ -4306,7 +4313,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     }
     // Video duration + trim defaults when the video (re)loads.
     LaunchedEffect(mediaUri, mediaType) {
-        if (mediaType != "video" || mediaUri == null) { videoDuration = 0L; vTrimStart = 0L; vTrimEnd = 0L; videoPlaying = false; return@LaunchedEffect }
+        if (mediaType != "video" || mediaUri == null) { videoDuration = 0L; vTrimStart = 0L; vTrimEnd = 0L; videoPlaying = false; videoTrimOpen = false; return@LaunchedEffect }
         val dur = withContext(Dispatchers.IO) {
             runCatching {
                 val r = MediaMetadataRetriever(); r.setDataSource(ctx, mediaUri)
@@ -4316,6 +4323,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
         videoDuration = dur.coerceAtLeast(0L)
         vTrimStart = 0L
         vTrimEnd = if (dur > 0L) minOf(60000L, dur) else 0L
+        videoTrimOpen = false
     }
     // Video preview loop: play inside the trim window, then stop at its end.
     LaunchedEffect(videoPlaying) {
@@ -4330,6 +4338,8 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     val player = remember { MediaPlayer() }
     var playing by remember { mutableStateOf(false) }
     DisposableEffect(Unit) { onDispose { runCatching { player.release() }; runCatching { videoView?.stopPlayback() } } }
+    // Pause the song preview when the app goes to background (user leaves WhatsAyX mid-preview).
+    PauseOnBackground(player) { playing = false }
     LaunchedEffect(playing) { while (playing) { previewPos = runCatching { player.currentPosition.toLong() }.getOrDefault(previewPos); if (trimEnd > 0 && previewPos >= trimEnd) { runCatching { player.seekTo(trimStart.toInt()) }; previewPos = trimStart }; delay(90) } }
     // when music isn't playing, gently scrub through the lyric window so the lines are visible live in the preview
     LaunchedEffect(displayLyrics, playing, trimStart, trimEnd) {
@@ -4402,8 +4412,16 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                 Icon(if (videoPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, "play video", tint = Color.White,
                                     modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(12.dp))
                             }
-                            Text(if (videoMuted) "🔇 Muted" else "🔊 Sound", color = Color.White, style = MaterialTheme.typography.labelSmall,
-                                modifier = Modifier.align(Alignment.TopEnd).padding(top = overlayTopPad, end = 10.dp).background(Color.Black.copy(alpha = 0.5f), uiShapeFor(8)).padding(horizontal = 8.dp, vertical = 4.dp))
+                            // Video header: ✂ Trim toggle + Sound indicator (top-right, below the top bar).
+                            Row(Modifier.align(Alignment.TopEnd).padding(top = overlayTopPad, end = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                TextButton(onClick = { videoTrimOpen = !videoTrimOpen }, contentPadding = PaddingValues(0.dp)) {
+                                    Text(if (videoTrimOpen) "✓ Trim" else "✂ Trim", color = Color.White, style = MaterialTheme.typography.labelSmall,
+                                        modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), uiShapeFor(8)).padding(horizontal = 8.dp, vertical = 4.dp))
+                                }
+                                Spacer(Modifier.width(6.dp))
+                                Text(if (videoMuted) "🔇 Muted" else "🔊 Sound", color = Color.White, style = MaterialTheme.typography.labelSmall,
+                                    modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), uiShapeFor(8)).padding(horizontal = 8.dp, vertical = 4.dp))
+                            }
                             // LEFT-side X: remove the video (below the overlaid top bar).
                             IconButton(onClick = { runCatching { videoView?.stopPlayback() }; videoPlaying = false; mediaUri = null }, modifier = Modifier.align(Alignment.TopStart).padding(top = overlayTopPad, start = 8.dp)) {
                                 Icon(Icons.Filled.Close, "remove video", tint = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(4.dp))
@@ -4456,6 +4474,15 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                     .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.78f))))
                     .navigationBarsPadding().imePadding()) {
                     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 10.dp)) {
+                            // ---- Video trimmer panel (V3): toggled from the ✂ Trim button in the video header.
+                            // Draggable left/right edges set the range; the selection itself IS the length (no Length slider).
+                            if (mediaType == "video" && mediaUri != null && videoDuration > 0L && videoTrimOpen) {
+                                WaveformTrimmer(videoBars, videoDuration, vTrimStart, vTrimEnd, videoPos, edgeHandles = true) { ns, ne -> vTrimStart = ns; vTrimEnd = ne }
+                                val vSelSec = ((vTrimEnd - vTrimStart).coerceAtLeast(0L) / 1000L)
+                                Text(fmtMs(vTrimStart) + "  →  " + fmtMs(vTrimEnd) + "   •   (" + vSelSec + "s)", color = Color.White, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 4.dp))
+                                Text("drag the edges or swipe the waveform to move", color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall)
+                                Spacer(Modifier.height(6.dp))
+                            }
                             // ---- SONG row: tap toggles the AI Lyrics Translate button below. Actions are ICONS (no text).
                             // X buttons anywhere in this flow are NAVIGATION only — never a remove action.
                             Row(Modifier.fillMaxWidth().clickable { if (song != null) showTranslateRow = !showTranslateRow }, verticalAlignment = Alignment.CenterVertically) {
@@ -4497,24 +4524,8 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                 if (translatedActive) Text("Translated ✓ — translated lyrics will be posted", color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 8.dp))
                             }
                             // (AI Edit now lives on the image header; AI Lyrics Translate toggles under the song row.)
-                            // ---- Video: fixed-box trimmer + mute ----
-                            if (mediaType == "video" && mediaUri != null && videoDuration > 0L) {
-                                WaveformTrimmer(videoBars, videoDuration, vTrimStart, vTrimEnd, videoPos) { ns, ne -> vTrimStart = ns; vTrimEnd = ne }
-                                if (videoDuration > 6000L) {
-                                    val vSelLen = (vTrimEnd - vTrimStart).coerceIn(1000L, videoDuration)
-                                    val vMaxLen = minOf(60000L, videoDuration)
-                                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                        Text("Length", color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelMedium)
-                                        Slider(value = vSelLen.toFloat().coerceIn(5000f, vMaxLen.toFloat()), onValueChange = { nl ->
-                                            val newLen = nl.toLong().coerceIn(5000L, vMaxLen)
-                                            vTrimEnd = (vTrimStart + newLen).coerceAtMost(videoDuration)
-                                            if (vTrimEnd - vTrimStart < newLen) vTrimStart = (vTrimEnd - newLen).coerceAtLeast(0L)
-                                        }, valueRange = 5000f..vMaxLen.toFloat(), modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
-                                        colors = SliderDefaults.colors(thumbColor = IOS_BLUE, activeTrackColor = IOS_BLUE))
-                                        Text(fmtMs(vSelLen), color = Color.White, style = MaterialTheme.typography.labelMedium)
-                                    }
-                                }
-                                Text(fmtMs(vTrimStart) + "  →  " + fmtMs(vTrimEnd) + "   •   swipe the waveform to move", color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
+                            // ---- Video: mute (the trimmer now lives in its own toggleable panel above) ----
+                            if (mediaType == "video" && mediaUri != null) {
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                     TextButton(onClick = { videoMuted = !videoMuted }) { Text(if (videoMuted) "🔇 Muted" else "🔊 Sound", color = Color.White) }
                                     Text(if (videoMuted) "Video audio will be off in the posted status" else "Video audio will be kept", color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall)
@@ -4590,7 +4601,7 @@ private fun AiLyricsTranslateSheet(songTitle: String, lyrics: List<Pair<Long, St
                 err != null -> error = "Translation failed: ${err.take(140)}"
                 out.size != srcLines.size || out.zip(srcLines).all { (a, b) -> a == b } ->
                     error = "Translation unavailable — the backend returned no usable translation."
-                else -> translated = out
+                else -> translated = romanizeStrings(out)   // Devanagari translation output → Roman letters (English untouched)
             }
         }
     }
@@ -5069,6 +5080,8 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
     var previewUrl by remember { mutableStateOf<String?>(null) }
     val player = remember { MediaPlayer() }
     val lyricsAvail = remember { mutableStateMapOf<String, Boolean>() }
+    // Pause the song preview when the app goes to background (user leaves WhatsAyX mid-preview).
+    PauseOnBackground(player) { previewUrl = null }
     val searchFocus = remember { FocusRequester() }
     // "Replace song" opens the search directly — focus the field immediately.
     LaunchedEffect(autoFocus) { if (autoFocus) { kotlinx.coroutines.delay(350); runCatching { searchFocus.requestFocus() } } }
@@ -5155,12 +5168,15 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
 @Composable
 private fun AudioTrimmer(song: GatewayClient.Song, onDone: (Long, Long, List<Pair<Long, String>>) -> Unit, onCancel: () -> Unit) {
     val player = remember { MediaPlayer() }
+    val scope = rememberCoroutineScope()
     var durationMs by remember { mutableStateOf(0L) }
     var ready by remember { mutableStateOf(false) }
     var startMs by remember { mutableStateOf(0L) }
     var endMs by remember { mutableStateOf(15000L) }
     var posMs by remember { mutableStateOf(0L) }
     var playing by remember { mutableStateOf(false) }
+    // Pause the preview when the app goes to background (user leaves WhatsAyX mid-preview).
+    PauseOnBackground(player) { playing = false }
     var lyrics by remember { mutableStateOf<List<Pair<Long, String>>>(emptyList()) }
     var lyricsLoaded by remember { mutableStateOf(false) }
     var lyricsAttempt by remember { mutableStateOf(0) }
@@ -5176,7 +5192,12 @@ private fun AudioTrimmer(song: GatewayClient.Song, onDone: (Long, Long, List<Pai
         }
         onDispose { runCatching { player.release() } }
     }
-    LaunchedEffect(lyricsAttempt) { lyricsLoaded = false; lyrics = GatewayClient.getLyrics(song.title, song.artist); lyricsLoaded = true }
+    LaunchedEffect(lyricsAttempt) {
+        lyricsLoaded = false
+        // Lyrics are romanized at fetch time: Devanagari (Hindi script) → Roman letters via the existing backend.
+        lyrics = romanizeLyricPairs(GatewayClient.getLyrics(song.title, song.artist))
+        lyricsLoaded = true
+    }
     LaunchedEffect(playing) {
         while (playing) {
             posMs = runCatching { player.currentPosition.toLong() }.getOrDefault(posMs)
@@ -5246,27 +5267,55 @@ private fun AudioTrimmer(song: GatewayClient.Song, onDone: (Long, Long, List<Pai
             }
         }
         if (manualOpen) ManualLyricsDialog(
-            onDone = { lines -> lyrics = lines.mapIndexed { i, s -> (i * 4000L) to s }; manualOpen = false },
+            onDone = { lines ->
+                val base = lines.mapIndexed { i, s -> (i * 4000L) to s }
+                lyrics = base
+                // Manually entered Devanagari is romanized too (best effort, never blocks).
+                scope.launch { lyrics = romanizeLyricPairs(base) }
+                manualOpen = false
+            },
             onCancel = { manualOpen = false })
     }
 }
 
 @Composable
-private fun WaveformTrimmer(bars: FloatArray, durationMs: Long, startMs: Long, endMs: Long, posMs: Long, onChange: (Long, Long) -> Unit) {
+private fun WaveformTrimmer(bars: FloatArray, durationMs: Long, startMs: Long, endMs: Long, posMs: Long, edgeHandles: Boolean = false, onChange: (Long, Long) -> Unit) {
     val selLen = (endMs - startMs).coerceAtLeast(1000L)
     val curStart by rememberUpdatedState(startMs)
     val curLen by rememberUpdatedState(selLen)
+    val grabPx = with(LocalDensity.current) { 30.dp.toPx() }
     Column(Modifier.fillMaxWidth()) {
-        Canvas(Modifier.fillMaxWidth().height(88.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF1C1C1E)).pointerInput(durationMs) {
+        Canvas(Modifier.fillMaxWidth().height(88.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF1C1C1E)).pointerInput(durationMs, edgeHandles) {
             val w = size.width.toFloat().coerceAtLeast(1f)
-            var acc = 0L
+            var accS = 0L
+            var accE = 0L
+            var mode = 0   // 0 = move whole window, 1 = drag LEFT edge, 2 = drag RIGHT edge
             detectHorizontalDragGestures(
-                onDragStart = { acc = curStart },
+                onDragStart = { off ->
+                    accS = curStart; accE = curStart + curLen; mode = 0
+                    if (edgeHandles && durationMs > 0) {
+                        val sx = curStart.toFloat() / durationMs * w
+                        val ex = (curStart + curLen).toFloat() / durationMs * w
+                        mode = when {
+                            kotlin.math.abs(off.x - sx) <= grabPx -> 1
+                            kotlin.math.abs(off.x - ex) <= grabPx -> 2
+                            else -> 0
+                        }
+                    }
+                },
                 onHorizontalDrag = { _, dragAmount ->
-                    if (durationMs > 0) {
-                        val deltaMs = (dragAmount / w * durationMs).toLong()
-                        acc = (acc + deltaMs).coerceIn(0L, (durationMs - curLen).coerceAtLeast(0L))
-                        onChange(acc, acc + curLen)
+                    if (durationMs <= 0) return@detectHorizontalDragGestures
+                    val dMs = (dragAmount / w * durationMs).toLong()
+                    val minLen = 1000L
+                    when (mode) {
+                        1 -> { accS = (accS + dMs).coerceIn(0L, (accE - minLen).coerceAtLeast(0L)); onChange(accS, accE) }
+                        2 -> { accE = (accE + dMs).coerceIn((accS + minLen).coerceAtMost(durationMs), durationMs); onChange(accS, accE) }
+                        else -> {
+                            val len = (accE - accS).coerceAtLeast(minLen)
+                            accS = (accS + dMs).coerceIn(0L, (durationMs - len).coerceAtLeast(0L))
+                            accE = accS + len
+                            onChange(accS, accE)
+                        }
                     }
                 }
             )
@@ -5288,11 +5337,21 @@ private fun WaveformTrimmer(bars: FloatArray, durationMs: Long, startMs: Long, e
             // Dim outside the selection.
             drawRect(Color.Black.copy(alpha = 0.45f), topLeft = androidx.compose.ui.geometry.Offset(0f, 0f), size = androidx.compose.ui.geometry.Size(selStartX.coerceAtLeast(0f), size.height))
             drawRect(Color.Black.copy(alpha = 0.45f), topLeft = androidx.compose.ui.geometry.Offset(selEndX, 0f), size = androidx.compose.ui.geometry.Size((size.width - selEndX).coerceAtLeast(0f), size.height))
-            // Rounded selection window: WHITE border, subtle white fill. No draggable side handles — swipe the waveform to move.
+            // Rounded selection window: WHITE border, subtle white fill.
+            // V3 (edgeHandles): LEFT and RIGHT edges are draggable handles (the selection itself sets the length);
+            // otherwise the window has a fixed length and you swipe the waveform to move it.
             drawRoundRect(Color.White.copy(alpha = 0.08f), topLeft = androidx.compose.ui.geometry.Offset(selStartX, 0f),
                 size = androidx.compose.ui.geometry.Size((selEndX - selStartX).coerceAtLeast(2f), size.height), cornerRadius = CornerRadius(14f, 14f))
             drawRoundRect(Color.White, topLeft = androidx.compose.ui.geometry.Offset(selStartX, 0f),
                 size = androidx.compose.ui.geometry.Size((selEndX - selStartX).coerceAtLeast(2f), size.height), cornerRadius = CornerRadius(14f, 14f), style = Stroke(width = 3f))
+            if (edgeHandles) {
+                // Draggable edge handles: white grip bars with dark dots.
+                val hw = 13f
+                for (hx in listOf(selStartX, selEndX)) {
+                    drawRoundRect(Color.White, topLeft = Offset(hx - hw / 2f, 0f), size = Size(hw, size.height), cornerRadius = CornerRadius(6f, 6f))
+                    for (dy in listOf(0.38f, 0.5f, 0.62f)) drawCircle(Color(0xFF1C1C1E), radius = 2.4f, center = Offset(hx, size.height * dy))
+                }
+            }
             if (posMs in startMs..endMs && durationMs > 0) {
                 val px = posMs.toFloat() / durationMs * size.width
                 drawRect(Color.Yellow, topLeft = androidx.compose.ui.geometry.Offset(px - 1.5f, 0f), size = androidx.compose.ui.geometry.Size(3f, size.height))
@@ -5306,6 +5365,44 @@ private fun WaveformTrimmer(bars: FloatArray, durationMs: Long, startMs: Long, e
 }
 
 private fun fmtMs(ms: Long): String { val s = (ms / 1000).coerceAtLeast(0); return (s / 60).toString() + ":" + (s % 60).toString().padStart(2, '0') }
+
+/** Devanagari (Hindi) script detector — U+0900..U+097F. */
+private fun hasDevanagari(s: String): Boolean = s.any { it in '\u0900'..'\u097F' }
+
+/**
+ * Romanize any Devanagari lines via the EXISTING backend ([GatewayClient.translateLines] with romanize=true).
+ * English (non-Devanagari) lines are left untouched. On any failure the ORIGINAL lines come back —
+ * never a crash, never fake text.
+ */
+private suspend fun romanizeStrings(lines: List<String>): List<String> {
+    if (lines.none { hasDevanagari(it) }) return lines
+    val rom = runCatching { GatewayClient.translateLines(lines, romanize = true) }.getOrNull()
+    if (rom == null || rom.size != lines.size) return lines
+    return lines.mapIndexed { i, s -> rom[i].ifBlank { s } }
+}
+
+private suspend fun romanizeLyricPairs(lines: List<Pair<Long, String>>): List<Pair<Long, String>> {
+    val texts = lines.map { it.second }
+    val rom = romanizeStrings(texts)
+    return if (rom === texts) lines else lines.mapIndexed { i, pr -> pr.first to rom[i] }
+}
+
+/**
+ * Pauses a [MediaPlayer] when the app goes to background (Lifecycle ON_PAUSE) — e.g. the user
+ * picks a song and leaves WhatsAyX: the preview audio stops instead of playing on. [onPaused]
+ * syncs the caller's UI state (play/pause icon). Disposal still releases the player (verified).
+ */
+@Composable
+private fun PauseOnBackground(player: MediaPlayer, onPaused: () -> Unit = {}) {
+    val owner = LocalLifecycleOwner.current
+    DisposableEffect(owner, player) {
+        val obs = LifecycleEventObserver { _, e ->
+            if (e == Lifecycle.Event.ON_PAUSE) { runCatching { if (player.isPlaying) player.pause() }; onPaused() }
+        }
+        owner.lifecycle.addObserver(obs)
+        onDispose { owner.lifecycle.removeObserver(obs) }
+    }
+}
 
 // ===== AyX JSON Configuration Integration (Firebase-style) =====
 // Loads app/ayx-services.json config (packaged via Gradle task into
