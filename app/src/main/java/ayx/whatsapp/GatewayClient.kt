@@ -25,6 +25,8 @@ object GatewayClient {
     )
 
     data class Rule(val match: String, val reply: String, val mode: String = "contains")
+    /** One AI Lyrics translate API config (OpenAI-compatible chat-completions endpoint). List order = failover try order. */
+    data class LyricApi(val name: String = "", val url: String = "", val key: String = "", val model: String = "")
     data class Settings(
         val alwaysOnline: Boolean = false,
         val autoRead: Boolean = false,
@@ -58,6 +60,8 @@ object GatewayClient {
         val aiLangMode: String = "auto",
         val aiFullContext: Boolean = true,
         val aiReplyLang: String = "",
+        /** AI Lyrics translate APIs (Settings → AI Assistant → AI Lyrics), tried IN ORDER. */
+        val aiLyricsApis: List<LyricApi> = emptyList(),
     )
     data class Contact(val jid: String, val name: String, val number: String)
     data class Msg(val chat: String, val name: String, val fromMe: Boolean, val text: String, val ts: Long,
@@ -306,28 +310,54 @@ object GatewayClient {
     suspend fun translateLines(lines: List<String>, romanize: Boolean, lang: String = "English"): List<String> = withContext(Dispatchers.IO) {
         translateLinesEx(lines, romanize, lang).first
     }
-    /** Same as [translateLines] but also returns the backend error (null when ok) so the UI can show real states. */
+    /** AI Lyrics API configs in failover order. Migrates the old single key (GroqKeyDialog / API configuration) as the first "Groq" entry so nothing is lost. */
+    private suspend fun lyricApis(): List<LyricApi> {
+        val s = runCatching { getSettings() }.getOrNull() ?: return emptyList()
+        val list = s.aiLyricsApis.filter { it.url.isNotBlank() && it.key.isNotBlank() }
+        if (list.isNotEmpty()) return list
+        if (s.aiApiKey.isNotBlank()) return listOf(LyricApi(
+            name = "Groq",
+            url = s.aiApiUrl.ifBlank { "https://api.groq.com/openai/v1/chat/completions" },
+            key = s.aiApiKey,
+            model = s.aiModel.ifBlank { "openai/gpt-oss-20b" }))
+        return emptyList()
+    }
+    /** Same as [translateLines] but also returns the backend error (null when ok) so the UI can show real states.
+     * Tries each configured AI Lyrics API IN ORDER (failover); first success wins. If all fail,
+     * the error lists each API with its failure reason.
+     * romanize=true is deterministic on the Node side for Devanagari/Gurmukhi (no key needed),
+     * so it always attempts once without an override first (Node falls back to its own settings). */
     suspend fun translateLinesEx(lines: List<String>, romanize: Boolean, lang: String = "English"): Pair<List<String>, String?> = withContext(Dispatchers.IO) {
-        // Translate calls hit a real AI API (long lyric lists can take 30s+): generous read timeout
-        // + ONE automatic retry on timeout only. Other errors are returned as-is (no retry).
-        fun attempt(): Pair<List<String>, String?> {
-            return try {
-                val arr = JSONArray(); lines.forEach { arr.put(it) }
-                val o = post("/translatelines", JSONObject().put("lines", arr).put("romanize", romanize).put("lang", lang), readTimeoutMs = 90000)
-                if (o.optBoolean("ok", false)) {
-                    val out = o.optJSONArray("lines") ?: return lines to "bad response"
-                    (0 until out.length()).map { out.optString(it) } to null
-                } else lines to o.optString("error", "failed").ifBlank { "failed" }
-            } catch (e: java.net.SocketTimeoutException) { lines to "timeout" }
-            catch (e: Exception) { lines to (e.message ?: "connection error") }
+        val apis = lyricApis()
+        val attempts: List<LyricApi?> = if (romanize) listOf(null) + apis else apis
+        if (attempts.isEmpty()) return@withContext lines to "no AI key"
+        val failures = mutableListOf<String>()
+        for (api in attempts) {
+            // Translate calls hit a real AI API (long lyric lists can take 30s+): generous read timeout
+            // + ONE automatic retry on timeout only, PER API. Other errors move to the next API.
+            fun attempt(): Pair<List<String>, String?> {
+                return try {
+                    val arr = JSONArray(); lines.forEach { arr.put(it) }
+                    val body = JSONObject().put("lines", arr).put("romanize", romanize).put("lang", lang)
+                    if (api != null) body.put("api", JSONObject().put("url", api.url).put("key", api.key).put("model", api.model))
+                    val o = post("/translatelines", body, readTimeoutMs = 90000)
+                    if (o.optBoolean("ok", false)) {
+                        val out = o.optJSONArray("lines") ?: return lines to "bad response"
+                        (0 until out.length()).map { out.optString(it) } to null
+                    } else lines to o.optString("error", "failed").ifBlank { "failed" }
+                } catch (e: java.net.SocketTimeoutException) { lines to "timeout" }
+                catch (e: Exception) { lines to (e.message ?: "connection error") }
+            }
+            var r = attempt()
+            if (r.second == "timeout") {
+                // one automatic retry on transient AI slowness; keep the manual Retry button too
+                val second = attempt()
+                if (second.second == null) r = second
+            }
+            if (r.second == null) return@withContext r
+            failures.add("${api?.name?.ifBlank { "API" } ?: "default"}: ${r.second}")
         }
-        val first = attempt()
-        if (first.second == "timeout") {
-            // one automatic retry on transient AI slowness; keep the manual Retry button too
-            val second = attempt()
-            if (second.second == null) return@withContext second
-        }
-        first
+        lines to failures.joinToString(" · ")
     }
     data class Song(val title: String, val artist: String, val image: String?, val url: String)
     // returns synced lyrics as (timeMs, line); falls back to PLAIN (untimed) lyrics with
@@ -739,6 +769,12 @@ object GatewayClient {
             aiLangMode = o.optString("aiLangMode", "auto"),
             aiFullContext = o.optBoolean("aiFullContext", true),
             aiReplyLang = o.optString("aiReplyLang", ""),
+            aiLyricsApis = o.optJSONArray("aiLyricsApis")?.let { a ->
+                (0 until a.length()).mapNotNull { i ->
+                    val e = a.optJSONObject(i) ?: return@mapNotNull null
+                    LyricApi(e.optString("name"), e.optString("url"), e.optString("key"), e.optString("model"))
+                }
+            } ?: emptyList(),
         )
     }
 

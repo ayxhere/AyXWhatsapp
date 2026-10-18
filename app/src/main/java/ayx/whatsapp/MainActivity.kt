@@ -3546,9 +3546,130 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
         }
     }
 
+    // AI Lyrics — multiple API configs with automatic failover (tried IN ORDER).
+    SettingsGroup("AI Lyrics") {
+        AiLyricsSettings(settings, onToggle)
+    }
+
     // AI image edit (OpenRouter) — client-side key used by the status editor's AI Edit.
     SettingsGroup("AI image edit") {
         AiSettingsFields(ctx, dark = false, onSaved = {})
+    }
+}
+
+/** AI Lyrics — multiple OpenAI-compatible API configs with automatic failover (tried IN ORDER). */
+@Composable
+private fun AiLyricsSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit) {
+    val ctx = LocalContext.current
+    var apis by remember(settings.aiLyricsApis) { mutableStateOf(settings.aiLyricsApis) }
+    var dlgPrefill by remember { mutableStateOf<GatewayClient.LyricApi?>(null) }
+    var migrated by remember { mutableStateOf(false) }
+
+    // One-time migration: the old single key (saved via GroqKeyDialog / API configuration) becomes
+    // the first "Groq" entry, so the visible list always matches the actual try order.
+    LaunchedEffect(settings.aiLyricsApis, settings.aiApiKey) {
+        if (!migrated && settings.aiLyricsApis.isEmpty() && settings.aiApiKey.isNotBlank()) {
+            migrated = true
+            val entry = GatewayClient.LyricApi("Groq",
+                settings.aiApiUrl.ifBlank { "https://api.groq.com/openai/v1/chat/completions" },
+                settings.aiApiKey, settings.aiModel.ifBlank { "openai/gpt-oss-20b" })
+            val arr = org.json.JSONArray().put(lyricApiJson(entry))
+            onToggle(JSONObject().put("aiLyricsApis", arr))
+        }
+    }
+
+    fun save(list: List<GatewayClient.LyricApi>) {
+        apis = list
+        val arr = org.json.JSONArray()
+        list.forEach { arr.put(lyricApiJson(it)) }
+        onToggle(JSONObject().put("aiLyricsApis", arr))
+        Toast.makeText(ctx, "AI Lyrics APIs saved", Toast.LENGTH_SHORT).show()
+    }
+
+    Text("Lyrics translate tries these IN ORDER — if the first fails, the next is tried automatically. Add Groq, OpenRouter and/or Agent Router keys.",
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(vertical = 4.dp))
+    if (apis.isEmpty()) {
+        Text("No API added yet — translation will ask you to add one.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(vertical = 8.dp))
+    } else {
+        apis.forEachIndexed { i, api ->
+            Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("${i + 1}. ${api.name.ifBlank { "API" }}", style = MaterialTheme.typography.bodyLarge,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(api.url.ifBlank { "no URL set" }, style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("model: ${api.model.ifBlank { "—" }} · key: ${if (api.key.isNotBlank()) "•••••• set" else "MISSING"}",
+                        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                IconButton(onClick = { save(apis.filterIndexed { j, _ -> j != i }) }) { Icon(Icons.Filled.Delete, "remove", tint = AYX_RED) }
+            }
+            if (i < apis.size - 1) HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+        }
+    }
+    Spacer(Modifier.height(4.dp))
+    // Quick-add with sensible defaults. Agent Router keeps an EMPTY url — the user fills in its endpoint.
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        AssistChip(onClick = { dlgPrefill = GatewayClient.LyricApi("Groq", "https://api.groq.com/openai/v1/chat/completions", "", "openai/gpt-oss-20b") },
+            label = { Text("+ Groq") })
+        AssistChip(onClick = { dlgPrefill = GatewayClient.LyricApi("OpenRouter", "https://openrouter.ai/api/v1/chat/completions", "", "openai/gpt-oss-20b") },
+            label = { Text("+ OpenRouter") })
+        AssistChip(onClick = { dlgPrefill = GatewayClient.LyricApi("Agent Router", "", "", "") },
+            label = { Text("+ Agent Router") })
+    }
+    TextButton(onClick = { dlgPrefill = GatewayClient.LyricApi("", "", "", "") }) { Text("+ Add custom API", color = Color.White) }
+
+    dlgPrefill?.let { pre ->
+        AiLyricApiDialog(pre, onDismiss = { dlgPrefill = null }, onSave = { entry -> save(apis + entry); dlgPrefill = null })
+    }
+}
+
+private fun lyricApiJson(a: GatewayClient.LyricApi): JSONObject =
+    JSONObject().put("name", a.name).put("url", a.url).put("key", a.key).put("model", a.model)
+
+/** Add dialog for one AI Lyrics API config. Agent Router is treated as a generic
+ * OpenAI-compatible chat-completions endpoint — the user pastes its URL. */
+@Composable
+private fun AiLyricApiDialog(prefill: GatewayClient.LyricApi, onDismiss: () -> Unit, onSave: (GatewayClient.LyricApi) -> Unit) {
+    var name by remember { mutableStateOf(prefill.name) }
+    var url by remember { mutableStateOf(prefill.url) }
+    var key by remember { mutableStateOf(prefill.key) }
+    var model by remember { mutableStateOf(prefill.model) }
+    var showKey by remember { mutableStateOf(false) }
+    var err by remember { mutableStateOf<String?>(null) }
+    @Composable
+    fun DarkField(label: String, value: String, onV: (String) -> Unit, pwd: Boolean = false) {
+        OutlinedTextField(value, onV, label = { Text(label, color = Color.White.copy(alpha = 0.6f)) }, singleLine = true,
+            visualTransformation = if (pwd && !showKey) PasswordVisualTransformation() else VisualTransformation.None,
+            trailingIcon = if (pwd) { { IconButton(onClick = { showKey = !showKey }) { Text(if (showKey) "Hide" else "Show", color = Color.White.copy(alpha = 0.7f)) } } } else null,
+            colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White,
+                focusedBorderColor = Color.White.copy(alpha = 0.4f), unfocusedBorderColor = Color.White.copy(alpha = 0.2f),
+                focusedLabelColor = Color.White.copy(alpha = 0.7f), unfocusedLabelColor = Color.White.copy(alpha = 0.5f)),
+            modifier = Modifier.fillMaxWidth())
+    }
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = uiShapeFor(18), color = Color(0xFF161616)) {
+            Column(Modifier.padding(18.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Add AI Lyrics API", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                if (prefill.name == "Agent Router") Text("Agent Router ka OpenAI-compatible chat-completions URL yahan paste karo (uske endpoint ka pata nahi — koi bhi .../chat/completions jaisa URL chalega).",
+                    color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.bodySmall)
+                DarkField("Display name", name, { name = it })
+                DarkField("Base URL (chat completions)", url, { url = it })
+                DarkField("API key", key, { key = it }, pwd = true)
+                DarkField("Model", model, { model = it })
+                if (err != null) Text(err!!, color = Color(0xFFFF8A80), style = MaterialTheme.typography.bodySmall)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = onDismiss) { Text("Cancel", color = Color.White.copy(alpha = 0.7f)) }
+                    Spacer(Modifier.size(8.dp))
+                    Button(onClick = {
+                        if (url.isBlank() || key.isBlank()) { err = "URL and API key are required."; return@Button }
+                        onSave(GatewayClient.LyricApi(name.trim().ifBlank { "API" }, url.trim(), key.trim(), model.trim()))
+                    }) { Text("Save") }
+                }
+            }
+        }
     }
 }
 
@@ -4532,23 +4653,21 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                 }
                             }
                             if (mediaUri == null) Text("Add a photo or video to post", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
-                            // Caption + send — WhatsApp chat-input style: the green send button sits INSIDE
-                            // the caption box at its right end. No separate floating button, no big black bar below.
-                            Box(Modifier.fillMaxWidth().padding(top = 8.dp).clip(uiShapeFor(24))) {
-                                Box(Modifier.matchParentSize().background(Color.White.copy(alpha = 0.07f)))
-                                // very soft sheen → subtle frosted-glass feel
-                                Box(Modifier.matchParentSize().blur(6.dp).background(
-                                    Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.08f), Color.White.copy(alpha = 0.02f)))))
-                                OutlinedTextField(caption, { caption = it }, placeholder = { Text("Add a caption…", color = Color.White.copy(alpha = 0.6f)) }, maxLines = 3, shape = uiShapeFor(24),
-                                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.White.copy(alpha = 0.22f), unfocusedBorderColor = Color.White.copy(alpha = 0.10f),
-                                        focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
-                                        focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White),
-                                    trailingIcon = {
-                                        FilledIconButton(enabled = mediaUri != null,
-                                            onClick = { onUpload(caption.trim(), audience, selected.toList(), song, trimStart, trimEnd, displayLyrics, lyricY, lyricScale, animStyle, romanize, editedBytes, vTrimStart, vTrimEnd, videoMuted, mediaUri, mediaType) },
-                                            modifier = Modifier.size(44.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = AYX_GREEN)) { Icon(Icons.AutoMirrored.Filled.Send, "upload", tint = Color.White) }
-                                    },
-                                    modifier = Modifier.fillMaxWidth())
+                            // Caption + send — ONE row: text field + green send button attached at its right end.
+                            // Explicit Row (not trailingIcon) so the button can never detach or misalign when the
+                            // keyboard opens; the overlay's imePadding() keeps the whole row just above the keyboard.
+                            Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.weight(1f).clip(uiShapeFor(24)).background(Color.White.copy(alpha = 0.07f))) {
+                                    OutlinedTextField(caption, { caption = it }, placeholder = { Text("Add a caption…", color = Color.White.copy(alpha = 0.6f)) }, maxLines = 3, shape = uiShapeFor(24),
+                                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.White.copy(alpha = 0.22f), unfocusedBorderColor = Color.White.copy(alpha = 0.10f),
+                                            focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
+                                            focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White),
+                                        modifier = Modifier.fillMaxWidth())
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                FilledIconButton(enabled = mediaUri != null,
+                                    onClick = { onUpload(caption.trim(), audience, selected.toList(), song, trimStart, trimEnd, displayLyrics, lyricY, lyricScale, animStyle, romanize, editedBytes, vTrimStart, vTrimEnd, videoMuted, mediaUri, mediaType) },
+                                    modifier = Modifier.size(48.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = AYX_GREEN)) { Icon(Icons.AutoMirrored.Filled.Send, "upload", tint = Color.White) }
                             }
                         }
                     }
@@ -4680,7 +4799,7 @@ private fun AiLyricsTranslateSheet(songTitle: String, lyrics: List<Pair<Long, St
                 }
                 if (needKey) {
                     Spacer(Modifier.height(6.dp))
-                    Text("Translation needs an AI key.", color = Color(0xFFFFB84D), style = MaterialTheme.typography.bodySmall)
+                    Text("Add an API in Settings → AI Assistant → AI Lyrics.", color = Color(0xFFFFB84D), style = MaterialTheme.typography.bodySmall)
                     TextButton(onClick = onOpenApiSettings) { Text("Open API settings", color = Color.White) }
                 }
                 if (error != null) {
@@ -4725,7 +4844,7 @@ private fun GroqKeyDialog(ctx: Context, onClose: () -> Unit) {
         Surface(shape = uiShapeFor(18), color = Color(0xFF161616)) {
             Column(Modifier.padding(18.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("API settings", color = Color.White, style = MaterialTheme.typography.titleMedium)
-                Text("Translation uses your own AI key (same as Settings → AI Assistant → API configuration). It is stored on this device and sent only to your API URL.",
+                Text("Translation uses your own AI key (also saved to Settings → AI Assistant → AI Lyrics, where you can add backup APIs for automatic failover). It is stored on this device and sent only to your API URL.",
                     color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(url, { url = it }, label = { Text("API URL", color = Color.White.copy(alpha = 0.6f)) }, singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White,
@@ -4753,7 +4872,16 @@ private fun GroqKeyDialog(ctx: Context, onClose: () -> Unit) {
                         err = null; saving = true
                         scope.launch {
                             val ok = runCatching {
-                                GatewayClient.patchSettings(JSONObject().put("aiApiUrl", url.trim()).put("aiApiKey", key.trim()).put("aiModel", model.trim()))
+                                // Keep the main AI-reply keys as before, AND upsert this key as the
+                                // first "Groq" entry in the AI Lyrics failover list.
+                                val cur = runCatching { GatewayClient.getSettings() }.getOrNull()
+                                val list = (cur?.aiLyricsApis ?: emptyList()).toMutableList()
+                                val entry = GatewayClient.LyricApi("Groq", url.trim(), key.trim(), model.trim())
+                                val idx = list.indexOfFirst { it.name.equals("Groq", ignoreCase = true) }
+                                if (idx >= 0) list[idx] = entry else list.add(0, entry)
+                                val arr = org.json.JSONArray()
+                                list.forEach { arr.put(lyricApiJson(it)) }
+                                GatewayClient.patchSettings(JSONObject().put("aiApiUrl", url.trim()).put("aiApiKey", key.trim()).put("aiModel", model.trim()).put("aiLyricsApis", arr))
                             }.isSuccess
                             saving = false
                             if (ok) { Toast.makeText(ctx, "API settings saved", Toast.LENGTH_SHORT).show(); onClose() }

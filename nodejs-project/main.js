@@ -645,6 +645,36 @@ async function chatComplete(model, messages) {
   } finally { aiRelease() }
 }
 
+// Single-attempt chat completion against an EXPLICIT OpenAI-compatible endpoint
+// ({url, key}). Returns { text } on success, { error, status } on failure.
+// No internal retries — the caller (Kotlin AI-Lyrics failover) decides what to try next.
+async function chatCompleteApi(api, model, messages) {
+  await aiSlot()
+  try {
+    let res
+    try {
+      res = await fetch(api.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + api.key },
+        body: JSON.stringify({ model, messages, temperature: 0.7 }),
+      })
+    } catch (e) { return { error: 'network error' } }
+    if (res.ok) {
+      let data = null
+      try { data = await res.json() } catch (_) {}
+      const out = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content
+      if (out && String(out).trim()) return { text: String(out).trim() }
+      return { error: 'empty reply' }
+    }
+    try { await res.text() } catch (_) {}
+    if (res.status === 401 || res.status === 403) return { error: 'invalid key (HTTP ' + res.status + ')', status: res.status }
+    if (res.status === 402) return { error: 'no credits (HTTP 402)', status: 402 }
+    if (res.status === 429) return { error: 'rate limited (HTTP 429)', status: 429 }
+    if (res.status >= 500) return { error: 'server error (HTTP ' + res.status + ')', status: res.status }
+    return { error: 'failed (HTTP ' + res.status + ')', status: res.status }
+  } finally { aiRelease() }
+}
+
 // add who-we're-talking-to context from AI memory so replies stay consistent per person
 function contactContext(jid) {
   const m = contactMem.get(jid)
@@ -2643,6 +2673,13 @@ app.post('/translatelines', async (req, res) => {
     const romanize = !!(req.body && req.body.romanize)
     const lang = String((req.body && req.body.lang) || 'English')
     if (!lines.length) return res.json({ ok: false, error: 'no lines' })
+    // Optional per-request API override {url, key, model} — the Kotlin AI-Lyrics failover
+    // passes ONE api per call and tries the next itself on failure.
+    const ov = (req.body && req.body.api) || null
+    const ovApi = (ov && ov.url && ov.key) ? { url: String(ov.url), key: String(ov.key) } : null
+    const ovModel = (ov && ov.model && String(ov.model).trim()) ? String(ov.model).trim() : null
+    const lyricApi = ovApi || ((settings.aiApiUrl && settings.aiApiKey) ? { url: settings.aiApiUrl, key: settings.aiApiKey } : null)
+    const lyricModel = ovModel || (settings.aiModel || 'openai/gpt-oss-20b')
     const NATIVE = /[ऀ-ൿ]/        // any native Indic script
     const DEVA = /[ऀ-ॿ]/ // Devanagari (Hindi/Marathi)
     const GURU = /[\u0A00-\u0A7F]/ // Gurmukhi (Punjabi)
@@ -2654,10 +2691,11 @@ app.post('/translatelines', async (req, res) => {
       // 2) any line still in a native script NEITHER Devanagari NOR Gurmukhi (Bengali/Tamil/Telugu…) → AI if we have a key
       const remain = []
       work.forEach((l, i) => { if (NATIVE.test(l)) remain.push(i) })
-      if (remain.length && settings.aiApiUrl && settings.aiApiKey) {
+      if (remain.length && lyricApi) {
         const sys = 'You transliterate song lyrics into English (Latin) letters, keeping the SAME language and words — do NOT translate the meaning. Any word already in English/Latin letters MUST stay EXACTLY as-is. Input is numbered lines "N| text". Return EXACTLY one line per input as "N| <result>" — same numbers, order and count, no commentary.'
         const numbered = remain.map(i => (i + 1) + '| ' + work[i]).join('\n')
-        let out = await chatComplete(settings.aiModel || 'openai/gpt-oss-20b', [{ role: 'system', content: sys }, { role: 'user', content: numbered }])
+        const rr = await chatCompleteApi(lyricApi, lyricModel, [{ role: 'system', content: sys }, { role: 'user', content: numbered }])
+        let out = rr.text || null
         if (out) {
           out = out.replace(/```[a-z]*\n?/gi, '').trim()
           const map = {}
@@ -2669,12 +2707,12 @@ app.post('/translatelines', async (req, res) => {
     }
 
     // translate (meaning) → needs the AI
-    if (!settings.aiApiUrl || !settings.aiApiKey) return res.json({ ok: false, error: 'no AI key' })
+    if (!lyricApi) return res.json({ ok: false, error: 'no AI key' })
     const sys = 'You translate song lyrics into ' + lang + '. Input is numbered lines "N| text". Return EXACTLY one line per input as "N| <translation>" — same numbers, same order, same count, no extra lines, no commentary.'
     const numbered = lines.map((l, i) => (i + 1) + '| ' + l).join('\n')
-    let out = await chatComplete(settings.aiModel || 'openai/gpt-oss-20b', [{ role: 'system', content: sys }, { role: 'user', content: numbered }])
-    if (!out) return res.json({ ok: false, error: 'failed' })
-    out = out.replace(/```[a-z]*\n?/gi, '').trim()
+    const rr = await chatCompleteApi(lyricApi, lyricModel, [{ role: 'system', content: sys }, { role: 'user', content: numbered }])
+    if (!rr.text) return res.json({ ok: false, error: rr.error || 'failed' })
+    let out = rr.text.replace(/```[a-z]*\n?/gi, '').trim()
     const map = {}
     out.split('\n').forEach(line => { const m = line.match(/^\s*(\d+)\s*[|.)\:\-]\s*(.*)$/); if (m && m[2] != null) map[parseInt(m[1], 10) - 1] = m[2].trim() })
     const result = lines.map((l, i) => (map[i] != null && String(map[i]).trim() ? map[i] : l))
@@ -2716,6 +2754,10 @@ app.post('/settings', (req, res) => {
   if (typeof b.aiFullContext === 'boolean') settings.aiFullContext = b.aiFullContext
   if (typeof b.aiLangMode === 'string') settings.aiLangMode = b.aiLangMode
   if (typeof b.aiReplyLang === 'string') settings.aiReplyLang = b.aiReplyLang
+  if (Array.isArray(b.aiLyricsApis)) settings.aiLyricsApis = b.aiLyricsApis.map(x => ({
+    name: String((x && x.name) || ''), url: String((x && x.url) || ''),
+    key: String((x && x.key) || ''), model: String((x && x.model) || ''),
+  })).filter(x => x.url || x.key || x.name)
   if (typeof b.ayxDownloadUrl === 'string' && b.ayxDownloadUrl.trim()) settings.ayxDownloadUrl = b.ayxDownloadUrl.trim()
   if (typeof b.ayxShareMsg === 'string' && b.ayxShareMsg.trim()) settings.ayxShareMsg = b.ayxShareMsg.trim()
   saveSettings(); applyPresence()
