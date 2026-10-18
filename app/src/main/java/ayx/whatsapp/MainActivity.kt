@@ -4269,7 +4269,6 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     // No transliteration toggle — lyrics post exactly as fetched.
     val romanize = false
     var previewPos by remember { mutableStateOf(0L) }
-    val displayLyrics = if (translatedActive) (translatedLyrics ?: songLyrics) else songLyrics
     // ---- Media (Image 2): re-pickable + removable inside the editor ----
     var mediaUri by remember { mutableStateOf<Uri?>(uri) }
     var mediaType by remember { mutableStateOf(type) }
@@ -4280,6 +4279,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     var translatedActive by remember { mutableStateOf(false) }
     var translating by remember { mutableStateOf(false) }
     val translateScope = rememberCoroutineScope()
+    val displayLyrics = if (translatedActive) (translatedLyrics ?: songLyrics) else songLyrics
     // ---- Video: trim + mute (honest — applied to the posted file) ----
     var videoMuted by remember { mutableStateOf(false) }
     var videoDuration by remember { mutableStateOf(0L) }
@@ -4494,7 +4494,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                         }
                                     }
                                 }) { Text(if (translatedActive) "✓ AI Lyrics Translated" else "🌐 AI Lyrics Translate", color = IOS_BLUE) }
-                                if (translating) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2f, color = IOS_BLUE)
+                                if (translating) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = IOS_BLUE)
                             }
                             if (translatedActive) Text("Translated ✓ — translated lyrics will be posted", color = IOS_BLUE, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 8.dp))
                             // ---- Video: fixed-box trimmer + mute ----
