@@ -304,32 +304,45 @@ object GatewayClient {
     }
     // translate/transliterate many lines, preserving count/order (status lyrics). Falls back to input on failure.
     suspend fun translateLines(lines: List<String>, romanize: Boolean, lang: String = "English"): List<String> = withContext(Dispatchers.IO) {
+        translateLinesEx(lines, romanize, lang).first
+    }
+    /** Same as [translateLines] but also returns the backend error (null when ok) so the UI can show real states. */
+    suspend fun translateLinesEx(lines: List<String>, romanize: Boolean, lang: String = "English"): Pair<List<String>, String?> = withContext(Dispatchers.IO) {
         try {
             val arr = JSONArray(); lines.forEach { arr.put(it) }
             val o = post("/translatelines", JSONObject().put("lines", arr).put("romanize", romanize).put("lang", lang))
             if (o.optBoolean("ok", false)) {
-                val out = o.optJSONArray("lines") ?: return@withContext lines
-                (0 until out.length()).map { out.optString(it) }
-            } else lines
-        } catch (e: Exception) { lines }
+                val out = o.optJSONArray("lines") ?: return@withContext lines to "bad response"
+                (0 until out.length()).map { out.optString(it) } to null
+            } else lines to o.optString("error", "failed").ifBlank { "failed" }
+        } catch (e: Exception) { lines to (e.message ?: "connection error") }
     }
     data class Song(val title: String, val artist: String, val image: String?, val url: String)
-    // returns synced lyrics as (timeMs, line); empty if none
+    // returns synced lyrics as (timeMs, line); falls back to PLAIN (untimed) lyrics with
+    // sequential timestamps when the provider has no synced lines; empty if none at all
     suspend fun getLyrics(title: String, artist: String): List<Pair<Long, String>> = withContext(Dispatchers.IO) {
         try {
             val t = java.net.URLEncoder.encode(title, "UTF-8"); val a = java.net.URLEncoder.encode(artist, "UTF-8")
             val o = get("/music/lyrics?title=$t&artist=$a")
             val synced = o.optString("synced")
-            if (synced.isBlank()) return@withContext emptyList()
-            val rx = Regex("\\[(\\d+):(\\d+)(?:\\.(\\d+))?\\](.*)")
-            synced.lines().mapNotNull { line ->
-                val m = rx.find(line) ?: return@mapNotNull null
-                val min = m.groupValues[1].toLong(); val sec = m.groupValues[2].toLong()
-                val cs = m.groupValues[3].ifEmpty { "0" }.take(2).padEnd(2, '0').toLong()
-                val ms = min * 60000 + sec * 1000 + cs * 10
-                val text = m.groupValues[4].trim()
-                if (text.isEmpty()) null else ms to text
-            }.sortedBy { it.first }
+            if (synced.isNotBlank()) {
+                val rx = Regex("\\[(\\d+):(\\d+)(?:\\.(\\d+))?\\](.*)")
+                return@withContext synced.lines().mapNotNull { line ->
+                    val m = rx.find(line) ?: return@mapNotNull null
+                    val min = m.groupValues[1].toLong(); val sec = m.groupValues[2].toLong()
+                    val cs = m.groupValues[3].ifEmpty { "0" }.take(2).padEnd(2, '0').toLong()
+                    val ms = min * 60000 + sec * 1000 + cs * 10
+                    val text = m.groupValues[4].trim()
+                    if (text.isEmpty()) null else ms to text
+                }.sortedBy { it.first }
+            }
+            // provider has only plain (untimed) lyrics — spread them sequentially so karaoke still works
+            val plain = o.optString("plain")
+            if (plain.isNotBlank()) {
+                return@withContext plain.lines().map { it.trim() }.filter { it.isNotEmpty() }
+                    .mapIndexed { i, line -> (i * 4000L) to line }
+            }
+            emptyList()
         } catch (e: Exception) { emptyList() }
     }
     suspend fun searchMusic(q: String): Pair<List<Song>, String> = withContext(Dispatchers.IO) {

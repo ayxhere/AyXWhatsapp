@@ -9,6 +9,8 @@ import android.graphics.ColorMatrixColorFilter
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.net.Uri
+import android.util.Base64
+import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -20,8 +22,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -35,28 +42,195 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 
 /**
- * "Edit image with AI" — HONEST on-device editing, no cloud, no fake AI.
- * Auto enhance + filters + brightness/contrast/saturation sliders + rotate/flip
- * are applied for real with [ColorMatrix] to the bitmap that gets posted.
- * Nothing here claims a cloud model; the label in the UI says "on-device".
+ * Client-side AI settings (SharedPreferences "ayx_ai_settings").
+ * The user pastes their OWN OpenRouter key here — it is NEVER hardcoded
+ * anywhere in the app and never leaves the device except in the
+ * Authorization header of the user's own OpenRouter requests.
  */
+object AiImgSettings {
+    private const val PREFS = "ayx_ai_settings"
+    const val DEFAULT_MODEL = "google/gemini-2.5-flash-image"
+    fun getKey(ctx: Context): String =
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("openrouter_key", "")?.trim() ?: ""
+    fun getModel(ctx: Context): String =
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("image_model", DEFAULT_MODEL)?.trim()
+            .takeUnless { it.isNullOrBlank() } ?: DEFAULT_MODEL
+    fun save(ctx: Context, key: String, model: String) {
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString("openrouter_key", key.trim())
+            .putString("image_model", model.trim().ifBlank { DEFAULT_MODEL })
+            .apply()
+    }
+}
+
+data class ImgEditResult(val bitmap: Bitmap?, val error: String?)
+
+/**
+ * REAL image-to-image edit via OpenRouter chat completions.
+ * Sends the downscaled JPEG + the user's prompt; parses the returned image
+ * (choices[0].message.images[0].image_url.url, with fallbacks for inline
+ * content blocks). Runs on Dispatchers.IO — never blocks the UI.
+ * This costs the user's own OpenRouter credits.
+ */
+suspend fun openRouterImageEdit(key: String, model: String, jpegBytes: ByteArray, prompt: String): ImgEditResult =
+    withContext(Dispatchers.IO) {
+        try {
+            val b64 = Base64.encodeToString(jpegBytes, Base64.NO_WRAP)
+            val imgPart = JSONObject()
+                .put("type", "image_url")
+                .put("image_url", JSONObject().put("url", "data:image/jpeg;base64,$b64"))
+            val body = JSONObject()
+                .put("model", model)
+                .put("modalities", JSONArray().put("image").put("text"))
+                .put("messages", JSONArray().put(JSONObject()
+                    .put("role", "user")
+                    .put("content", JSONArray()
+                        .put(JSONObject().put("type", "text").put("text", prompt))
+                        .put(imgPart))))
+            val c = (URL("https://openrouter.ai/api/v1/chat/completions").openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"; doOutput = true
+                connectTimeout = 15000; readTimeout = 120000
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("Authorization", "Bearer $key")
+                setRequestProperty("HTTP-Referer", "ayx.whatsapp")
+                setRequestProperty("X-Title", "AyXWhatsApp")
+            }
+            c.outputStream.use { it.write(body.toString().toByteArray()) }
+            val code = c.responseCode
+            val txt = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: ""
+            if (code == 401 || code == 403) return@withContext ImgEditResult(null, "Invalid API key (HTTP $code) — check your OpenRouter key in AI Settings.")
+            if (code == 402) return@withContext ImgEditResult(null, "Insufficient OpenRouter credits (HTTP 402) — top up at openrouter.ai.")
+            if (code == 429) return@withContext ImgEditResult(null, "Rate limited (HTTP 429) — wait a minute and retry.")
+            if (code !in 200..299) {
+                val msg = runCatching { JSONObject(txt).optString("error").ifBlank { JSONObject(txt).optJSONObject("error")?.optString("message") } }.getOrNull()
+                return@withContext ImgEditResult(null, "OpenRouter error (HTTP $code)${if (!msg.isNullOrBlank()) ": ${msg.take(160)}" else ""}")
+            }
+            val o = JSONObject(txt)
+            val msg = o.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
+                ?: return@withContext ImgEditResult(null, "Bad response: no choices in reply.")
+            // primary: choices[0].message.images[0].image_url.url
+            var dataUrl: String? = msg.optJSONArray("images")?.optJSONObject(0)?.optJSONObject("image_url")?.optString("url")
+            // fallback: inline image_url blocks inside content[]
+            if (dataUrl.isNullOrBlank()) {
+                val content = msg.optJSONArray("content")
+                if (content != null) for (i in 0 until content.length()) {
+                    val part = content.optJSONObject(i) ?: continue
+                    val u = part.optJSONObject("image_url")?.optString("url")
+                    if (!u.isNullOrBlank()) { dataUrl = u; break }
+                }
+            }
+            // fallback: content as a plain string data-URL
+            if (dataUrl.isNullOrBlank()) {
+                val s = msg.optString("content")
+                if (s.startsWith("data:image")) dataUrl = s
+            }
+            if (dataUrl.isNullOrBlank()) return@withContext ImgEditResult(null, "The model returned no image — try a clearer prompt (e.g. \"change the background to a beach at sunset\").")
+            val payload = dataUrl.substringAfter("base64,", "")
+            if (payload.isBlank()) return@withContext ImgEditResult(null, "The model returned an image URL instead of image data — cannot apply.")
+            val bytes = try { Base64.decode(payload, Base64.DEFAULT) } catch (_: Exception) {
+                return@withContext ImgEditResult(null, "Could not decode the returned image.")
+            }
+            val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                ?: return@withContext ImgEditResult(null, "Could not decode the returned image.")
+            ImgEditResult(bmp, null)
+        } catch (e: java.net.SocketTimeoutException) {
+            ImgEditResult(null, "Request timed out — check your connection and retry.")
+        } catch (e: Exception) {
+            ImgEditResult(null, "Network error: ${(e.message ?: "failed").take(120)}")
+        }
+    }
+
+/** Downscale to max [maxSide] px and JPEG-compress (q85) for the API request. */
+fun downscaleJpeg(ctx: Context, uri: Uri, maxSide: Int = 1024, quality: Int = 85): ByteArray? {
+    return try {
+        val bmp = decodeCapped(ctx, uri, maxSide) ?: return null
+        val out = ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.JPEG, quality, out)
+        runCatching { bmp.recycle() }
+        out.toByteArray()
+    } catch (_: Exception) { null }
+}
+
+/** Shared OpenRouter key + model fields (Settings page and the in-sheet dialog use the same prefs). */
+@Composable
+fun AiSettingsFields(ctx: Context, dark: Boolean = true, onSaved: () -> Unit) {
+    val t: Color = if (dark) Color.White else MaterialTheme.colorScheme.onSurface
+    val tDim: Color = if (dark) Color.White.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurfaceVariant
+    val tFaint: Color = if (dark) Color.White.copy(alpha = 0.35f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+    val border = if (dark) Color.White.copy(alpha = 0.2f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+    val borderF = if (dark) Color.White.copy(alpha = 0.4f) else MaterialTheme.colorScheme.primary
+    var key by remember { mutableStateOf(AiImgSettings.getKey(ctx)) }
+    var model by remember { mutableStateOf(AiImgSettings.getModel(ctx)) }
+    var showKey by remember { mutableStateOf(false) }
+    var savedTick by remember { mutableStateOf(false) }
+    val fieldColors = OutlinedTextFieldDefaults.colors(focusedTextColor = t, unfocusedTextColor = t, cursorColor = t,
+        focusedBorderColor = borderF, unfocusedBorderColor = border,
+        focusedLabelColor = tDim, unfocusedLabelColor = tDim)
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("Your OpenRouter key is stored only on this device and sent only to openrouter.ai with your own requests. Image edits use your OpenRouter credits.",
+            style = MaterialTheme.typography.bodySmall, color = tDim)
+        OutlinedTextField(key, { key = it }, label = { Text("OpenRouter API key", color = tDim) }, singleLine = true,
+            visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
+            trailingIcon = {
+                TextButton(onClick = { showKey = !showKey }) { Text(if (showKey) "Hide" else "Show", color = Color(0xFF4EA1FF)) }
+            },
+            colors = fieldColors, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(model, { model = it }, label = { Text("Image model", color = tDim) }, singleLine = true,
+            placeholder = { Text(AiImgSettings.DEFAULT_MODEL, color = tFaint) },
+            colors = fieldColors, modifier = Modifier.fillMaxWidth())
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = {
+                AiImgSettings.save(ctx, key, model)
+                savedTick = true
+                Toast.makeText(ctx, "AI settings saved", Toast.LENGTH_SHORT).show()
+                onSaved()
+            }) { Text("Save") }
+            if (savedTick) Text("Saved ✓", color = Color(0xFF7ED957), style = MaterialTheme.typography.labelMedium)
+        }
+    }
+}
+
+@Composable
+fun AiSettingsDialog(ctx: Context, onClose: () -> Unit) {
+    Dialog(onDismissRequest = onClose) {
+        Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp), color = Color(0xFF161616)) {
+            Column(Modifier.padding(18.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("AI Settings", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                AiSettingsFields(ctx, onSaved = {})
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onClose) { Text("Close", color = Color(0xFF4EA1FF)) }
+                }
+            }
+        }
+    }
+}
+
 enum class AiEditFilter(val label: String) { ORIGINAL("Original"), VIVID("Vivid"), MONO("Mono"), WARM("Warm"), COOL("Cool") }
 
 /** Pure function: apply filter + sliders + rotation + flip to [src]. */
 fun applyImageEdits(src: Bitmap, filter: AiEditFilter, brightness: Float, contrast: Float, saturation: Float, rotationDeg: Float, flip: Boolean, vignette: Boolean = false): Bitmap {
     val m = ColorMatrix()
-    // Filter preset first (as its own matrix), then the user's sliders on top.
     val preset = ColorMatrix()
     when (filter) {
         AiEditFilter.ORIGINAL -> { /* identity */ }
@@ -66,9 +240,7 @@ fun applyImageEdits(src: Bitmap, filter: AiEditFilter, brightness: Float, contra
         AiEditFilter.COOL -> { preset.postConcat(tintMatrix(0.92f, 1.0f, 1.08f)) }
     }
     m.postConcat(preset)
-    // Saturation slider.
     val sat = ColorMatrix(); sat.setSaturation(saturation); m.postConcat(sat)
-    // Contrast + brightness sliders (contrast pivots around 128).
     m.postConcat(contrastMatrix(contrast, brightness))
     val filtered = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
     val c = Canvas(filtered)
@@ -76,7 +248,6 @@ fun applyImageEdits(src: Bitmap, filter: AiEditFilter, brightness: Float, contra
     paint.colorFilter = ColorMatrixColorFilter(m)
     c.drawBitmap(src, 0f, 0f, paint)
     if (vignette) {
-        // Darken the corners — radial gradient, transparent centre → dark edges.
         val cx = src.width / 2f; val cy = src.height / 2f
         val radius = maxOf(src.width, src.height) * 0.75f
         val grad = android.graphics.RadialGradient(cx, cy, radius,
@@ -94,35 +265,7 @@ fun applyImageEdits(src: Bitmap, filter: AiEditFilter, brightness: Float, contra
     return out
 }
 
-/**
- * Parse a free-text AI prompt into REAL on-device edits (keyword-mapped).
- * Returns null when no known keyword matches — caller must show a hint and apply NOTHING (never fake an edit).
- * Supported words: brighter, warm/sunset/golden, black & white/mono, vivid, cool, dark, contrast, fade, saturate, vignette.
- */
-data class PromptEdit(val filter: AiEditFilter, val brightness: Float, val contrast: Float, val saturation: Float, val vignette: Boolean)
-
-fun parseAiPrompt(prompt: String): PromptEdit? {
-    val p = prompt.lowercase()
-    var matched = false
-    var filter = AiEditFilter.ORIGINAL
-    var brightness = 0f; var contrast = 1f; var saturation = 1f; var vignette = false
-    fun has(vararg keys: String) = keys.any { p.contains(it) }
-    if (has("black and white", "black & white", "b&w", "mono", "grayscale", "greyscale", "black-and-white")) { filter = AiEditFilter.MONO; matched = true }
-    else if (has("vivid", "vibrant", "colourful", "colorful", "punchy")) { filter = AiEditFilter.VIVID; matched = true }
-    else if (has("warm", "sunset", "golden", "orange")) { filter = AiEditFilter.WARM; matched = true }
-    else if (has("cool", "cold", "winter")) { filter = AiEditFilter.COOL; matched = true }
-    if (has("bright", "brighter", "brightness")) { brightness += 25f; matched = true }
-    if (has("dark", "darker", "dim", "moody")) { brightness -= 25f; matched = true }
-    if (has("contrast", "sharp")) { contrast = 1.3f; matched = true }
-    if (has("fade", "faded", "vintage")) { saturation = 0.6f; contrast = 0.9f; matched = true }
-    if (has("saturat")) { saturation = 1.5f; matched = true }
-    if (has("vignette")) { vignette = true; matched = true }
-    if (!matched) return null
-    return PromptEdit(filter, brightness, contrast, saturation, vignette)
-}
-
 private fun contrastMatrix(contrast: Float, brightness: Float): ColorMatrix {
-    // out = contrast * in + (128 * (1 - contrast) + brightness)
     val t = 128f * (1f - contrast) + brightness
     return ColorMatrix(floatArrayOf(
         contrast, 0f, 0f, 0f, t,
@@ -154,12 +297,25 @@ private fun decodeCapped(ctx: Context, uri: Uri, maxSide: Int = 2048): Bitmap? {
 }
 
 /**
- * Edit sheet: live preview + filter chips + Auto enhance + sliders + rotate/flip.
- * [onDone] receives the edited JPEG bytes (quality 92) — the editor posts
- * THESE bytes, so what you see is what gets posted.
+ * Edit sheet, two honest sections:
+ * 1. "AI Edit (OpenRouter)" — REAL image-to-image edit with the user's own
+ *    OpenRouter key (never hardcoded). Result preview + Apply / Save / Retry / Cancel.
+ * 2. "Filters (on-device)" — the previous local tools (filters, sliders,
+ *    rotate/flip). Labelled as on-device, never as AI.
+ * [onDone] receives JPEG bytes (q92) — the editor posts THESE bytes.
  */
 @Composable
-fun AiImageEditSheet(ctx: Context, sourceUri: Uri, onDone: (ByteArray) -> Unit, onCancel: () -> Unit) {
+fun AiImageEditSheet(ctx: Context, sourceUri: Uri, onDone: (ByteArray) -> Unit, onCancel: () -> Unit, onOpenSettings: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    val hasKey = remember { AiImgSettings.getKey(ctx).isNotBlank() }
+    // ---- real AI state ----
+    var promptText by remember { mutableStateOf("") }
+    var promptError by remember { mutableStateOf<String?>(null) }
+    var generating by remember { mutableStateOf(false) }
+    var genError by remember { mutableStateOf<String?>(null) }
+    var genResult by remember { mutableStateOf<Bitmap?>(null) }
+    var saving by remember { mutableStateOf(false) }
+    // ---- on-device filter state ----
     val src = remember(sourceUri) { decodeCapped(ctx, sourceUri) }
     var filter by remember { mutableStateOf(AiEditFilter.ORIGINAL) }
     var brightness by remember { mutableFloatStateOf(0f) }
@@ -167,76 +323,124 @@ fun AiImageEditSheet(ctx: Context, sourceUri: Uri, onDone: (ByteArray) -> Unit, 
     var saturation by remember { mutableFloatStateOf(1f) }
     var rotation by remember { mutableFloatStateOf(0f) }
     var flip by remember { mutableStateOf(false) }
-    var busy by remember { mutableStateOf(false) }
-    var promptText by remember { mutableStateOf("") }
-    var promptHint by remember { mutableStateOf<String?>(null) }
-    var promptApplied by remember { mutableStateOf<String?>(null) }
     var vignette by remember { mutableStateOf(false) }
-    fun applyPrompt(text: String) {
-        val parsed = parseAiPrompt(text)
-        if (parsed == null) { promptHint = "No matching keyword — try: brighter, warm sunset, black & white, vivid, cool, dark, contrast, fade, vignette"; promptApplied = null }
-        else { filter = parsed.filter; brightness = parsed.brightness; contrast = parsed.contrast; saturation = parsed.saturation; vignette = parsed.vignette; promptHint = null; promptApplied = "Applied: " + text }
-    }
+    var busy by remember { mutableStateOf(false) }
     val preview = remember(src, filter, brightness, contrast, saturation, rotation, flip, vignette) {
         if (src == null) null else applyImageEdits(src, filter, brightness, contrast, saturation, rotation, flip, vignette)
     }
+    fun runGenerate() {
+        val p = promptText.trim()
+        if (p.isEmpty()) { promptError = "Type a prompt first — e.g. \"change the background to a beach at sunset\"."; return }
+        promptError = null; genError = null
+        generating = true
+        scope.launch {
+            val key = AiImgSettings.getKey(ctx)
+            val model = AiImgSettings.getModel(ctx)
+            if (key.isBlank()) { generating = false; genError = "No API key — add it in AI Settings first."; return@launch }
+            val jpeg = downscaleJpeg(ctx, sourceUri)
+            if (jpeg == null) { generating = false; genError = "Could not read the image."; return@launch }
+            val r = openRouterImageEdit(key, model, jpeg, p)
+            generating = false
+            if (r.bitmap != null) genResult = r.bitmap else genError = r.error ?: "Edit failed."
+        }
+    }
+    fun resultBytes(bmp: Bitmap): ByteArray {
+        val out = ByteArrayOutputStream(); bmp.compress(Bitmap.CompressFormat.JPEG, 92, out); return out.toByteArray()
+    }
     Dialog(onDismissRequest = onCancel, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize(), color = Color.Black) {
-            Column(Modifier.fillMaxSize().padding(12.dp)) {
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = onCancel) { Text("Cancel", color = Color.White) }
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("Edit image with AI", color = Color.White, style = MaterialTheme.typography.titleMedium)
-                        Text("AI edit (on-device, prompt-mapped) — no cloud", color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall)
-                    }
-                    TextButton(onClick = {
-                        val bmp = preview ?: return@TextButton
-                        busy = true
-                        val out = ByteArrayOutputStream()
-                        bmp.compress(Bitmap.CompressFormat.JPEG, 92, out)
-                        busy = false
-                        onDone(out.toByteArray())
-                    }, enabled = preview != null && !busy) { Text("Apply", color = Color(0xFF4EA1FF)) }
+                    Text("Edit image", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.size(64.dp))
                 }
-                Box(Modifier.weight(1f).fillMaxWidth().background(Color(0xFF111111)), contentAlignment = Alignment.Center) {
-                    val bmp = preview
-                    if (bmp != null) Image(bmp.asImageBitmap(), null, Modifier.fillMaxSize())
-                    else Text("Preview unavailable", color = Color.White)
-                }
-                Spacer(Modifier.height(10.dp))
-                // AI prompt: free text → keyword-mapped REAL edits (never faked).
-                OutlinedTextField(promptText, { promptText = it }, placeholder = { Text("AI prompt — e.g. warm sunset", color = Color.White.copy(alpha = 0.5f)) }, singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White,
-                        focusedBorderColor = Color.White.copy(alpha = 0.4f), unfocusedBorderColor = Color.White.copy(alpha = 0.2f)),
-                    modifier = Modifier.fillMaxWidth())
+                // ---------- SECTION 1: real AI edit ----------
+                Text("AI Edit (OpenRouter)", color = Color.White, style = MaterialTheme.typography.titleSmall)
+                Text("Real image-to-image AI using your own OpenRouter key and credits.",
+                    color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall)
                 Spacer(Modifier.height(6.dp))
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf("Brighter", "Warm sunset", "Black & white", "Vivid", "Cool").forEach { chip ->
-                        FilterChip(selected = false, onClick = { promptText = chip; applyPrompt(chip) }, label = { Text(chip) })
+                if (!hasKey) {
+                    Text("Add your OpenRouter API key in AI Settings to use AI edit.",
+                        color = Color(0xFFFFB84D), style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(6.dp))
+                    Button(onClick = onOpenSettings) { Text("Open AI Settings") }
+                } else {
+                    OutlinedTextField(promptText, { promptText = it; promptError = null },
+                        placeholder = { Text("Change the background to a beautiful Indian village at sunset.", color = Color.White.copy(alpha = 0.45f)) },
+                        label = { Text("Describe the edit", color = Color.White.copy(alpha = 0.6f)) }, minLines = 2, maxLines = 4,
+                        colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White,
+                            focusedBorderColor = Color.White.copy(alpha = 0.4f), unfocusedBorderColor = Color.White.copy(alpha = 0.2f),
+                            focusedLabelColor = Color.White.copy(alpha = 0.7f), unfocusedLabelColor = Color.White.copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth())
+                    if (promptError != null) Text(promptError!!, color = Color(0xFFFFB84D), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
+                    Spacer(Modifier.height(6.dp))
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("Warm sunset", "Beach background", "Black & white", "Vivid colors").forEach { chip ->
+                            FilterChip(selected = false, onClick = { promptText = chip }, label = { Text(chip) })
+                        }
                     }
-                    FilterChip(selected = false, onClick = { applyPrompt(promptText) }, label = { Text("Apply prompt") })
+                    Spacer(Modifier.height(8.dp))
+                    Button(onClick = { runGenerate() }, enabled = !generating, modifier = Modifier.fillMaxWidth()) {
+                        if (generating) { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White); Spacer(Modifier.size(8.dp)); Text("Generating…") }
+                        else Text("✨ Generate edit")
+                    }
+                    if (genError != null) {
+                        Text(genError!!, color = Color(0xFFFF8A80), style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
+                        TextButton(onClick = { runGenerate() }, enabled = !generating) { Text("Retry", color = Color(0xFF4EA1FF)) }
+                    }
+                    val res = genResult
+                    if (res != null) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("Result (original unchanged until you Apply):", color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelMedium)
+                        Spacer(Modifier.height(4.dp))
+                        Image(res.asImageBitmap(), null, Modifier.fillMaxWidth().heightIn(max = 320.dp))
+                        Spacer(Modifier.height(6.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { onDone(resultBytes(res)) }, modifier = Modifier.weight(1f)) { Text("Apply") }
+                            TextButton(onClick = {
+                                saving = true
+                                scope.launch {
+                                    val ok = withContext(Dispatchers.IO) { MediaSaver.save(ctx, resultBytes(res), "ayx-ai-edit-${System.currentTimeMillis()}.jpg", "image") }
+                                    saving = false
+                                    Toast.makeText(ctx, if (ok) "Saved to Pictures/WhatsAyX" else "Save failed", Toast.LENGTH_SHORT).show()
+                                }
+                            }, enabled = !saving) { Text(if (saving) "Saving…" else "Save", color = Color(0xFF4EA1FF)) }
+                            TextButton(onClick = { genResult = null; genError = null }) { Text("Discard", color = Color.White.copy(alpha = 0.7f)) }
+                        }
+                    }
                 }
-                if (promptHint != null) Text(promptHint!!, color = Color(0xFFFFB84D), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
-                if (promptApplied != null) Text(promptApplied!!, color = Color(0xFF7ED957), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
+                Spacer(Modifier.height(14.dp))
+                // ---------- SECTION 2: on-device filters ----------
+                Text("Filters (on-device)", color = Color.White, style = MaterialTheme.typography.titleSmall)
+                Text("Quick local adjustments — not AI.", color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall)
+                Spacer(Modifier.height(6.dp))
+                Box(Modifier.fillMaxWidth().height(220.dp).background(Color(0xFF111111)), contentAlignment = Alignment.Center) {
+                    val bmp = preview
+                    if (bmp != null) Image(bmp.asImageBitmap(), null, Modifier.fillMaxSize()) else Text("Preview unavailable", color = Color.White)
+                }
                 Spacer(Modifier.height(8.dp))
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    AiEditFilter.entries.forEach { f ->
-                        FilterChip(selected = filter == f, onClick = { filter = f }, label = { Text(f.label) })
-                    }
-                    FilterChip(selected = false, onClick = {
-                        // One-tap Auto enhance: gentle lift on all three sliders.
-                        brightness = 8f; contrast = 1.15f; saturation = 1.2f; filter = AiEditFilter.ORIGINAL
-                    }, label = { Text("✨ Auto enhance") })
+                    AiEditFilter.entries.forEach { f -> FilterChip(selected = filter == f, onClick = { filter = f }, label = { Text(f.label) }) }
+                    FilterChip(selected = false, onClick = { brightness = 8f; contrast = 1.15f; saturation = 1.2f; filter = AiEditFilter.ORIGINAL }, label = { Text("✨ Auto enhance") })
+                    FilterChip(selected = vignette, onClick = { vignette = !vignette }, label = { Text("Vignette") })
                 }
                 Spacer(Modifier.height(6.dp))
                 EditSlider("Brightness", brightness, -50f..50f, { brightness = it })
                 EditSlider("Contrast", contrast, 0.5f..1.5f, { contrast = it })
                 EditSlider("Saturation", saturation, 0f..2f, { saturation = it })
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = { rotation = (rotation + 90f) % 360f }) { Text("Rotate 90°", color = Color.White) }
                     TextButton(onClick = { flip = !flip }) { Text(if (flip) "Unflip" else "Flip", color = Color.White) }
-                    TextButton(onClick = { filter = AiEditFilter.ORIGINAL; brightness = 0f; contrast = 1f; saturation = 1f; rotation = 0f; flip = false; vignette = false; promptText = ""; promptHint = null; promptApplied = null }) { Text("Reset", color = Color.White) }
+                    TextButton(onClick = { filter = AiEditFilter.ORIGINAL; brightness = 0f; contrast = 1f; saturation = 1f; rotation = 0f; flip = false; vignette = false }) { Text("Reset", color = Color.White) }
+                    Spacer(Modifier.weight(1f))
+                    Button(onClick = {
+                        val bmp = preview ?: return@Button
+                        busy = true
+                        onDone(resultBytes(bmp)); busy = false
+                    }, enabled = preview != null && !busy) { Text("Apply filters") }
                 }
+                Spacer(Modifier.height(16.dp))
             }
         }
     }

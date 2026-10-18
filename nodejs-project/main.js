@@ -2258,6 +2258,14 @@ app.get('/music/lyrics', async (req, res) => {
         if (Array.isArray(arr) && arr.length) data = arr.find(x => x.syncedLyrics) || arr[0]
       } catch (_) {}
     }
+    // last resort: title-only search (artist spelling mismatches are common)
+    if ((!data || (!data.syncedLyrics && !data.plainLyrics)) && title) {
+      try {
+        const sbody2 = await httpGet('https://lrclib.net/api/search?q=' + encodeURIComponent(title), { 'User-Agent': 'AyXWhatsApp/1.0', 'Accept': 'application/json' })
+        const arr2 = JSON.parse(sbody2)
+        if (Array.isArray(arr2) && arr2.length) data = arr2.find(x => x.syncedLyrics) || arr2[0]
+      } catch (_) {}
+    }
     res.json({ synced: (data && data.syncedLyrics) || '', plain: (data && data.plainLyrics) || '' })
   } catch (e) { res.json({ synced: '', plain: '' }) }
 })

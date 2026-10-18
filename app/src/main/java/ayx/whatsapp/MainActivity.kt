@@ -3538,6 +3538,11 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
             OutlinedTextField(sys, { sys = it }, label = { Text("System prompt (optional)") }, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
         }
     }
+
+    // AI image edit (OpenRouter) — client-side key used by the status editor's AI Edit.
+    SettingsGroup("AI image edit") {
+        AiSettingsFields(ctx, dark = false, onSaved = {})
+    }
 }
 
 // format the /visiontest result into a readable message for the dialog
@@ -4274,11 +4279,12 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     var mediaType by remember { mutableStateOf(type) }
     var editedBytes by remember { mutableStateOf<ByteArray?>(null) }   // AI-edited photo bytes (posted instead of the raw file)
     var aiEditOpen by remember { mutableStateOf(false) }
-    // ---- AI Lyrics Translate: toggles original ↔ translated lyrics (timestamps preserved) ----
+    // ---- AI Lyrics Translate: opens the translate sheet (language choice, real backend) ----
     var translatedLyrics by remember { mutableStateOf<List<Pair<Long, String>>?>(null) }
     var translatedActive by remember { mutableStateOf(false) }
-    var translating by remember { mutableStateOf(false) }
-    val translateScope = rememberCoroutineScope()
+    var translateOpen by remember { mutableStateOf(false) }
+    var showAiSettingsDlg by remember { mutableStateOf(false) }
+    var showGroqDlg by remember { mutableStateOf(false) }
     val displayLyrics = if (translatedActive) (translatedLyrics ?: songLyrics) else songLyrics
     // ---- Video: trim + mute (honest — applied to the posted file) ----
     var videoMuted by remember { mutableStateOf(false) }
@@ -4449,13 +4455,18 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                     }
                     AnimatedVisibility(visible = controlsExpanded, enter = expandVertically(), exit = shrinkVertically()) {
                         Column {
-                            // ---- Image 1: SONG row. LEFT X = REMOVE + REPLACE (song search reopens, old query kept) ----
+                            // ---- Image 1: SONG row. Title + artist, "Replace song" (reopens search) + separate "Remove song".
+                            // X buttons anywhere in this flow are NAVIGATION only — never a remove action.
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 val sg = song
                                 if (sg == null) {
                                     TextButton(onClick = { musicOpen = true }) { Text("♪  Add music", color = IOS_BLUE) }
                                 } else {
-                                    IconButton(onClick = { runCatching { player.reset() }; playing = false; song = null; songLyrics = emptyList(); translatedLyrics = null; translatedActive = false; musicOpen = true }) { Icon(Icons.Filled.Close, "remove and replace song", tint = Color.White) }
+                                    Column(Modifier.weight(1f)) {
+                                        Text("♪ " + sg.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(sg.artist, color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                    if (songLyrics.isNotEmpty()) Text("© lyrics", color = IOS_BLUE, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(end = 4.dp))
                                     TextButton(onClick = {
                                         if (playing) { runCatching { player.pause() }; playing = false }
                                         else runCatching {
@@ -4465,9 +4476,13 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                             player.setOnErrorListener { _, _, _ -> playing = false; true }
                                             player.prepareAsync()
                                         }
-                                    }) { Text(if (playing) "⏸ Pause" else "▶ Play", color = IOS_BLUE) }
-                                    Text("♪ " + sg.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                    if (songLyrics.isNotEmpty()) Text("  © lyrics", color = IOS_BLUE, style = MaterialTheme.typography.labelSmall)
+                                    }) { Text(if (playing) "⏸" else "▶", color = IOS_BLUE) }
+                                    TextButton(onClick = { musicOpen = true }) { Text("Replace song", color = IOS_BLUE) }
+                                    TextButton(onClick = {
+                                        runCatching { player.reset() }; playing = false
+                                        song = null; songLyrics = emptyList(); translatedLyrics = null; translatedActive = false
+                                        trimStart = 0L; trimEnd = 15000L
+                                    }) { Text("Remove song", color = AYX_RED) }
                                 }
                             }
                             // ---- AI tools: AI Edit (photo) + AI Lyrics Translate ----
@@ -4477,24 +4492,9 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                     else Toast.makeText(ctx, "Add a photo first", Toast.LENGTH_SHORT).show()
                                 }) { Text("✨ AI Edit", color = IOS_BLUE) }
                                 TextButton(onClick = {
-                                    if (translatedActive) { translatedActive = false }
-                                    else if (song == null || songLyrics.isEmpty()) { Toast.makeText(ctx, "Add a song first", Toast.LENGTH_SHORT).show() }
-                                    else if (translatedLyrics != null) { translatedActive = true }
-                                    else {
-                                        translating = true
-                                        translateScope.launch {
-                                            val out = runCatching { GatewayClient.translateLines(songLyrics.map { it.second }, romanize = false, lang = "English") }.getOrDefault(emptyList())
-                                            translating = false
-                                            if (out.size == songLyrics.size && out.zip(songLyrics.map { it.second }).any { (a, b) -> a != b }) {
-                                                translatedLyrics = songLyrics.mapIndexed { i, pr -> pr.first to out[i] }
-                                                translatedActive = true
-                                            } else {
-                                                Toast.makeText(ctx, "Translation unavailable", Toast.LENGTH_SHORT).show()
-                                            }
-                                        }
-                                    }
+                                    if (song == null || songLyrics.isEmpty()) { Toast.makeText(ctx, "Add a song first", Toast.LENGTH_SHORT).show() }
+                                    else translateOpen = true
                                 }) { Text(if (translatedActive) "✓ AI Lyrics Translated" else "🌐 AI Lyrics Translate", color = IOS_BLUE) }
-                                if (translating) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = IOS_BLUE)
                             }
                             if (translatedActive) Text("Translated ✓ — translated lyrics will be posted", color = IOS_BLUE, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 8.dp))
                             // ---- Video: fixed-box trimmer + mute ----
@@ -4548,10 +4548,217 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
         }
     }
     if (pickAudience) AudienceSheet(contacts, audience, selected) { a, sset -> audience = a; selected = sset; pickAudience = false }
-    if (musicOpen) MusicSearchSheet(initialQuery = songQuery, onQueryChange = { songQuery = it }, onSelect = { songToTrim = it; musicOpen = false }, onClose = { musicOpen = false })
-    if (aiEditOpen && mediaUri != null) AiImageEditSheet(ctx, mediaUri!!, onDone = { editedBytes = it; aiEditOpen = false }, onCancel = { aiEditOpen = false })
+    if (musicOpen) MusicSearchSheet(initialQuery = songQuery, autoFocus = true, onQueryChange = { songQuery = it }, onSelect = { songToTrim = it; musicOpen = false }, onClose = { musicOpen = false })
+    if (aiEditOpen && mediaUri != null) AiImageEditSheet(ctx, mediaUri!!, onDone = { editedBytes = it; aiEditOpen = false }, onCancel = { aiEditOpen = false }, onOpenSettings = { aiEditOpen = false; showAiSettingsDlg = true })
+    if (showAiSettingsDlg) AiSettingsDialog(ctx, onClose = { showAiSettingsDlg = false })
+    if (showGroqDlg) GroqKeyDialog(ctx, onClose = { showGroqDlg = false })
+    if (translateOpen) AiLyricsTranslateSheet(song?.title ?: "", songLyrics,
+        onApply = { translatedLyrics = it; translatedActive = true; translateOpen = false },
+        onCancel = { translateOpen = false },
+        onOpenApiSettings = { translateOpen = false; showGroqDlg = true })
     songToTrim?.let { sng ->
-        AudioTrimmer(sng, onDone = { st, en, ly -> song = sng; trimStart = st; trimEnd = en; songLyrics = ly; translatedLyrics = null; translatedActive = false; songToTrim = null }, onCancel = { songToTrim = null })
+        AudioTrimmer(sng, onDone = { st, en, ly -> song = sng; trimStart = st; trimEnd = en; songLyrics = ly; translatedLyrics = null; translatedActive = false; songToTrim = null }, onCancel = { songToTrim = null; musicOpen = true })
+    }
+}
+
+private val TRANSLATE_LANGS = listOf("English", "Hindi", "Spanish", "French", "German", "Portuguese", "Arabic", "Russian", "Punjabi", "Bengali", "Tamil", "Telugu", "Marathi", "Urdu")
+
+/**
+ * AI Lyrics Translate — REAL backend ([GatewayClient.translateLinesEx] → Node /translatelines).
+ * The user picks a target language (never auto-assumed). Shows original lyrics
+ * (or a manual-input box when none were found), loading / error / retry states,
+ * and the translated lines beside the original before applying.
+ */
+@Composable
+private fun AiLyricsTranslateSheet(songTitle: String, lyrics: List<Pair<Long, String>>, onApply: (List<Pair<Long, String>>) -> Unit, onCancel: () -> Unit, onOpenApiSettings: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    val hasLyrics = lyrics.isNotEmpty()
+    var lang by remember { mutableStateOf("English") }
+    var langOpen by remember { mutableStateOf(false) }
+    var manual by remember { mutableStateOf("") }
+    var translating by remember { mutableStateOf(false) }
+    var translated by remember { mutableStateOf<List<String>?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var needKey by remember { mutableStateOf(false) }
+    val srcLines = if (hasLyrics) lyrics.map { it.second } else manual.lines().map { it.trim() }.filter { it.isNotEmpty() }
+    fun runTranslate() {
+        error = null; needKey = false
+        if (srcLines.isEmpty()) { error = if (hasLyrics) "No lyrics to translate." else "Type or paste the lyrics first, one line per row."; return }
+        translating = true; translated = null
+        scope.launch {
+            val (out, err) = GatewayClient.translateLinesEx(srcLines, lang)
+            translating = false
+            when {
+                err != null && err.contains("no AI key", ignoreCase = true) -> needKey = true
+                err != null -> error = "Translation failed: ${err.take(140)}"
+                out.size != srcLines.size || out.zip(srcLines).all { (a, b) -> a == b } ->
+                    error = "Translation unavailable — the backend returned no usable translation."
+                else -> translated = out
+            }
+        }
+    }
+    Dialog(onDismissRequest = onCancel, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(Modifier.fillMaxSize(), color = Color(0xFF0A0A0A)) {
+            Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(16.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = onCancel) { Text("Cancel", color = Color.White) }
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
+                        Text("AI Lyrics Translate", color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (songTitle.isNotBlank()) Text(songTitle, color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    Spacer(Modifier.size(64.dp))
+                }
+                Spacer(Modifier.height(8.dp))
+                if (hasLyrics) {
+                    Text("Original lyrics:", color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelMedium)
+                    Spacer(Modifier.height(4.dp))
+                    Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())) {
+                        lyrics.forEach { pr -> Text(pr.second, color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(vertical = 2.dp)) }
+                    }
+                } else {
+                    Text("No lyrics found for this song.", color = Color(0xFFFFB84D), style = MaterialTheme.typography.bodyMedium)
+                    Text("Paste or type the lyrics below, then translate them — nothing is invented.", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(manual, { manual = it; translated = null }, placeholder = { Text("Type or paste lyrics…", color = Color.White.copy(alpha = 0.45f)) },
+                        minLines = 5, maxLines = 10,
+                        colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White,
+                            focusedBorderColor = Color.White.copy(alpha = 0.4f), unfocusedBorderColor = Color.White.copy(alpha = 0.2f)),
+                        modifier = Modifier.fillMaxWidth().weight(1f))
+                }
+                Spacer(Modifier.height(10.dp))
+                // language picker (simple, no experimental API)
+                Box {
+                    TextButton(onClick = { langOpen = !langOpen }) { Text("🌐 $lang ▾", color = IOS_BLUE) }
+                    if (langOpen) {
+                        Surface(shape = uiShapeFor(12), color = Color(0xFF1C1C1C), shadowElevation = 8.dp, modifier = Modifier.padding(top = 40.dp)) {
+                            Column(Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState())) {
+                                TRANSLATE_LANGS.forEach { l ->
+                                    Row(Modifier.fillMaxWidth().clickable { lang = l; langOpen = false; translated = null }.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                                        Text(l, color = if (l == lang) IOS_BLUE else Color.White)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                Button(onClick = { runTranslate() }, enabled = !translating, modifier = Modifier.fillMaxWidth()) {
+                    if (translating) { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White); Spacer(Modifier.size(8.dp)); Text("Translating…") }
+                    else Text("Translate to $lang")
+                }
+                if (needKey) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("Translation needs an AI key.", color = Color(0xFFFFB84D), style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = onOpenApiSettings) { Text("Open API settings", color = IOS_BLUE) }
+                }
+                if (error != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(error!!, color = Color(0xFFFF8A80), style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = { runTranslate() }, enabled = !translating) { Text("Retry", color = IOS_BLUE) }
+                }
+                val tr = translated
+                if (tr != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text("Translated ($lang) — original kept:", color = Color(0xFF7ED957), style = MaterialTheme.typography.labelMedium)
+                    Spacer(Modifier.height(4.dp))
+                    Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())) {
+                        tr.forEach { line -> Text(line, color = Color.White, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(vertical = 2.dp)) }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = {
+                            val applied = if (hasLyrics) lyrics.mapIndexed { i, pr -> pr.first to tr[i] }
+                            else tr.mapIndexed { i, s -> (i * 4000L) to s }
+                            onApply(applied)
+                        }, modifier = Modifier.weight(1f)) { Text("Apply translation") }
+                        TextButton(onClick = { translated = null }) { Text("Discard", color = Color.White.copy(alpha = 0.7f)) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** In-context API-key entry for translation (Groq-compatible). Saves via [GatewayClient.patchSettings]; the full page lives in Settings → AI Assistant. */
+@Composable
+private fun GroqKeyDialog(ctx: Context, onClose: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var url by remember { mutableStateOf("https://api.groq.com/openai/v1/chat/completions") }
+    var key by remember { mutableStateOf("") }
+    var model by remember { mutableStateOf("openai/gpt-oss-20b") }
+    var showKey by remember { mutableStateOf(false) }
+    var saving by remember { mutableStateOf(false) }
+    var err by remember { mutableStateOf<String?>(null) }
+    Dialog(onDismissRequest = onClose) {
+        Surface(shape = uiShapeFor(18), color = Color(0xFF161616)) {
+            Column(Modifier.padding(18.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("API settings", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                Text("Translation uses your own AI key (same as Settings → AI Assistant → API configuration). It is stored on this device and sent only to your API URL.",
+                    color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.bodySmall)
+                OutlinedTextField(url, { url = it }, label = { Text("API URL", color = Color.White.copy(alpha = 0.6f)) }, singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White,
+                        focusedBorderColor = Color.White.copy(alpha = 0.4f), unfocusedBorderColor = Color.White.copy(alpha = 0.2f),
+                        focusedLabelColor = Color.White.copy(alpha = 0.7f), unfocusedLabelColor = Color.White.copy(alpha = 0.5f)),
+                    modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(key, { key = it }, label = { Text("API key", color = Color.White.copy(alpha = 0.6f)) }, singleLine = true,
+                    visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = { TextButton(onClick = { showKey = !showKey }) { Text(if (showKey) "Hide" else "Show", color = IOS_BLUE) } },
+                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White,
+                        focusedBorderColor = Color.White.copy(alpha = 0.4f), unfocusedBorderColor = Color.White.copy(alpha = 0.2f),
+                        focusedLabelColor = Color.White.copy(alpha = 0.7f), unfocusedLabelColor = Color.White.copy(alpha = 0.5f)),
+                    modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(model, { model = it }, label = { Text("Model", color = Color.White.copy(alpha = 0.6f)) }, singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White,
+                        focusedBorderColor = Color.White.copy(alpha = 0.4f), unfocusedBorderColor = Color.White.copy(alpha = 0.2f),
+                        focusedLabelColor = Color.White.copy(alpha = 0.7f), unfocusedLabelColor = Color.White.copy(alpha = 0.5f)),
+                    modifier = Modifier.fillMaxWidth())
+                if (err != null) Text(err!!, color = Color(0xFFFF8A80), style = MaterialTheme.typography.bodySmall)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = onClose) { Text("Cancel", color = Color.White.copy(alpha = 0.7f)) }
+                    Spacer(Modifier.size(8.dp))
+                    Button(onClick = {
+                        if (key.isBlank()) { err = "Paste your API key first."; return@Button }
+                        err = null; saving = true
+                        scope.launch {
+                            val ok = runCatching {
+                                GatewayClient.patchSettings(JSONObject().put("aiApiUrl", url.trim()).put("aiApiKey", key.trim()).put("aiModel", model.trim()))
+                            }.isSuccess
+                            saving = false
+                            if (ok) { Toast.makeText(ctx, "API settings saved", Toast.LENGTH_SHORT).show(); onClose() }
+                            else err = "Could not reach the gateway — is AyX connected?"
+                        }
+                    }, enabled = !saving) { Text(if (saving) "Saving…" else "Save") }
+                }
+            }
+        }
+    }
+}
+
+/** Manual lyrics entry (used when the provider has no lyrics for a song). */
+@Composable
+private fun ManualLyricsDialog(onDone: (List<String>) -> Unit, onCancel: () -> Unit) {
+    var text by remember { mutableStateOf("") }
+    Dialog(onDismissRequest = onCancel) {
+        Surface(shape = uiShapeFor(18), color = Color(0xFF161616)) {
+            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Enter lyrics manually", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                Text("One line per row — they will be used for this status exactly as typed.",
+                    color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.bodySmall)
+                OutlinedTextField(text, { text = it }, placeholder = { Text("Type or paste lyrics…", color = Color.White.copy(alpha = 0.45f)) },
+                    minLines = 6, maxLines = 12,
+                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White,
+                        focusedBorderColor = Color.White.copy(alpha = 0.4f), unfocusedBorderColor = Color.White.copy(alpha = 0.2f)),
+                    modifier = Modifier.fillMaxWidth())
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onCancel) { Text("Cancel", color = Color.White.copy(alpha = 0.7f)) }
+                    Spacer(Modifier.size(8.dp))
+                    Button(onClick = {
+                        val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
+                        if (lines.isNotEmpty()) onDone(lines)
+                    }, enabled = text.isNotBlank()) { Text("Use these lyrics") }
+                }
+            }
+        }
     }
 }
 
@@ -4844,7 +5051,7 @@ private fun ProfileScreen(myJid: String?, dpCache: MutableMap<String, ImageBitma
 
 
 @Composable
-private fun MusicSearchSheet(initialQuery: String = "", onQueryChange: (String) -> Unit = {}, onSelect: (GatewayClient.Song) -> Unit, onClose: () -> Unit) {
+private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = false, onQueryChange: (String) -> Unit = {}, onSelect: (GatewayClient.Song) -> Unit, onClose: () -> Unit) {
     var q by remember { mutableStateOf(initialQuery) }
     val qState = rememberUpdatedState(q)
     var results by remember { mutableStateOf<List<GatewayClient.Song>>(emptyList()) }
@@ -4853,6 +5060,9 @@ private fun MusicSearchSheet(initialQuery: String = "", onQueryChange: (String) 
     var previewUrl by remember { mutableStateOf<String?>(null) }
     val player = remember { MediaPlayer() }
     val lyricsAvail = remember { mutableStateMapOf<String, Boolean>() }
+    val searchFocus = remember { FocusRequester() }
+    // "Replace song" opens the search directly — focus the field immediately.
+    LaunchedEffect(autoFocus) { if (autoFocus) { kotlinx.coroutines.delay(350); runCatching { searchFocus.requestFocus() } } }
     // a reliable popular artist so the suggested list is never empty on open ("default songs")
     val defaultQ = remember { listOf("arijit singh", "pritam", "atif aslam", "neha kakkar", "honey singh", "shreya ghoshal").random() }
     DisposableEffect(Unit) { onDispose { runCatching { player.release() }; onQueryChange(qState.value) } }
@@ -4894,7 +5104,7 @@ private fun MusicSearchSheet(initialQuery: String = "", onQueryChange: (String) 
                             IconButton(onClick = { runCatching { player.stop() }; onClose() }) { Icon(Icons.Filled.Close, "close") }
                         }
                         Spacer(Modifier.height(8.dp))
-                        OutlinedTextField(q, { q = it }, placeholder = { Text("Search songs…") }, leadingIcon = { Icon(Icons.Filled.Search, null) }, singleLine = true, shape = uiShapeFor(16), modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(q, { q = it }, placeholder = { Text("Search songs…") }, leadingIcon = { Icon(Icons.Filled.Search, null) }, singleLine = true, shape = uiShapeFor(16), modifier = Modifier.fillMaxWidth().focusRequester(searchFocus))
                         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
                         if (!loading && results.isEmpty() && q.trim().length >= 2) {
                             Text(if (error.isNotBlank()) "No songs (" + error.take(120) + ")" else "No results", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 8.dp))
@@ -4944,6 +5154,8 @@ private fun AudioTrimmer(song: GatewayClient.Song, onDone: (Long, Long, List<Pai
     var playing by remember { mutableStateOf(false) }
     var lyrics by remember { mutableStateOf<List<Pair<Long, String>>>(emptyList()) }
     var lyricsLoaded by remember { mutableStateOf(false) }
+    var lyricsAttempt by remember { mutableStateOf(0) }
+    var manualOpen by remember { mutableStateOf(false) }
     val bars = remember(song.url) { val r = java.util.Random(song.url.hashCode().toLong()); FloatArray(64) { 0.22f + r.nextFloat() * 0.78f } }
     DisposableEffect(Unit) {
         runCatching {
@@ -4955,7 +5167,7 @@ private fun AudioTrimmer(song: GatewayClient.Song, onDone: (Long, Long, List<Pai
         }
         onDispose { runCatching { player.release() } }
     }
-    LaunchedEffect(Unit) { lyrics = GatewayClient.getLyrics(song.title, song.artist); lyricsLoaded = true }
+    LaunchedEffect(lyricsAttempt) { lyricsLoaded = false; lyrics = GatewayClient.getLyrics(song.title, song.artist); lyricsLoaded = true }
     LaunchedEffect(playing) {
         while (playing) {
             posMs = runCatching { player.currentPosition.toLong() }.getOrDefault(posMs)
@@ -4977,7 +5189,16 @@ private fun AudioTrimmer(song: GatewayClient.Song, onDone: (Long, Long, List<Pai
                 }
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     if (!lyricsLoaded) CircularProgressIndicator(color = Color.White)
-                    else if (lyrics.isEmpty()) Text("Lyrics unavailable", color = Color.White.copy(alpha = 0.5f))
+                    else if (lyrics.isEmpty()) Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 16.dp)) {
+                        Text("Lyrics not found", color = Color.White.copy(alpha = 0.85f), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(4.dp))
+                        Text("The lyrics provider has no lyrics for this song.", color = Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                        Spacer(Modifier.height(10.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = { lyricsAttempt++ }) { Text("Retry", color = IOS_BLUE) }
+                            TextButton(onClick = { manualOpen = true }) { Text("Enter lyrics manually", color = IOS_BLUE) }
+                        }
+                    }
                     else Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         for (off in -2..2) {
                             val idx = curLyric + off
@@ -5015,6 +5236,9 @@ private fun AudioTrimmer(song: GatewayClient.Song, onDone: (Long, Long, List<Pai
                 Text(fmtMs(startMs) + "  →  " + fmtMs(endMs) + "   •   swipe the waveform to move", color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
             }
         }
+        if (manualOpen) ManualLyricsDialog(
+            onDone = { lines -> lyrics = lines.mapIndexed { i, s -> (i * 4000L) to s }; manualOpen = false },
+            onCancel = { manualOpen = false })
     }
 }
 
