@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -52,7 +54,7 @@ import java.io.ByteArrayOutputStream
 enum class AiEditFilter(val label: String) { ORIGINAL("Original"), VIVID("Vivid"), MONO("Mono"), WARM("Warm"), COOL("Cool") }
 
 /** Pure function: apply filter + sliders + rotation + flip to [src]. */
-fun applyImageEdits(src: Bitmap, filter: AiEditFilter, brightness: Float, contrast: Float, saturation: Float, rotationDeg: Float, flip: Boolean): Bitmap {
+fun applyImageEdits(src: Bitmap, filter: AiEditFilter, brightness: Float, contrast: Float, saturation: Float, rotationDeg: Float, flip: Boolean, vignette: Boolean = false): Bitmap {
     val m = ColorMatrix()
     // Filter preset first (as its own matrix), then the user's sliders on top.
     val preset = ColorMatrix()
@@ -73,6 +75,16 @@ fun applyImageEdits(src: Bitmap, filter: AiEditFilter, brightness: Float, contra
     val paint = Paint(Paint.FILTER_BITMAP_FLAG)
     paint.colorFilter = ColorMatrixColorFilter(m)
     c.drawBitmap(src, 0f, 0f, paint)
+    if (vignette) {
+        // Darken the corners — radial gradient, transparent centre → dark edges.
+        val cx = src.width / 2f; val cy = src.height / 2f
+        val radius = maxOf(src.width, src.height) * 0.75f
+        val grad = android.graphics.RadialGradient(cx, cy, radius,
+            intArrayOf(android.graphics.Color.TRANSPARENT, android.graphics.Color.argb(150, 0, 0, 0)),
+            floatArrayOf(0.55f, 1f), android.graphics.Shader.TileMode.CLAMP)
+        val vp = Paint().apply { shader = grad }
+        c.drawRect(0f, 0f, src.width.toFloat(), src.height.toFloat(), vp)
+    }
     if (rotationDeg == 0f && !flip) return filtered
     val mx = Matrix()
     if (flip) mx.postScale(-1f, 1f, filtered.width / 2f, filtered.height / 2f)
@@ -80,6 +92,33 @@ fun applyImageEdits(src: Bitmap, filter: AiEditFilter, brightness: Float, contra
     val out = Bitmap.createBitmap(filtered, 0, 0, filtered.width, filtered.height, mx, true)
     if (out != filtered) filtered.recycle()
     return out
+}
+
+/**
+ * Parse a free-text AI prompt into REAL on-device edits (keyword-mapped).
+ * Returns null when no known keyword matches — caller must show a hint and apply NOTHING (never fake an edit).
+ * Supported words: brighter, warm/sunset/golden, black & white/mono, vivid, cool, dark, contrast, fade, saturate, vignette.
+ */
+data class PromptEdit(val filter: AiEditFilter, val brightness: Float, val contrast: Float, val saturation: Float, val vignette: Boolean)
+
+fun parseAiPrompt(prompt: String): PromptEdit? {
+    val p = prompt.lowercase()
+    var matched = false
+    var filter = AiEditFilter.ORIGINAL
+    var brightness = 0f; var contrast = 1f; var saturation = 1f; var vignette = false
+    fun has(vararg keys: String) = keys.any { p.contains(it) }
+    if (has("black and white", "black & white", "b&w", "mono", "grayscale", "greyscale", "black-and-white")) { filter = AiEditFilter.MONO; matched = true }
+    else if (has("vivid", "vibrant", "colourful", "colorful", "punchy")) { filter = AiEditFilter.VIVID; matched = true }
+    else if (has("warm", "sunset", "golden", "orange")) { filter = AiEditFilter.WARM; matched = true }
+    else if (has("cool", "cold", "winter")) { filter = AiEditFilter.COOL; matched = true }
+    if (has("bright", "brighter", "brightness")) { brightness += 25f; matched = true }
+    if (has("dark", "darker", "dim", "moody")) { brightness -= 25f; matched = true }
+    if (has("contrast", "sharp")) { contrast = 1.3f; matched = true }
+    if (has("fade", "faded", "vintage")) { saturation = 0.6f; contrast = 0.9f; matched = true }
+    if (has("saturat")) { saturation = 1.5f; matched = true }
+    if (has("vignette")) { vignette = true; matched = true }
+    if (!matched) return null
+    return PromptEdit(filter, brightness, contrast, saturation, vignette)
 }
 
 private fun contrastMatrix(contrast: Float, brightness: Float): ColorMatrix {
@@ -129,8 +168,17 @@ fun AiImageEditSheet(ctx: Context, sourceUri: Uri, onDone: (ByteArray) -> Unit, 
     var rotation by remember { mutableFloatStateOf(0f) }
     var flip by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
-    val preview = remember(src, filter, brightness, contrast, saturation, rotation, flip) {
-        if (src == null) null else applyImageEdits(src, filter, brightness, contrast, saturation, rotation, flip)
+    var promptText by remember { mutableStateOf("") }
+    var promptHint by remember { mutableStateOf<String?>(null) }
+    var promptApplied by remember { mutableStateOf<String?>(null) }
+    var vignette by remember { mutableStateOf(false) }
+    fun applyPrompt(text: String) {
+        val parsed = parseAiPrompt(text)
+        if (parsed == null) { promptHint = "No matching keyword — try: brighter, warm sunset, black & white, vivid, cool, dark, contrast, fade, vignette"; promptApplied = null }
+        else { filter = parsed.filter; brightness = parsed.brightness; contrast = parsed.contrast; saturation = parsed.saturation; vignette = parsed.vignette; promptHint = null; promptApplied = "Applied: " + text }
+    }
+    val preview = remember(src, filter, brightness, contrast, saturation, rotation, flip, vignette) {
+        if (src == null) null else applyImageEdits(src, filter, brightness, contrast, saturation, rotation, flip, vignette)
     }
     Dialog(onDismissRequest = onCancel, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize(), color = Color.Black) {
@@ -139,7 +187,7 @@ fun AiImageEditSheet(ctx: Context, sourceUri: Uri, onDone: (ByteArray) -> Unit, 
                     TextButton(onClick = onCancel) { Text("Cancel", color = Color.White) }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("Edit image with AI", color = Color.White, style = MaterialTheme.typography.titleMedium)
-                        Text("On-device enhance — applied locally", color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall)
+                        Text("AI edit (on-device, prompt-mapped) — no cloud", color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall)
                     }
                     TextButton(onClick = {
                         val bmp = preview ?: return@TextButton
@@ -156,6 +204,21 @@ fun AiImageEditSheet(ctx: Context, sourceUri: Uri, onDone: (ByteArray) -> Unit, 
                     else Text("Preview unavailable", color = Color.White)
                 }
                 Spacer(Modifier.height(10.dp))
+                // AI prompt: free text → keyword-mapped REAL edits (never faked).
+                OutlinedTextField(promptText, { promptText = it }, placeholder = { Text("AI prompt — e.g. warm sunset", color = Color.White.copy(alpha = 0.5f)) }, singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White,
+                        focusedBorderColor = Color.White.copy(alpha = 0.4f), unfocusedBorderColor = Color.White.copy(alpha = 0.2f)),
+                    modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(6.dp))
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("Brighter", "Warm sunset", "Black & white", "Vivid", "Cool").forEach { chip ->
+                        FilterChip(selected = false, onClick = { promptText = chip; applyPrompt(chip) }, label = { Text(chip) })
+                    }
+                    FilterChip(selected = false, onClick = { applyPrompt(promptText) }, label = { Text("Apply prompt") })
+                }
+                if (promptHint != null) Text(promptHint!!, color = Color(0xFFFFB84D), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
+                if (promptApplied != null) Text(promptApplied!!, color = Color(0xFF7ED957), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
+                Spacer(Modifier.height(8.dp))
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     AiEditFilter.entries.forEach { f ->
                         FilterChip(selected = filter == f, onClick = { filter = f }, label = { Text(f.label) })
@@ -172,7 +235,7 @@ fun AiImageEditSheet(ctx: Context, sourceUri: Uri, onDone: (ByteArray) -> Unit, 
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = { rotation = (rotation + 90f) % 360f }) { Text("Rotate 90°", color = Color.White) }
                     TextButton(onClick = { flip = !flip }) { Text(if (flip) "Unflip" else "Flip", color = Color.White) }
-                    TextButton(onClick = { filter = AiEditFilter.ORIGINAL; brightness = 0f; contrast = 1f; saturation = 1f; rotation = 0f; flip = false }) { Text("Reset", color = Color.White) }
+                    TextButton(onClick = { filter = AiEditFilter.ORIGINAL; brightness = 0f; contrast = 1f; saturation = 1f; rotation = 0f; flip = false; vignette = false; promptText = ""; promptHint = null; promptApplied = null }) { Text("Reset", color = Color.White) }
                 }
             }
         }

@@ -4269,12 +4269,17 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     // No transliteration toggle — lyrics post exactly as fetched.
     val romanize = false
     var previewPos by remember { mutableStateOf(0L) }
-    val displayLyrics = songLyrics
+    val displayLyrics = if (translatedActive) (translatedLyrics ?: songLyrics) else songLyrics
     // ---- Media (Image 2): re-pickable + removable inside the editor ----
     var mediaUri by remember { mutableStateOf<Uri?>(uri) }
     var mediaType by remember { mutableStateOf(type) }
     var editedBytes by remember { mutableStateOf<ByteArray?>(null) }   // AI-edited photo bytes (posted instead of the raw file)
     var aiEditOpen by remember { mutableStateOf(false) }
+    // ---- AI Lyrics Translate: toggles original ↔ translated lyrics (timestamps preserved) ----
+    var translatedLyrics by remember { mutableStateOf<List<Pair<Long, String>>?>(null) }
+    var translatedActive by remember { mutableStateOf(false) }
+    var translating by remember { mutableStateOf(false) }
+    val translateScope = rememberCoroutineScope()
     // ---- Video: trim + mute (honest — applied to the posted file) ----
     var videoMuted by remember { mutableStateOf(false) }
     var videoDuration by remember { mutableStateOf(0L) }
@@ -4336,8 +4341,12 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                     Text("New status", color = Color.White, fontWeight = FontWeight.Bold)
                     TextButton(onClick = { pickAudience = true }) { Text(audLabel, color = IOS_BLUE) }
                 }
-                // ---- Image 2: media area (photo / video / empty) ----
-                Box(Modifier.weight(1f).fillMaxWidth().clip(uiShapeFor(14)).background(Color(0xFF111111)), contentAlignment = Alignment.Center) {
+                // ---- Image 2: media area (photo / video / empty) — FIXED height, collapse never moves it ----
+                BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                    val mediaH = maxHeight * 0.55f
+                    val panelH = maxHeight * 0.45f
+                    Column(Modifier.fillMaxSize()) {
+                Box(Modifier.fillMaxWidth().height(mediaH).clip(uiShapeFor(14)).background(Color(0xFF111111)), contentAlignment = Alignment.Center) {
                     val curUri = mediaUri
                     if (curUri == null) {
                             // Empty state: add a photo or video again.
@@ -4429,9 +4438,9 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                         }
                     }
                 }
-                // ---- Collapsible controls panel: tap the header to expand / collapse ----
+                // ---- Collapsible controls panel: FIXED area — expanding never moves the media above ----
                 val videoBars = remember(mediaUri) { val r = java.util.Random((mediaUri?.toString() ?: "").hashCode().toLong()); FloatArray(64) { 0.22f + r.nextFloat() * 0.78f } }
-                Column(Modifier.fillMaxWidth().padding(top = 6.dp)) {
+                Column(Modifier.fillMaxWidth().height(panelH).verticalScroll(rememberScrollState()).padding(top = 6.dp)) {
                     Row(Modifier.fillMaxWidth().clickable { controlsExpanded = !controlsExpanded }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(if (controlsExpanded) "▴" else "▾", color = Color.White.copy(alpha = 0.7f))
                         Spacer(Modifier.width(8.dp))
@@ -4440,13 +4449,13 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                     }
                     AnimatedVisibility(visible = controlsExpanded, enter = expandVertically(), exit = shrinkVertically()) {
                         Column {
-                            // ---- Image 1: SONG row. LEFT X = REPLACE (back to search), not delete ----
+                            // ---- Image 1: SONG row. LEFT X = REMOVE + REPLACE (song search reopens, old query kept) ----
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 val sg = song
                                 if (sg == null) {
                                     TextButton(onClick = { musicOpen = true }) { Text("♪  Add music", color = IOS_BLUE) }
                                 } else {
-                                    IconButton(onClick = { musicOpen = true }) { Icon(Icons.Filled.Close, "replace song", tint = Color.White) }
+                                    IconButton(onClick = { runCatching { player.reset() }; playing = false; song = null; songLyrics = emptyList(); translatedLyrics = null; translatedActive = false; musicOpen = true }) { Icon(Icons.Filled.Close, "remove and replace song", tint = Color.White) }
                                     TextButton(onClick = {
                                         if (playing) { runCatching { player.pause() }; playing = false }
                                         else runCatching {
@@ -4459,9 +4468,35 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                     }) { Text(if (playing) "⏸ Pause" else "▶ Play", color = IOS_BLUE) }
                                     Text("♪ " + sg.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                                     if (songLyrics.isNotEmpty()) Text("  © lyrics", color = IOS_BLUE, style = MaterialTheme.typography.labelSmall)
-                                    TextButton(onClick = { runCatching { player.reset() }; playing = false; song = null; songLyrics = emptyList() }) { Text("Remove", color = Color.White.copy(alpha = 0.7f)) }
                                 }
                             }
+                            // ---- AI tools: AI Edit (photo) + AI Lyrics Translate ----
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                TextButton(onClick = {
+                                    if (mediaType == "image" && mediaUri != null) aiEditOpen = true
+                                    else Toast.makeText(ctx, "Add a photo first", Toast.LENGTH_SHORT).show()
+                                }) { Text("✨ AI Edit", color = IOS_BLUE) }
+                                TextButton(onClick = {
+                                    if (translatedActive) { translatedActive = false }
+                                    else if (song == null || songLyrics.isEmpty()) { Toast.makeText(ctx, "Add a song first", Toast.LENGTH_SHORT).show() }
+                                    else if (translatedLyrics != null) { translatedActive = true }
+                                    else {
+                                        translating = true
+                                        translateScope.launch {
+                                            val out = runCatching { GatewayClient.translateLines(songLyrics.map { it.second }, romanize = false, lang = "English") }.getOrDefault(emptyList())
+                                            translating = false
+                                            if (out.size == songLyrics.size && out.zip(songLyrics.map { it.second }).any { (a, b) -> a != b }) {
+                                                translatedLyrics = songLyrics.mapIndexed { i, pr -> pr.first to out[i] }
+                                                translatedActive = true
+                                            } else {
+                                                Toast.makeText(ctx, "Translation unavailable", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    }
+                                }) { Text(if (translatedActive) "✓ AI Lyrics Translated" else "🌐 AI Lyrics Translate", color = IOS_BLUE) }
+                                if (translating) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2f, color = IOS_BLUE)
+                            }
+                            if (translatedActive) Text("Translated ✓ — translated lyrics will be posted", color = IOS_BLUE, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 8.dp))
                             // ---- Video: fixed-box trimmer + mute ----
                             if (mediaType == "video" && mediaUri != null && videoDuration > 0L) {
                                 WaveformTrimmer(videoBars, videoDuration, vTrimStart, vTrimEnd, videoPos) { ns, ne -> vTrimStart = ns; vTrimEnd = ne }
@@ -4501,10 +4536,12 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                             Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                                 if (mediaUri == null) Text("Add a photo or video to post", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(end = 10.dp))
                                 FilledIconButton(enabled = mediaUri != null,
-                                    onClick = { onUpload(caption.trim(), audience, selected.toList(), song, trimStart, trimEnd, songLyrics, lyricY, lyricScale, animStyle, romanize, editedBytes, vTrimStart, vTrimEnd, videoMuted, mediaUri, mediaType) },
+                                    onClick = { onUpload(caption.trim(), audience, selected.toList(), song, trimStart, trimEnd, displayLyrics, lyricY, lyricScale, animStyle, romanize, editedBytes, vTrimStart, vTrimEnd, videoMuted, mediaUri, mediaType) },
                                     modifier = Modifier.size(54.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = AYX_GREEN)) { Icon(Icons.AutoMirrored.Filled.Send, "upload", tint = Color.White) }
                             }
                         }
+                    }
+                }
                     }
                 }
             }
@@ -4514,7 +4551,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     if (musicOpen) MusicSearchSheet(initialQuery = songQuery, onQueryChange = { songQuery = it }, onSelect = { songToTrim = it; musicOpen = false }, onClose = { musicOpen = false })
     if (aiEditOpen && mediaUri != null) AiImageEditSheet(ctx, mediaUri!!, onDone = { editedBytes = it; aiEditOpen = false }, onCancel = { aiEditOpen = false })
     songToTrim?.let { sng ->
-        AudioTrimmer(sng, onDone = { st, en, ly -> song = sng; trimStart = st; trimEnd = en; songLyrics = ly; songToTrim = null }, onCancel = { songToTrim = null })
+        AudioTrimmer(sng, onDone = { st, en, ly -> song = sng; trimStart = st; trimEnd = en; songLyrics = ly; translatedLyrics = null; translatedActive = false; songToTrim = null }, onCancel = { songToTrim = null })
     }
 }
 
@@ -4986,40 +5023,51 @@ private fun WaveformTrimmer(bars: FloatArray, durationMs: Long, startMs: Long, e
     val selLen = (endMs - startMs).coerceAtLeast(1000L)
     val curStart by rememberUpdatedState(startMs)
     val curLen by rememberUpdatedState(selLen)
-    Canvas(Modifier.fillMaxWidth().height(88.dp).pointerInput(durationMs) {
-        val w = size.width.toFloat().coerceAtLeast(1f)
-        var acc = 0L
-        detectHorizontalDragGestures(
-            onDragStart = { acc = curStart },
-            onHorizontalDrag = { _, dragAmount ->
-                if (durationMs > 0) {
-                    val deltaMs = (dragAmount / w * durationMs).toLong()
-                    acc = (acc + deltaMs).coerceIn(0L, (durationMs - curLen).coerceAtLeast(0L))
-                    onChange(acc, acc + curLen)
+    Column(Modifier.fillMaxWidth()) {
+        Canvas(Modifier.fillMaxWidth().height(88.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF1C1C1E)).pointerInput(durationMs) {
+            val w = size.width.toFloat().coerceAtLeast(1f)
+            var acc = 0L
+            detectHorizontalDragGestures(
+                onDragStart = { acc = curStart },
+                onHorizontalDrag = { _, dragAmount ->
+                    if (durationMs > 0) {
+                        val deltaMs = (dragAmount / w * durationMs).toLong()
+                        acc = (acc + deltaMs).coerceIn(0L, (durationMs - curLen).coerceAtLeast(0L))
+                        onChange(acc, acc + curLen)
+                    }
                 }
+            )
+        }) {
+            val n = bars.size
+            val barW = size.width / n
+            val selStartX = if (durationMs > 0) startMs.toFloat() / durationMs * size.width else 0f
+            val selEndX = if (durationMs > 0) endMs.toFloat() / durationMs * size.width else size.width
+            // Instagram-style: GREY bars outside, BRIGHT WHITE bars inside the window.
+            for (i in 0 until n) {
+                val bx = i * barW
+                val h = bars[i] * size.height
+                val inSel = bx + barW / 2 in selStartX..selEndX
+                drawRoundRect(if (inSel) Color.White else Color(0xFF8E8E93),
+                    topLeft = androidx.compose.ui.geometry.Offset(bx + 1f, (size.height - h) / 2f),
+                    size = androidx.compose.ui.geometry.Size((barW - 2f).coerceAtLeast(1f), h),
+                    cornerRadius = CornerRadius(3f, 3f))
             }
-        )
-    }) {
-        val n = bars.size
-        val barW = size.width / n
-        val selStartX = if (durationMs > 0) startMs.toFloat() / durationMs * size.width else 0f
-        val selEndX = if (durationMs > 0) endMs.toFloat() / durationMs * size.width else size.width
-        for (i in 0 until n) {
-            val bx = i * barW
-            val h = bars[i] * size.height
-            val inSel = bx + barW / 2 in selStartX..selEndX
-            drawRect(if (inSel) Color(0xFF4EA1FF) else Color.White.copy(alpha = 0.18f),
-                topLeft = androidx.compose.ui.geometry.Offset(bx + 1f, (size.height - h) / 2f),
-                size = androidx.compose.ui.geometry.Size((barW - 2f).coerceAtLeast(1f), h))
+            // Dim outside the selection.
+            drawRect(Color.Black.copy(alpha = 0.45f), topLeft = androidx.compose.ui.geometry.Offset(0f, 0f), size = androidx.compose.ui.geometry.Size(selStartX.coerceAtLeast(0f), size.height))
+            drawRect(Color.Black.copy(alpha = 0.45f), topLeft = androidx.compose.ui.geometry.Offset(selEndX, 0f), size = androidx.compose.ui.geometry.Size((size.width - selEndX).coerceAtLeast(0f), size.height))
+            // Rounded selection window: WHITE border, subtle white fill. No draggable side handles — swipe the waveform to move.
+            drawRoundRect(Color.White.copy(alpha = 0.08f), topLeft = androidx.compose.ui.geometry.Offset(selStartX, 0f),
+                size = androidx.compose.ui.geometry.Size((selEndX - selStartX).coerceAtLeast(2f), size.height), cornerRadius = CornerRadius(14f, 14f))
+            drawRoundRect(Color.White, topLeft = androidx.compose.ui.geometry.Offset(selStartX, 0f),
+                size = androidx.compose.ui.geometry.Size((selEndX - selStartX).coerceAtLeast(2f), size.height), cornerRadius = CornerRadius(14f, 14f), style = Stroke(width = 3f))
+            if (posMs in startMs..endMs && durationMs > 0) {
+                val px = posMs.toFloat() / durationMs * size.width
+                drawRect(Color.Yellow, topLeft = androidx.compose.ui.geometry.Offset(px - 1.5f, 0f), size = androidx.compose.ui.geometry.Size(3f, size.height))
+            }
         }
-        // dim outside selection + bright frame
-        drawRect(Color.Black.copy(alpha = 0.45f), topLeft = androidx.compose.ui.geometry.Offset(0f, 0f), size = androidx.compose.ui.geometry.Size(selStartX.coerceAtLeast(0f), size.height))
-        drawRect(Color.Black.copy(alpha = 0.45f), topLeft = androidx.compose.ui.geometry.Offset(selEndX, 0f), size = androidx.compose.ui.geometry.Size((size.width - selEndX).coerceAtLeast(0f), size.height))
-        drawRect(Color(0xFF4EA1FF), topLeft = androidx.compose.ui.geometry.Offset(selStartX, 0f),
-            size = androidx.compose.ui.geometry.Size((selEndX - selStartX).coerceAtLeast(2f), size.height), style = Stroke(width = 5f))
-        if (posMs in startMs..endMs && durationMs > 0) {
-            val px = posMs.toFloat() / durationMs * size.width
-            drawRect(Color.Yellow, topLeft = androidx.compose.ui.geometry.Offset(px - 1.5f, 0f), size = androidx.compose.ui.geometry.Size(3f, size.height))
+        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(fmtMs(startMs), color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelSmall)
+            Text(fmtMs(endMs), color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelSmall)
         }
     }
 }
