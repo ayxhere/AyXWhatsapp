@@ -4586,7 +4586,7 @@ private fun AiLyricsTranslateSheet(songTitle: String, lyrics: List<Pair<Long, St
         if (srcLines.isEmpty()) { error = if (hasLyrics) "No lyrics to translate." else "Type or paste the lyrics first, one line per row."; return }
         translating = true; translated = null
         scope.launch {
-            val (out, err) = GatewayClient.translateLinesEx(srcLines, lang)
+            val (out, err) = GatewayClient.translateLinesEx(srcLines, romanize = false, lang = lang)
             translating = false
             when {
                 err != null && err.contains("no AI key", ignoreCase = true) -> needKey = true
