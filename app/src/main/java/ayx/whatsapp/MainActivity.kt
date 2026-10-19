@@ -127,7 +127,7 @@ import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.QuestionAnswer
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Wallpaper
-import androidx.compose.material.icons.filled.DesignServices
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material.icons.filled.Visibility
@@ -171,7 +171,6 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.ChatBubbleOutline
-import androidx.compose.material.icons.filled.BlurOn
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Pause
@@ -3016,7 +3015,7 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
 private fun settingsTitle(page: String): String = when (page) {
     "general" -> "General"; "autoreply" -> "Auto-reply"; "ai" -> "AI Assistant"; "chat" -> "Chat Settings"
     "imageai" -> "Image AI"; "aimemory" -> "AI Memory"; "voice" -> "AI Voice"; "font" -> "App Font"; "emoji" -> "Emoji"
-    "wallpaper" -> "Chat Wallpaper"; "uistyle" -> "Choose Your UI"; "userinterface" -> "User Interface"; "about" -> "About"; "support" -> "Support Development"; else -> "Settings"
+    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "about" -> "About"; "support" -> "Support Development"; else -> "Settings"
 }
 // parent page for nested back (Wallpaper under Chat Settings; Image AI / AI Memory / Voice under AI Assistant; Font under General)
 private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "general"; "emoji" -> "general"; else -> "home" }
@@ -3040,8 +3039,7 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
             "voice" -> VoicePickerScreen(settings, onToggle, ctx)
             "chat" -> SettingsSubPage { ChatSettings(onOpenWallpaper = { onPage("wallpaper") }) }
             "wallpaper" -> SettingsSubPage { WallpaperSettings(ctx, wallpaperVersion, onPickWallpaper, onRemoveWallpaper) }
-            "uistyle" -> SettingsSubPage { ChooseUiScreen(onBack = { onPage("home") }) }
-            "userinterface" -> SettingsSubPage { UserInterfaceSettingsScreen() }
+            "appearance" -> SettingsSubPage { AppearanceSettings() }
             "about" -> SettingsSubPage { AboutSettings(ctx, onLogout) }
             "support" -> SettingsSubPage { SupportSettings(ctx) }
             else -> SettingsHome(status) { onPage(it) }
@@ -3072,8 +3070,7 @@ private fun SettingsHome(status: GatewayClient.Status, onOpen: (String) -> Unit)
         CategoryCard(Icons.Filled.AutoAwesome, CAT_AI, "AI Assistant", "AI replies, groups and language") { onOpen("ai") }
         CategoryCard(Icons.Filled.GraphicEq, Color(0xFF4DD0C4), "AI Voice", "Voice reply, voice notes & voice artists") { onOpen("voice") }
         CategoryCard(Icons.Filled.Chat, CAT_WALLPAPER, "Chat", "Wallpaper, bubble style and header") { onOpen("chat") }
-        CategoryCard(Icons.Filled.DesignServices, CAT_APPEARANCE, "UI", "Interface style") { onOpen("uistyle") }
-        CategoryCard(Icons.Filled.BlurOn, CAT_AI, "User Interface", "Blur, zoom & motion effects") { onOpen("userinterface") }
+        CategoryCard(Icons.Filled.Palette, CAT_APPEARANCE, "Appearance", "Theme and accent color") { onOpen("appearance") }
         CategoryCard(Icons.Filled.Info, CAT_ABOUT, "About", "App information and reset") { onOpen("about") }
         CategoryCard(Icons.Filled.Favorite, CAT_SUPPORT, "Support Development", "Donate via UPI or crypto to support AyX") { onOpen("support") }
         Spacer(Modifier.height(16.dp))
@@ -3896,6 +3893,64 @@ private fun BubbleColorRow(selected: Int, onPick: (Int) -> Unit) {
             }
         }
     }
+}
+
+@Composable
+private fun AppearanceSettings() {
+    val mode = ThemeStore.mode.value
+    val accent = ThemeStore.accent.value
+    val modes = listOf(
+        "system" to "System", "light" to "Light", "dark" to "Dark", "amoled" to "AMOLED"
+    )
+    SettingsGroup("Theme") {
+        Column(Modifier.padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            // 2x2 grid of theme options — cleaner than a cramped chip row.
+            for (row in modes.chunked(2)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    for ((k, lbl) in row) {
+                        val sel = mode == k
+                        StyledSurface(
+                            onClick = { ThemeStore.setMode(k) },
+                            shape = uiShapeFor(16),
+                            color = if (sel) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.size(10.dp).clip(CircleShape)
+                                    .background(if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)))
+                                Spacer(Modifier.width(10.dp))
+                                Text(lbl, style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal,
+                                    color = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                            }
+                        }
+                    }
+                    // Keep the grid aligned when the row has one item.
+                    if (row.size == 1) Spacer(Modifier.weight(1f))
+                }
+            }
+        }
+    }
+    SettingsGroup("Accent color") {
+        Column(Modifier.padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                ThemeStore.accents.forEach { (key, color) ->
+                    val sel = accent == key
+                    Box(Modifier.size(44.dp).clip(CircleShape).background(color)
+                        .border(if (sel) 3.dp else 1.dp,
+                            if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                            CircleShape)
+                        .clickable { ThemeStore.setAccent(key) },
+                        contentAlignment = Alignment.Center) {
+                        if (sel) Icon(Icons.Filled.Check, "selected", tint = Color.White, modifier = Modifier.size(20.dp))
+                    }
+                }
+            }
+        }
+    }
+    Text("Theme and accent apply instantly across the whole app.", style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp, top = 2.dp))
 }
 
 private fun openUrl(ctx: Context, url: String) {
