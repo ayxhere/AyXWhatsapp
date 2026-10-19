@@ -55,6 +55,7 @@ object GatewayClient {
         val aiImageFree: Boolean = true,
         val aiCommandsEnabled: Boolean = true,
         val aiVoiceNoteReply: Boolean = false,
+        val aiReplyVoiceNote: Boolean = false,
         val aiTtsVoice: String = "Arista-PlayAI",
         val aiSarvamKey: String = "",
         val aiLangMode: String = "auto",
@@ -287,6 +288,36 @@ object GatewayClient {
     suspend fun sendVoice(jid: String, text: String): Boolean = withContext(Dispatchers.IO) {
         val o = post("/sendvoice", JSONObject().put("jid", jid).put("text", text))
         if (o.optBoolean("ok", false)) true else throw RuntimeException(o.optString("error", "voice failed"))
+    }
+
+    // F2: AI voice-note replies — Kotlin drains Node's queue (see AiVoiceReply).
+    suspend fun getVoiceReplies(): List<Pair<String, String>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val o = get("/voicereplies/pending")
+            val a = o.optJSONArray("items") ?: return@runCatching emptyList<Pair<String, String>>()
+            (0 until a.length()).mapNotNull { i ->
+                val it = a.optJSONObject(i) ?: return@mapNotNull null
+                val jid = it.optString("jid", "")
+                val text = it.optString("text", "")
+                if (jid.isNotBlank() && text.isNotBlank()) jid to text else null
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    // F2: send base64 audio bytes as a WhatsApp voice note (ptt:true).
+    suspend fun sendVoiceNote(jid: String, audioB64: String): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            val o = post("/sendvoicenote", JSONObject().put("jid", jid).put("data", audioB64).put("mimetype", "audio/mp4"))
+            o.optBoolean("ok", false)
+        }.getOrDefault(false)
+    }
+
+    // F2: plain-text fallback for voice replies (never drop the reply).
+    suspend fun sendText(jid: String, text: String): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            val o = post("/send", JSONObject().put("jid", jid).put("text", text))
+            o.optBoolean("ok", false) || o.optBoolean("queued", false)
+        }.getOrDefault(false)
     }
 
     suspend fun setProfileName(name: String) = withContext(Dispatchers.IO) {
@@ -771,6 +802,7 @@ object GatewayClient {
             aiImageFree = o.optBoolean("aiImageFree", true),
             aiCommandsEnabled = o.optBoolean("aiCommandsEnabled", true),
             aiVoiceNoteReply = o.optBoolean("aiVoiceNoteReply", false),
+            aiReplyVoiceNote = o.optBoolean("aiReplyVoiceNote", false),
             aiTtsVoice = o.optString("aiTtsVoice", "Arista-PlayAI"),
             aiSarvamKey = o.optString("aiSarvamKey", ""),
             aiLangMode = o.optString("aiLangMode", "auto"),

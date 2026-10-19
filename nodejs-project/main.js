@@ -72,6 +72,7 @@ let settings = {
   aiImageFree: true, // use free no-key vision (Pollinations) as a fallback so images work without any API key
   aiCommandsEnabled: true, // /create (make image) and /prompt (describe image as a prompt)
   aiVoiceNoteReply: false, // reply to incoming voice notes WITH a voice note (TTS)
+  aiReplyVoiceNote: false, // F2: ALL AI text replies go as voice notes via Android on-device TTS (Kotlin drains the queue)
   aiTtsVoice: 'Arista-PlayAI', // Groq PlayAI voice (uses the working Groq key) — real, varied voices
   aiTtsModel: 'playai-tts',
   aiSarvamKey: '', // Sarvam AI key (free) — real HINDI/BANGLA human voices; empty = Sarvam voices unavailable
@@ -201,6 +202,10 @@ function loadRawStoreDisk() {
   } catch (e) { log('rawstore load failed', e?.message) }
 }
 let deletedList = []        // [{ chat, fromMe, text, ts }]
+// F2: AI voice-note reply queue — Node generates the AI text; Kotlin drains this,
+// synthesizes with Android on-device TTS, and sends the voice note. If Kotlin
+// doesn't pick an item up within 90s (app dead), Node falls back to text.
+let voiceReplyQueue = []    // [{ jid, text, ts }]
 let msgLog = []             // [{ chat, fromMe, text, ts }]
 const chatHistory = new Map()  // jid -> [{ role:'user'|'assistant', content }] for AI context
 const dpCache = new Map()      // jid -> profile picture url (or null)
@@ -796,6 +801,32 @@ function contactContext(jid) {
   if (m.lang === 'bangla-script') bits.push('This person tends to write in Bangla.')
   else if (m.lang === 'hindi-script') bits.push('This person tends to write in Hindi.')
   return bits.length ? ('\n\n' + bits.join(' ') + ' Keep your language consistent across the whole chat.') : ''
+}
+
+// F2: single choke point for AI text replies. When "Reply as voice note" is ON,
+// the text goes to voiceReplyQueue — Kotlin drains it, synthesizes with Android
+// on-device TTS, and sends a voice note. 90s fallback: if Kotlin never picks it
+// up (app dead), Node sends it as plain text so the reply is never dropped.
+async function sendAiReply(jid, text, quoted) {
+  if (!text) return
+  pushHistory(jid, 'assistant', text)
+  if (settings.aiReplyVoiceNote) {
+    const item = { jid, text, ts: Date.now() }
+    voiceReplyQueue.push(item)
+    if (voiceReplyQueue.length > 20) voiceReplyQueue.shift()
+    log('ai reply queued for voice note')
+    setTimeout(() => {
+      const i = voiceReplyQueue.indexOf(item)
+      if (i >= 0) {
+        voiceReplyQueue.splice(i, 1)
+        // fallback: app didn't drain in time — send as text so nothing is lost
+        sock?.sendMessage(jid, { text }, quoted).catch(e => log('voice fallback err', e?.message))
+        log('ai voice reply fell back to text (queue timeout)')
+      }
+    }, 90000).unref?.()
+    return
+  }
+  await sock.sendMessage(jid, { text }, quoted)
 }
 
 async function aiReply(jid, force, currentText, langHint) {
@@ -1506,10 +1537,28 @@ function applyEdit(origId, contentMsg, ts) {
   }
 }
 
-function captureDelete(delId) {
+async function captureDelete(delId) {
   const orig = delId ? msgStore.get(delId) : null
   if (orig && !orig.deleted) {
     orig.deleted = true // same object lives in msgLog too -> marked in place, no duplicate
+    // F3: anti-delete for IMAGES/VIDEOS — if the media wasn't downloaded on receipt
+    // (network hiccup), grab it NOW from the raw message before it's gone. Images and
+    // videos normally auto-download, so this is the safety net for the misses.
+    if (orig.media && !orig.media.saved && (orig.media.type === 'image' || orig.media.type === 'video')) {
+      try {
+        const raw = rawStore.get(delId)
+        if (raw && raw.message && sock) {
+          const buf = await downloadMediaMessage({ key: raw.key, message: raw.message }, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage })
+          if (buf && buf.length > 0) {
+            fs.mkdirSync(MEDIA_DIR, { recursive: true })
+            fs.writeFileSync(path.join(MEDIA_DIR, orig.media.name), buf)
+            orig.media.saved = true
+            pruneMediaDir()
+            log('anti-delete: media rescued on revoke', orig.media.name)
+          }
+        }
+      } catch (e) { log('anti-delete media rescue failed', e?.message) }
+    }
     saveMessagesDebounced()
     log('marked deleted:', JSON.stringify(orig.text))
   }
@@ -1844,7 +1893,7 @@ async function handleMessagesBatch({ messages, type }) {
             if (settings.autoReplyEnabled) reply = matchReply(text)
             if (!reply && settings.aiReplyEnabled) reply = await aiReply(from)
             if (reply) {
-              try { await sock.sendMessage(from, { text: reply }, q); pushHistory(from, 'assistant', reply); log('auto-reply sent:', reply) }
+              try { await sendAiReply(from, reply, q); log('auto-reply sent:', reply) }
               catch (e) { log('auto-reply err', e?.message) }
             }
           }
@@ -1875,7 +1924,7 @@ async function handleMessagesBatch({ messages, type }) {
           try { await sock.readMessages([msg.key]) } catch (_) {}
           const reply = await groupAiReply(from, explicit)
           if (reply) {
-            try { await sock.sendMessage(from, { text: reply }); pushHistory(from, 'assistant', reply); if (auto) incGroupDaily(from); log('group ai sent (' + (explicit ? 'cmd' : 'auto ' + groupDailyCount(from) + '/10') + ')') }
+            try { await sendAiReply(from, reply, undefined); if (auto) incGroupDaily(from); log('group ai sent (' + (explicit ? 'cmd' : 'auto ' + groupDailyCount(from) + '/10') + ')') }
             catch (e) { log('group ai send err', e?.message) }
           }
         }
@@ -2336,6 +2385,39 @@ app.get('/sendmedia/status/:id', (req, res) => {
 
 // .vv command: the app sends ONLY the text; the gateway makes the speech (Sarvam → OGG/Opus) and sends
 // it as a real voice note (ptt). The typed ".vv ..." text is never sent. Audio stays in memory — no temp file.
+// F2: Kotlin drains this queue, does Android on-device TTS, and POSTs the audio
+// to /sendvoicenote. Returns and clears the queue.
+app.get('/voicereplies/pending', (req, res) => {
+  const items = voiceReplyQueue
+  voiceReplyQueue = []
+  res.json({ items })
+})
+
+// F2: send a voice NOTE (ptt:true) from base64 audio bytes (synthesized by Kotlin's Android TTS).
+app.post('/sendvoicenote', async (req, res) => {
+  try {
+    const jid = String(req.body?.jid || '')
+    const b64 = String(req.body?.data || '')
+    const mimetype = String(req.body?.mimetype || 'audio/mp4')
+    if (!jid || !b64) return res.status(400).json({ ok: false, error: 'jid and data required' })
+    const buf = Buffer.from(b64, 'base64')
+    if (!buf || buf.length === 0) return res.status(400).json({ ok: false, error: 'empty audio' })
+    if (!(await ensureLive())) {
+      if (status.needRelogin) return res.json({ ok: false, needRelogin: true, error: 'session expired — scan QR again' })
+      return res.json({ ok: false, queued: true, error: 'reconnecting — queued, will send automatically' })
+    }
+    const r = await sock.sendMessage(jid, { audio: buf, ptt: true, mimetype })
+    markSocketActive()
+    const id = r?.key?.id || null
+    if (id) storeRawSent(id, r.key, r.message)
+    if (id && !msgStore.has(id)) {
+      const entry = { chat: canon(jid), fromMe: true, text: '', ts: Date.now(), id, status: 2, mediaType: 'audio' }
+      adoptPendingStatus(entry); msgStore.set(id, entry); msgLog.unshift(entry); saveMessagesDebounced()
+    }
+    res.json({ ok: true, id })
+  } catch (e) { log('sendvoicenote error', e?.message); res.status(500).json({ ok: false, error: e?.message || 'send failed' }) }
+})
+
 app.post('/sendvoice', async (req, res) => {
   try {
     const jid = String(req.body?.jid || '')
@@ -3099,6 +3181,7 @@ app.post('/settings', (req, res) => {
   if (typeof b.aiImageFree === 'boolean') settings.aiImageFree = b.aiImageFree
   if (typeof b.aiCommandsEnabled === 'boolean') settings.aiCommandsEnabled = b.aiCommandsEnabled
   if (typeof b.aiVoiceNoteReply === 'boolean') settings.aiVoiceNoteReply = b.aiVoiceNoteReply
+  if (typeof b.aiReplyVoiceNote === 'boolean') settings.aiReplyVoiceNote = b.aiReplyVoiceNote
   if (typeof b.aiTtsVoice === 'string') settings.aiTtsVoice = b.aiTtsVoice
   if (typeof b.aiTtsModel === 'string') settings.aiTtsModel = b.aiTtsModel
   if (typeof b.aiSarvamKey === 'string') settings.aiSarvamKey = b.aiSarvamKey

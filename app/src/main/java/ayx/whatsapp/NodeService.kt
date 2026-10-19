@@ -170,6 +170,12 @@ class NodeService : Service() {
                         val st = GatewayClient.status()
                         if (st.reachable && st.connection == "open") GatewayClient.flushSendQueue(applicationContext)
                     }
+                    // F2: drain AI voice-note replies (Android TTS → voice note). Works
+                    // here in the background service even when the UI is dead.
+                    runCatching {
+                        val st = GatewayClient.status()
+                        if (st.reachable && st.connection == "open") AiVoiceTts.drainQueue(applicationContext)
+                    }
                 } catch (_: Exception) {}
                 delay(4000)
             }
