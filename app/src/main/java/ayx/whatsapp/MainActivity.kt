@@ -203,6 +203,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -4731,6 +4732,8 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     var videoPos by remember { mutableStateOf(0L) }
     var videoPlaying by remember { mutableStateOf(false) }
     var videoView by remember { mutableStateOf<VideoView?>(null) }
+    // E4: hold the underlying MediaPlayer so the mute toggle is instant.
+    var videoPlayer by remember { mutableStateOf<android.media.MediaPlayer?>(null) }
     var videoTrimOpen by remember { mutableStateOf(false) }   // V3: trimmer panel toggled from the ✂ Trim button in the video header
     // ---- Song tap toggles the AI Lyrics Translate button below the song row ----
     var showTranslateRow by remember { mutableStateOf(false) }
@@ -4783,19 +4786,40 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     Dialog(onDismissRequest = onCancel, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         // Keyboard must NOT move the media: the dialog window ignores IME
         // resize (ADJUST_NOTHING) so the photo/video stays fixed full-screen.
-        // Only the bottom controls row carries imePadding(), so just that
-        // row rises above the keyboard.
-        val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
+        // E2: ADJUST_NOTHING stops IME inset dispatch, so imePadding() alone
+        // does NOTHING — we detect the keyboard height manually via a
+        // GlobalLayoutListener and pad ONLY the bottom controls row.
+        val dialogView = LocalView.current
+        val dialogWindow = (dialogView.parent as? DialogWindowProvider)?.window
         SideEffect {
             dialogWindow?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
         }
+        var keyboardPx by remember { mutableStateOf(0) }
+        val focusManager = LocalFocusManager.current
+        DisposableEffect(dialogView) {
+            val root = dialogView.rootView
+            val listener = android.view.ViewTreeObserver.OnGlobalLayoutListener {
+                val r = android.graphics.Rect()
+                root.getWindowVisibleDisplayFrame(r)
+                val kb = (root.height - r.bottom).coerceAtLeast(0)
+                // Ignore tiny insets (nav bar); only real keyboards count.
+                keyboardPx = if (kb > root.height * 0.12) kb else 0
+            }
+            root.viewTreeObserver.addOnGlobalLayoutListener(listener)
+            onDispose { runCatching { root.viewTreeObserver.removeOnGlobalLayoutListener(listener) } }
+        }
+        val keyboardDp = with(LocalDensity.current) { keyboardPx.toDp() }
         Surface(Modifier.fillMaxSize(), color = Color.Black) {
             // ---- Full-bleed overlay layout: media fills the screen; top bar + controls float above it ----
             Box(Modifier.fillMaxSize().blur(editorBlur)) {
                 val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
                 val overlayTopPad = statusTop + 64.dp   // corner buttons sit below the overlaid top bar
                 // ---- Media layer: full-bleed, no crop (ContentScale.Fit — preview matches the uncropped upload) ----
-                Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+                // E3: tapping the media/background hides the keyboard (clears focus).
+                Box(Modifier.fillMaxSize().background(Color.Black).clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { focusManager.clearFocus() }, contentAlignment = Alignment.Center) {
                     val curUri = mediaUri
                     if (curUri == null) {
                             // Empty state: add a photo or video again.
@@ -4831,6 +4855,19 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                         videoView = vv
                                         vv.setVideoURI(curUri)
                                         vv.seekTo(vTrimStart.toInt())
+                                        // E1: on natural completion, reset to trim start
+                                        // so replay always works (no stuck end screen).
+                                        vv.setOnCompletionListener {
+                                            runCatching { vv.seekTo(vTrimStart.toInt()) }
+                                            videoPlaying = false
+                                            videoPos = vTrimStart
+                                        }
+                                        // E4: capture the player to apply mute instantly.
+                                        vv.setOnPreparedListener { mp ->
+                                            videoPlayer = mp
+                                            val v = if (videoMuted) 0f else 1f
+                                            runCatching { mp.setVolume(v, v) }
+                                        }
                                     }
                                 }, modifier = Modifier.fillMaxSize())
                             }
@@ -4910,7 +4947,9 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                 val videoBars = remember(mediaUri) { val r = java.util.Random((mediaUri?.toString() ?: "").hashCode().toLong()); FloatArray(64) { 0.22f + r.nextFloat() * 0.78f } }
                 Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                     .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.78f))))
-                    .navigationBarsPadding().imePadding()) {
+                    // E2: manual keyboard padding (imePadding doesn't work with
+                    // ADJUST_NOTHING) — only this row rises, media stays fixed.
+                    .navigationBarsPadding().padding(bottom = keyboardDp)) {
                     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 10.dp)) {
                             // ---- Video trimmer panel (V3): toggled from the ✂ Trim button in the video header.
                             // Draggable left/right edges set the range; the selection itself IS the length (no Length slider).
@@ -4965,7 +5004,12 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                             // ---- Video: mute (the trimmer now lives in its own toggleable panel above) ----
                             if (mediaType == "video" && mediaUri != null) {
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                    TextButton(onClick = { videoMuted = !videoMuted }) { Text(if (videoMuted) "🔇 Muted" else "🔊 Sound", color = Color.White) }
+                                    TextButton(onClick = {
+                                        // E4: instant mute/unmute on the live preview — no dialog, no delay.
+                                        videoMuted = !videoMuted
+                                        val v = if (videoMuted) 0f else 1f
+                                        runCatching { videoPlayer?.setVolume(v, v) }
+                                    }) { Text(if (videoMuted) "🔇 Muted" else "🔊 Sound", color = Color.White) }
                                     Text(if (videoMuted) "Video audio will be off in the posted status" else "Video audio will be kept", color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall)
                                 }
                             }
@@ -5403,6 +5447,13 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                             setOnErrorListener { _, _, _ -> goNext(); true }   // failed video -> skip instead of black screen
                             videoView = this
                         } }, modifier = Modifier.fillMaxSize())
+                        // C4: show a spinner while the video buffers — previously
+                        // it was a black screen with no feedback (felt like "lag").
+                        if (!videoReady) {
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator(color = Color.White.copy(alpha = 0.7f))
+                            }
+                        }
                     }
                 } else if (bmp != null) {
                     Image(bmp!!, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)

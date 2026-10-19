@@ -253,12 +253,29 @@ object GatewayClient {
         } catch (e: Exception) { JSONObject().put("ok", false).put("message", e.message ?: "error") }
     }
 
+    /**
+     * C2: media send is now async server-side — /sendmedia accepts immediately
+     * (large videos no longer time out the HTTP request) and uploads in the
+     * background. This polls /sendmedia/status/:id for completion so the UI
+     * reports the REAL outcome instead of faking "sent".
+     */
     suspend fun sendMedia(jid: String, dataB64: String, type: String, filename: String, caption: String): Boolean = withContext(Dispatchers.IO) {
         val body = JSONObject().put("jid", jid).put("type", type).put("data", dataB64).put("filename", filename).put("caption", caption)
-        // B2: video uploads to WhatsApp servers can take minutes — the old 20s default timed out
-        // on real videos ("send failed" while Node kept uploading, or the video never arriving).
-        val o = post("/sendmedia", body, readTimeoutMs = 180000)
-        if (o.optBoolean("ok", false)) true else throw RuntimeException(o.optString("error", "send failed"))
+        val o = post("/sendmedia", body, readTimeoutMs = 60000)
+        if (!o.optBoolean("ok", false)) throw RuntimeException(o.optString("error", "send failed"))
+        val uploadId = o.optString("uploadId", "")
+        // Fast path: tiny media may already be done.
+        // Poll for up to ~5 minutes (large video uploads to WhatsApp servers).
+        val deadline = System.currentTimeMillis() + 300_000L
+        while (System.currentTimeMillis() < deadline) {
+            delay(2000L)
+            val st = try { get("/sendmedia/status/$uploadId") } catch (_: Exception) { null } ?: continue
+            when (st.optString("state", "")) {
+                "done" -> return@withContext true
+                "error" -> throw RuntimeException(st.optString("error", "upload failed"))
+            }
+        }
+        throw RuntimeException("upload timed out after 5 min — video may still arrive")
     }
 
     // .vv: gateway does text→speech and sends it as a voice note (the ".vv" text is never sent)

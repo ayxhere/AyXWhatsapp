@@ -120,6 +120,12 @@ class NodeService : Service() {
                         lastTs = maxTs
                         prefs.edit().putLong("notif_ts", lastTs).apply()
                     }
+                    // C1: flush queued outgoing messages in the background too —
+                    // if the UI poll loop is delayed, queued sends still go out.
+                    runCatching {
+                        val st = GatewayClient.status()
+                        if (st.reachable && st.connection == "open") GatewayClient.flushSendQueue(applicationContext)
+                    }
                 } catch (_: Exception) {}
                 delay(4000)
             }

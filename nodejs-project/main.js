@@ -2115,29 +2115,59 @@ app.post('/profile/picture', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e?.message }) }
 })
 
+// C2: media upload tracking — /sendmedia accepts immediately and uploads in the
+// background (large videos were timing out the HTTP request with no retry).
+// The app polls /sendmedia/status/:id for completion.
+const mediaUploads = new Map()
+let _uploadSeq = 0
 app.post('/sendmedia', async (req, res) => {
   try {
-    if (!sock || status.connection !== 'open') return res.status(409).json({ error: 'not connected' })
     const jid = String(req.body?.jid || '')
     const type = String(req.body?.type || 'document')
     const b64 = String(req.body?.data || '')
     const filename = String(req.body?.filename || 'file')
     const caption = String(req.body?.caption || '')
-    if (!jid || !b64) return res.status(400).json({ error: 'jid and data required' })
+    if (!jid || !b64) return res.status(400).json({ ok: false, error: 'jid and data required' })
     const buf = Buffer.from(b64, 'base64')
-    let content
-    if (type === 'image') content = { image: buf, caption }
-    else if (type === 'video') {
-      // B2: give Baileys the filename + mimetype — some containers fail to send/detect without them.
-      const ext = (filename.split('.').pop() || '').toLowerCase()
-      const mime = ext === 'mp4' ? 'video/mp4' : ext === 'mov' ? 'video/quicktime' : ext === 'webm' ? 'video/webm' : ext === 'mkv' ? 'video/x-matroska' : 'video/mp4'
-      content = { video: buf, caption, mimetype: mime, fileName: filename }
-    }
-    else if (type === 'audio') content = { audio: buf, mimetype: 'audio/mp4' }
-    else content = { document: buf, fileName: filename, mimetype: 'application/octet-stream', caption }
-    const r = await sock.sendMessage(jid, content)
-    res.json({ ok: true, id: r?.key?.id || null })
-  } catch (e) { log('sendmedia error', e?.message); res.status(500).json({ error: e?.message || 'send failed' }) }
+    if (!buf || buf.length === 0) return res.status(400).json({ ok: false, error: 'empty media' })
+    const uploadId = 'up' + (++_uploadSeq) + '_' + Date.now()
+    mediaUploads.set(uploadId, { state: 'pending', jid, type })
+    if (mediaUploads.size > 20) { const k = mediaUploads.keys().next().value; mediaUploads.delete(k) }
+    // Background upload — the HTTP request returns immediately so large
+    // videos can't time out. waitForOpen kicks a reconnect if needed.
+    ;(async () => {
+      try {
+        if (!sock || status.connection !== 'open') {
+          const ok = await waitForOpen(30000)
+          if (!ok) throw new Error('not connected after 30s — will not retry automatically')
+        }
+        let content
+        if (type === 'image') content = { image: buf, caption }
+        else if (type === 'video') {
+          const ext = (filename.split('.').pop() || '').toLowerCase()
+          const mime = ext === 'mp4' ? 'video/mp4' : ext === 'mov' ? 'video/quicktime' : ext === 'webm' ? 'video/webm' : ext === 'mkv' ? 'video/x-matroska' : 'video/mp4'
+          content = { video: buf, caption, mimetype: mime, fileName: filename }
+        }
+        else if (type === 'audio') content = { audio: buf, mimetype: 'audio/mp4' }
+        else content = { document: buf, fileName: filename, mimetype: 'application/octet-stream', caption }
+        const r = await sock.sendMessage(jid, content)
+        const id = r?.key?.id || null
+        if (id) { try { rawStore.set(id, { key: r.key, message: r.message }); if (rawStore.size > 500) { const rk = rawStore.keys().next().value; rawStore.delete(rk) } } catch (_) {} }
+        mediaUploads.set(uploadId, { state: 'done', jid, type, id })
+        log('sendmedia done', uploadId, 'id=' + id)
+      } catch (e) {
+        log('sendmedia bg error', uploadId, e?.message)
+        mediaUploads.set(uploadId, { state: 'error', jid, type, error: e?.message || 'send failed' })
+      }
+    })()
+    res.json({ ok: true, accepted: true, uploadId })
+  } catch (e) { log('sendmedia error', e?.message); res.status(500).json({ ok: false, error: e?.message || 'send failed' }) }
+})
+
+app.get('/sendmedia/status/:id', (req, res) => {
+  const t = mediaUploads.get(String(req.params.id || ''))
+  if (!t) return res.json({ ok: false, error: 'unknown upload' })
+  res.json({ ok: true, state: t.state, id: t.id || null, error: t.error || null })
 })
 
 // .vv command: the app sends ONLY the text; the gateway makes the speech (Sarvam → OGG/Opus) and sends
@@ -2281,7 +2311,13 @@ app.get('/music/lyrics', async (req, res) => {
 
 // wait for the socket to actually be open (mobile networks drop/reconnect; sending on a closed
 // socket throws Baileys' "reading 'attrs'" crash). Reconnect fires automatically on close.
+// C1: if the socket is down, kick a reconnect NOW instead of waiting passively — the
+// reconnect timer may be backed off to 30s, and a send attempt is the strongest signal
+// that the user needs the connection.
 async function waitForOpen(ms = 15000) {
+  if (status.connection !== 'open' && !_reconnTimer && !status.needRelogin) {
+    try { scheduleReconnect(0) } catch (_) {}
+  }
   const start = Date.now()
   while (status.connection !== 'open' && Date.now() - start < ms) await new Promise(r => setTimeout(r, 400))
   return status.connection === 'open'
@@ -2384,7 +2420,11 @@ app.post('/sendreply', async (req, res) => {
     if (hasSeenSendId(String(req.body?.clientMsgId || ''))) return res.json({ ok: true, duplicate: true })
     if (!sock || status.connection !== 'open') {
       if (status.needRelogin) return res.json({ ok: false, needRelogin: true, error: 'session expired — scan QR again' })
-      return res.json({ ok: false, queued: false, error: 'not connected — app will queue' })
+      // C1: don't instantly fail on a transient disconnect — wait for the
+      // reconnect (kicked proactively by waitForOpen) before giving up.
+      // The app queues only if we still can't send after the wait.
+      const ok = await waitForOpen(12000)
+      if (!ok) return res.json({ ok: false, queued: false, error: 'not connected — app will queue' })
     }
     const quoted = rawStore.get(quotedId)
     try {
@@ -2444,7 +2484,35 @@ app.post('/forward', async (req, res) => {
     let sent = 0; const errs = []
     for (const jid of jids) {
       try {
-        if (raw && raw.message) await sock.sendMessage(jid, { forward: { key: raw.key, message: raw.message }, force: true })
+        if (raw && raw.message) {
+          // C3: Baileys' { forward } syntax can reject some message shapes —
+          // fall back to reconstructing the content fresh (with the
+          // "Forwarded" tag preserved via contextInfo).
+          try {
+            await sock.sendMessage(jid, { forward: { key: raw.key, message: raw.message }, force: true })
+          } catch (fe) {
+            log('forward syntax failed, reconstructing:', fe?.message)
+            // Re-download the media bytes (rawStore only has the message
+            // skeleton) and send fresh with the Forwarded tag.
+            const kind = mediaKind(raw.message)
+            let content = null
+            if (kind) {
+              try {
+                const buf = await downloadMediaMessage({ key: raw.key, message: raw.message }, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage })
+                const [type, node] = kind
+                if (type === 'image') content = { image: buf, caption: node.caption || '' }
+                else if (type === 'video') content = { video: buf, caption: node.caption || '', mimetype: 'video/mp4' }
+                else if (type === 'audio') content = { audio: buf, mimetype: 'audio/mp4', ptt: !!node.ptt }
+                else if (type === 'document') content = { document: buf, fileName: node.fileName || 'file', mimetype: node.mimetype || 'application/octet-stream' }
+              } catch (de) { log('forward re-download failed:', de?.message) }
+            } else {
+              content = messageToForwardableContent(raw.message)
+            }
+            if (!content) throw fe
+            content.contextInfo = { ...(content.contextInfo || {}), forwardingScore: 1, isForwarded: true }
+            await sock.sendMessage(jid, content)
+          }
+        }
         else if (fallback) await sock.sendMessage(jid, fallback)
         else if (e && e.text) await sock.sendMessage(jid, { text: e.text })
         else throw new Error('no content to forward')
@@ -2454,6 +2522,16 @@ app.post('/forward', async (req, res) => {
     res.json({ ok: sent > 0, sent, total: jids.length, error: errs.join(' | ') })
   } catch (e) { res.json({ ok: false, error: e?.message }) }
 })
+
+// C3: rebuild sendable TEXT content from a raw WAMessage when the { forward }
+// syntax fails. Media is handled by re-download above; this covers text.
+function messageToForwardableContent(message) {
+  if (!message) return null
+  const m = message.ephemeralMessage?.message || message.viewOnceMessage?.message || message
+  if (m.conversation) return { text: m.conversation }
+  if (m.extendedTextMessage?.text) return { text: m.extendedTextMessage.text }
+  return null
+}
 
 function wipeDirContents(dir) {
   let n = 0
@@ -2493,7 +2571,10 @@ app.post('/sendraw', async (req, res) => {
     if (hasSeenSendId(String(req.body?.clientMsgId || ''))) return res.json({ ok: true, duplicate: true })
     if (!sock || status.connection !== 'open') {
       if (status.needRelogin) return res.json({ ok: false, needRelogin: true, error: 'session expired — scan QR again' })
-      return res.json({ ok: false, queued: false, error: 'not connected — app will queue' })
+      // C1: don't instantly fail on a transient disconnect — wait for the
+      // reconnect (kicked proactively by waitForOpen) before giving up.
+      const ok = await waitForOpen(12000)
+      if (!ok) return res.json({ ok: false, queued: false, error: 'not connected — app will queue' })
     }
     const r = await sock.sendMessage(jid, { text })
     markSendId(String(req.body?.clientMsgId || ''))
