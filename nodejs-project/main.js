@@ -2420,11 +2420,11 @@ app.post('/sendreply', async (req, res) => {
     if (hasSeenSendId(String(req.body?.clientMsgId || ''))) return res.json({ ok: true, duplicate: true })
     if (!sock || status.connection !== 'open') {
       if (status.needRelogin) return res.json({ ok: false, needRelogin: true, error: 'session expired — scan QR again' })
-      // C1: don't instantly fail on a transient disconnect — wait for the
-      // reconnect (kicked proactively by waitForOpen) before giving up.
-      // The app queues only if we still can't send after the wait.
-      const ok = await waitForOpen(12000)
-      if (!ok) return res.json({ ok: false, queued: false, error: 'not connected — app will queue' })
+      // V3: NEVER block the user — kick a reconnect in the background and
+      // queue immediately. The app shows "sending…" and the background flush
+      // delivers when the socket is back. Connected sends stay <2s.
+      try { scheduleReconnect(0) } catch (_) {}
+      return res.json({ ok: true, queued: true, error: 'reconnecting — queued, will send automatically' })
     }
     const quoted = rawStore.get(quotedId)
     try {
@@ -2571,10 +2571,11 @@ app.post('/sendraw', async (req, res) => {
     if (hasSeenSendId(String(req.body?.clientMsgId || ''))) return res.json({ ok: true, duplicate: true })
     if (!sock || status.connection !== 'open') {
       if (status.needRelogin) return res.json({ ok: false, needRelogin: true, error: 'session expired — scan QR again' })
-      // C1: don't instantly fail on a transient disconnect — wait for the
-      // reconnect (kicked proactively by waitForOpen) before giving up.
-      const ok = await waitForOpen(12000)
-      if (!ok) return res.json({ ok: false, queued: false, error: 'not connected — app will queue' })
+      // V3: NEVER block the user — kick a reconnect in the background and
+      // queue immediately. The app shows "sending…" and the background flush
+      // delivers when the socket is back. Connected sends stay <2s.
+      try { scheduleReconnect(0) } catch (_) {}
+      return res.json({ ok: true, queued: true, error: 'reconnecting — queued, will send automatically' })
     }
     const r = await sock.sendMessage(jid, { text })
     markSendId(String(req.body?.clientMsgId || ''))

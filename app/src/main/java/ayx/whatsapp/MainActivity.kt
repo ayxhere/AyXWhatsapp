@@ -831,6 +831,9 @@ fun GatewayApp() {
     var textStatusDlg by remember { mutableStateOf(false) }
     val statusPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
         if (uri != null) {
+            // V1: take persistable URI permission so the video/photo stays readable
+            // even if the activity is recreated before upload.
+            runCatching { ctx.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
             val mime = ctx.contentResolver.getType(uri) ?: ""
             pendingStatus = uri to (if (mime.startsWith("video")) "video" else "image")
         }
@@ -1100,21 +1103,38 @@ fun GatewayApp() {
                             if (bytes != null) { notify("uploading status…"); val res = GatewayClient.postStatus(t, Base64.encodeToString(bytes, Base64.NO_WRAP), caption, audience, recipients); notify((if (res.first) "✅ " else "❌ ") + res.second); if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) } }
                         } else {
                             // Video, no song: trim + mute apply for real (no re-encode, sample copy).
-                            val bytes = withContext(Dispatchers.IO) {
-                                if (vTrimActive || videoMuted) {
-                                    val trimmed = File(ctx.cacheDir, "vtrim_${System.currentTimeMillis()}.mp4")
-                                    val ok = MediaTools.trimVideoAudio(ctx, u, trimmed, vTrimStart, vTrimEnd, !videoMuted)
-                                    if (ok) {
-                                        // MediaMuxer writes moov at the END; stock WhatsApp needs it
-                                        // at the FRONT (faststart) or the video shows as broken.
-                                        val fast = File(ctx.cacheDir, "vfast_${System.currentTimeMillis()}.mp4")
-                                        val final = if (MediaTools.faststart(trimmed, fast) && MediaTools.isValidMp4(fast)) fast else trimmed
-                                        final.readBytes().also { runCatching { trimmed.delete() }; runCatching { fast.delete() } }
+                            // V1: NEVER silently skip — every failure path notifies the user explicitly.
+                            val bytes: ByteArray? = withContext(Dispatchers.IO) {
+                                try {
+                                    if (vTrimActive || videoMuted) {
+                                        val trimmed = File(ctx.cacheDir, "vtrim_${System.currentTimeMillis()}.mp4")
+                                        val ok = MediaTools.trimVideoAudio(ctx, u, trimmed, vTrimStart, vTrimEnd, !videoMuted)
+                                        if (ok) {
+                                            // MediaMuxer writes moov at the END; stock WhatsApp needs it
+                                            // at the FRONT (faststart) or the video shows as broken.
+                                            val fast = File(ctx.cacheDir, "vfast_${System.currentTimeMillis()}.mp4")
+                                            val final = if (MediaTools.faststart(trimmed, fast) && MediaTools.isValidMp4(fast)) fast else trimmed
+                                            if (!final.exists() || final.length() == 0L) {
+                                                withContext(Dispatchers.Main) { notify("❌ Video processing produced an empty file") }
+                                                null
+                                            } else final.readBytes().also { runCatching { trimmed.delete() }; runCatching { fast.delete() } }
+                                        }
+                                        else {
+                                            withContext(Dispatchers.Main) { notify("Video trim failed — posting original") }
+                                            ctx.contentResolver.openInputStream(u)?.use { it.readBytes() }
+                                                ?: run { withContext(Dispatchers.Main) { notify("❌ Could not read video file") }; null }
+                                        }
+                                    } else {
+                                        ctx.contentResolver.openInputStream(u)?.use { it.readBytes() }
+                                            ?: run { withContext(Dispatchers.Main) { notify("❌ Could not read video file (permission lost?)") }; null }
                                     }
-                                    else { notify("Video trim failed — posting original"); ctx.contentResolver.openInputStream(u)?.use { it.readBytes() } }
-                                } else ctx.contentResolver.openInputStream(u)?.use { it.readBytes() }
+                                } catch (e: Exception) {
+                                    withContext(Dispatchers.Main) { notify("❌ Video read failed: " + (e.message ?: "unknown error")) }
+                                    null
+                                }
                             }
-                            if (bytes != null) { notify("uploading status…"); val res = GatewayClient.postStatus(t, Base64.encodeToString(bytes, Base64.NO_WRAP), caption, audience, recipients); notify((if (res.first) "✅ " else "❌ ") + res.second); if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) } }
+                            if (bytes != null && bytes.isNotEmpty()) { notify("uploading status…"); val res = GatewayClient.postStatus(t, Base64.encodeToString(bytes, Base64.NO_WRAP), caption, audience, recipients); notify((if (res.first) "✅ " else "❌ ") + res.second); if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) } }
+                            else if (bytes != null) notify("❌ Video file is empty")
                         }
                     } else {
                         notify("Creating status video…")
@@ -3076,15 +3096,15 @@ private fun SettingsHome(status: GatewayClient.Status, onOpen: (String) -> Unit)
         Spacer(Modifier.height(4.dp))
         StatusCard(status)
         Spacer(Modifier.height(2.dp))
-        CategoryCard(Icons.Filled.Tune, CAT_GENERAL, "General", "Online, privacy and messages") { onOpen("general") }
-        CategoryCard(Icons.Filled.QuestionAnswer, CAT_AUTOREPLY, "Auto-reply", "Keyword rules and automatic replies") { onOpen("autoreply") }
-        CategoryCard(Icons.Filled.AutoAwesome, CAT_AI, "AI Assistant", "AI replies, groups and language") { onOpen("ai") }
-        CategoryCard(Icons.Filled.GraphicEq, Color(0xFF4DD0C4), "AI Voice", "Voice reply, voice notes & voice artists") { onOpen("voice") }
-        CategoryCard(Icons.Filled.Chat, CAT_WALLPAPER, "Chat", "Wallpaper, bubble style and header") { onOpen("chat") }
+        CategoryCard(Icons.Filled.Tune, CAT_GENERAL, Lang.s("general"), Lang.s("general_desc")) { onOpen("general") }
+        CategoryCard(Icons.Filled.QuestionAnswer, CAT_AUTOREPLY, Lang.s("auto_reply"), Lang.s("auto_reply_desc")) { onOpen("autoreply") }
+        CategoryCard(Icons.Filled.AutoAwesome, CAT_AI, Lang.s("ai_assistant"), Lang.s("ai_assistant_desc")) { onOpen("ai") }
+        CategoryCard(Icons.Filled.GraphicEq, Color(0xFF4DD0C4), Lang.s("ai_voice"), Lang.s("ai_voice_desc")) { onOpen("voice") }
+        CategoryCard(Icons.Filled.Chat, CAT_WALLPAPER, Lang.s("chat"), Lang.s("chat_desc")) { onOpen("chat") }
         CategoryCard(Icons.Filled.Palette, CAT_APPEARANCE, Lang.s("appearance_title"), Lang.s("appearance_desc")) { onOpen("appearance") }
         CategoryCard(Icons.Filled.Language, CAT_GENERAL, Lang.s("app_language"), Lang.s("app_language_desc")) { onOpen("applanguage") }
-        CategoryCard(Icons.Filled.Info, CAT_ABOUT, "About", "App information and reset") { onOpen("about") }
-        CategoryCard(Icons.Filled.Favorite, CAT_SUPPORT, "Support Development", "Donate via UPI or crypto to support AyX") { onOpen("support") }
+        CategoryCard(Icons.Filled.Info, CAT_ABOUT, Lang.s("about"), Lang.s("about_desc")) { onOpen("about") }
+        CategoryCard(Icons.Filled.Favorite, CAT_SUPPORT, Lang.s("support_dev"), Lang.s("support_dev_desc")) { onOpen("support") }
         Spacer(Modifier.height(16.dp))
     }
 }
@@ -3098,7 +3118,7 @@ private fun StatusCard(status: GatewayClient.Status) {
             PulseDot(dot)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text(if (connected) "Connected" else if (status.registered) "Reconnecting…" else "Not linked", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
+                Text(if (connected) Lang.s("connected") else if (status.registered) Lang.s("reconnecting") else Lang.s("not_linked"), fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
                 Text("Engine " + (if (status.reachable) "up" else "down") + " · " + status.connection + " · linked " + (if (status.registered) "yes" else "no"),
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -4757,6 +4777,8 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     var mediaType by remember { mutableStateOf(type) }
     var editedBytes by remember { mutableStateOf<ByteArray?>(null) }   // AI-edited photo bytes (posted instead of the raw file)
     var aiEditOpen by remember { mutableStateOf(false) }
+    var showAiPausedMsg by remember { mutableStateOf(false) }   // V5: AI Edit temporarily paused
+    var cropOpen by remember { mutableStateOf(false) }          // V4: photo crop dialog
     // ---- AI Lyrics Translate: opens the translate sheet (language choice, real backend) ----
     var translatedLyrics by remember { mutableStateOf<List<Pair<Long, String>>?>(null) }
     var translatedActive by remember { mutableStateOf(false) }
@@ -4885,8 +4907,17 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                             if (editedBytes != null) Text(Lang.s("edited_tick"), color = Color.White, style = MaterialTheme.typography.labelSmall,
                                 modifier = Modifier.align(Alignment.TopStart).padding(top = overlayTopPad + 54.dp, start = 12.dp).background(Color.Black.copy(alpha = 0.5f), uiShapeFor(8)).padding(horizontal = 8.dp, vertical = 4.dp))
                             // AI Edit lives on the IMAGE HEADER (top-right, below the top bar) — same real OpenRouter backend.
-                            TextButton(onClick = { aiEditOpen = true }, modifier = Modifier.align(Alignment.TopEnd).padding(top = overlayTopPad, end = 8.dp)) {
-                                Text(Lang.s("edit_image_ai"), color = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), uiShapeFor(16)).padding(horizontal = 10.dp, vertical = 6.dp))
+                            // V5: TEMPORARILY PAUSED — tapping shows the paused message instead of opening the editor.
+                            // V4: Crop button next to AI Edit.
+                            Row(Modifier.align(Alignment.TopEnd).padding(top = overlayTopPad, end = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                TextButton(onClick = { cropOpen = true }, contentPadding = PaddingValues(0.dp)) {
+                                    Text("✂ Crop", color = Color.White, style = MaterialTheme.typography.labelSmall,
+                                        modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), uiShapeFor(16)).padding(horizontal = 10.dp, vertical = 6.dp))
+                                }
+                                TextButton(onClick = { showAiPausedMsg = true }, contentPadding = PaddingValues(0.dp)) {
+                                    Text(Lang.s("edit_image_ai"), color = Color.White, style = MaterialTheme.typography.labelSmall,
+                                        modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), uiShapeFor(16)).padding(horizontal = 10.dp, vertical = 6.dp))
+                                }
                             }
                         }
                         else {
@@ -4897,6 +4928,12 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                         videoView = vv
                                         vv.setVideoURI(curUri)
                                         vv.seekTo(vTrimStart.toInt())
+                                        // V1: surface preview errors instead of showing a grey/blank view silently.
+                                        vv.setOnErrorListener { _, what, extra ->
+                                            videoPlaying = false
+                                            runCatching { Toast.makeText(c, "Video preview failed (code $what/$extra) — try re-selecting the video", Toast.LENGTH_LONG).show() }
+                                            true
+                                        }
                                         // E1: on natural completion, reset to trim start
                                         // so replay always works (no stuck end screen).
                                         vv.setOnCompletionListener {
@@ -5080,6 +5117,20 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     if (pickAudience) AudienceSheet(contacts, audience, selected) { a, sset -> audience = a; selected = sset; pickAudience = false }
     if (musicOpen) MusicSearchSheet(initialQuery = songQuery, autoFocus = true, onQueryChange = { songQuery = it }, onSelect = { songToTrim = it; musicOpen = false }, onClose = { musicOpen = false })
     if (aiEditOpen && mediaUri != null) AiImageEditSheet(ctx, mediaUri!!, onDone = { editedBytes = it; aiEditOpen = false }, onCancel = { aiEditOpen = false }, onOpenSettings = { aiEditOpen = false; showAiSettingsDlg = true })
+    // V5: AI Edit temporarily paused — show the exact paused message.
+    if (showAiPausedMsg) AlertDialog(
+        onDismissRequest = { showAiPausedMsg = false },
+        containerColor = dialogBg().copy(alpha = ayxDialogAlpha()),
+        titleContentColor = MaterialTheme.colorScheme.onSurface,
+        textContentColor = MaterialTheme.colorScheme.onSurface,
+        title = { Text(Lang.s("edit_image_ai")) },
+        text = { Text("Due to Technical error developer finding tools to use this mode.") },
+        confirmButton = { TextButton(onClick = { showAiPausedMsg = false }) { Text(Lang.s("ok")) } }
+    )
+    // V4: photo crop dialog.
+    if (cropOpen && mediaUri != null) PhotoCropDialog(ctx, mediaUri!!,
+        onApply = { cropped -> editedBytes = cropped; cropOpen = false },
+        onCancel = { cropOpen = false })
     if (showAiSettingsDlg) AiSettingsDialog(ctx, onClose = { showAiSettingsDlg = false })
     if (showGroqDlg) GroqKeyDialog(ctx, onClose = { showGroqDlg = false })
     if (translateOpen) AiLyricsTranslateSheet(song?.title ?: "", songLyrics,
@@ -5089,6 +5140,104 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     songToTrim?.let { sng ->
         AudioTrimmer(sng, onDone = { st, en, ly -> song = sng; trimStart = st; trimEnd = en; songLyrics = ly; translatedLyrics = null; translatedActive = false; showTranslateRow = false; songToTrim = null }, onCancel = { songToTrim = null; musicOpen = true })
     }
+}
+/**
+ * V4: Simple photo crop dialog for status. Aspect-ratio presets with a live
+ * center-crop preview. On Apply, the cropped JPEG bytes are returned (posted
+ * via editedBytes, like AI edit).
+ */
+@Composable
+private fun PhotoCropDialog(ctx: android.content.Context, uri: android.net.Uri, onApply: (ByteArray) -> Unit, onCancel: () -> Unit) {
+    val ratios = listOf("Original" to 0f, "1:1" to 1f, "4:3" to 4f / 3f, "3:4" to 3f / 4f, "16:9" to 16f / 9f, "9:16" to 9f / 16f)
+    var ratioIdx by remember { mutableStateOf(0) }
+    var working by remember { mutableStateOf(true) }
+    // Decode once (downsampled if huge).
+    val bmp = remember(uri) {
+        runCatching {
+            val opts = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            ctx.contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, opts) }
+            var sample = 1
+            while (maxOf(opts.outWidth, opts.outHeight) / sample > 2048) sample *= 2
+            val o2 = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+            ctx.contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, o2) }
+        }.getOrNull()
+    }
+    // Center-crop to the selected ratio.
+    fun cropped(src: android.graphics.Bitmap, ratio: Float): android.graphics.Bitmap {
+        if (ratio <= 0f) return src
+        val sw = src.width; val sh = src.height
+        val targetRatio = ratio
+        val srcRatio = sw.toFloat() / sh.toFloat()
+        val (cw, ch) = if (srcRatio > targetRatio) {
+            // Source is wider: crop width.
+            val w = (sh * targetRatio).toInt(); w to sh
+        } else {
+            // Source is taller: crop height.
+            val h = (sw / targetRatio).toInt(); sw to h
+        }
+        val x = (sw - cw) / 2; val y = (sh - ch) / 2
+        return android.graphics.Bitmap.createBitmap(src, x.coerceAtLeast(0), y.coerceAtLeast(0), cw.coerceAtLeast(1), ch.coerceAtLeast(1))
+    }
+    val preview = remember(bmp, ratioIdx) {
+        val b = bmp ?: return@remember null
+        runCatching { cropped(b, ratios[ratioIdx].second).asImageBitmap() }.getOrNull()
+    }
+    Dialog(onDismissRequest = onCancel, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(Modifier.fillMaxSize(), color = Color.Black) {
+            Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(16.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = onCancel) { Text(Lang.s("cancel"), color = Color.White) }
+                    Text("✂ Crop", color = Color.White, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.size(64.dp))
+                }
+                Spacer(Modifier.height(8.dp))
+                Box(Modifier.fillMaxWidth().weight(1f).clip(uiShapeFor(16)).background(Color(0xFF111111)), contentAlignment = Alignment.Center) {
+                    if (bmp == null) {
+                        if (working) CircularProgressIndicator(color = Color.White)
+                        else Text(Lang.s("preview_unavailable"), color = Color.White)
+                    } else if (preview != null) {
+                        Image(preview, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                // Aspect ratio chips.
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ratios.forEachIndexed { i, (label, _) ->
+                        val sel = i == ratioIdx
+                        TextButton(onClick = { ratioIdx = i },
+                            modifier = Modifier.border(1.dp, if (sel) Color.White else Color.White.copy(alpha = 0.3f), uiShapeFor(16))
+                                .background(if (sel) Color.White.copy(alpha = 0.15f) else Color.Transparent, uiShapeFor(16))) {
+                            Text(label, color = Color.White, fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Button(onClick = {
+                    val b = bmp ?: return@Button
+                    working = true
+                    Thread {
+                        try {
+                            val c = cropped(b, ratios[ratioIdx].second)
+                            val out = java.io.ByteArrayOutputStream()
+                            c.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, out)
+                            val bytes = out.toByteArray()
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                working = false
+                                if (bytes.isNotEmpty()) onApply(bytes)
+                                else onCancel()
+                            }
+                        } catch (_: Exception) {
+                            android.os.Handler(android.os.Looper.getMainLooper()).post { working = false; onCancel() }
+                        }
+                    }.start()
+                }, modifier = Modifier.fillMaxWidth(), enabled = bmp != null && !working) {
+                    if (working && bmp == null) { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White); Spacer(Modifier.size(8.dp)) }
+                    Text(Lang.s("apply"))
+                }
+            }
+        }
+    }
+    LaunchedEffect(bmp) { if (bmp != null) working = false }
 }
 
 private val TRANSLATE_LANGS = listOf("English", "Hindi", "Spanish", "French", "German", "Portuguese", "Arabic", "Russian", "Punjabi", "Bengali", "Tamil", "Telugu", "Marathi", "Urdu")

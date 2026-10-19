@@ -43,6 +43,14 @@ object ThemeStore {
         "orange" to Color(0xFFFFB26B),
         "red" to Color(0xFFFF6B6B),
         "pink" to Color(0xFFFF7EB6),
+        "yellow" to Color(0xFFFFD54F),
+        "lime" to Color(0xFFAED581),
+        "cyan" to Color(0xFF4DD0E1),
+        "indigo" to Color(0xFF7986CB),
+        "deeppurple" to Color(0xFF9575CD),
+        "magenta" to Color(0xFFE040FB),
+        "brown" to Color(0xFFA1887F),
+        "grey" to Color(0xFF90A4AE),
     )
 
     fun init(ctx: Context) {
