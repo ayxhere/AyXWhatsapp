@@ -11,6 +11,8 @@ import ayx.whatsapp.ui.ayxGlassAlpha
 import ayx.whatsapp.ui.ayxMenuAlpha
 import android.app.Activity
 import android.content.Context
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.zIndex
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
@@ -1298,9 +1300,10 @@ fun GatewayApp() {
 
     // image viewer (full screen) — B7: proper header (back + title + download/share), not just the bare image.
     viewImg?.let { (img, msg) ->
-        Dialog(onDismissRequest = { viewImg = null }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-            EdgeToEdgeBlackDialogWindow()
-            Box(Modifier.fillMaxSize().background(Color.Black)) {
+        BackHandler { viewImg = null }
+        ForceLightSystemBarIcons()
+        run {
+            Box(Modifier.fullscreenOverlay()) {
                 Image(img, "image", Modifier.fillMaxSize().clickable { viewImg = null }, contentScale = ContentScale.Fit)
                 ViewerTopBar(
                     title = chatTitleOf(messages, msg.chat), caption = msg.text,
@@ -1315,9 +1318,10 @@ fun GatewayApp() {
     }
     // video viewer (full screen, in-app player) — B7: proper header instead of just a "Close" text button.
     viewVideoUrl?.let { (url, msg) ->
-        Dialog(onDismissRequest = { viewVideoUrl = null }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-            EdgeToEdgeBlackDialogWindow()
-            Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+        BackHandler { viewVideoUrl = null }
+        ForceLightSystemBarIcons()
+        run {
+            Box(Modifier.fullscreenOverlay(), contentAlignment = Alignment.Center) {
                 ExoVideoPlayer(
                     uri = Uri.parse(url),
                     headers = buildMap { GatewayAuth.token()?.let { put("X-Api-Token", it) } },
@@ -1338,6 +1342,8 @@ fun GatewayApp() {
     }
     // Status viewer — wrapped in the chosen page-transition animation so the
     // Animation Style setting visibly applies when opening/closing a status.
+    // K: zIndex wrapper — the status overlay must be drawn ABOVE the Scaffold / floating Home-Status bar.
+    Box(Modifier.zIndex(100f)) {
     AyxAnimatedScreen(screenKey = "story|${storyView ?: "none"}") {
         storyView?.let { sender ->
             StatusViewer(
@@ -1384,6 +1390,7 @@ fun GatewayApp() {
                 onClose = { storyView = null }
             )
         }
+    }
     }
     // profile-photo viewer (tap a contact avatar in a chat) — preview full DP + download
     dpView?.let { jid ->
@@ -2966,26 +2973,29 @@ private fun AudioPlayer(url: String, tint: Color) {
     }
 }
 
-// J: edge-to-edge, fully opaque black dialog window. Used by the full-screen viewers so nothing from the
-// screen underneath (e.g. the status list row) can show through the status-bar area at the top.
+// K: full-screen viewers are drawn as an overlay INSIDE the (edge-to-edge) activity window instead of a Dialog.
+// Some phones lay Dialog windows out inside the system-bar area (status/nav bar zones stayed see-through and the
+// Home/Status bar peeked out underneath). The activity window itself already draws behind both bars, so an
+// opaque black top-z Box covers everything. The tap blocker stops touches reaching the screen underneath.
+private fun Modifier.fullscreenOverlay(): Modifier =
+    this.fillMaxSize().zIndex(100f).background(Color.Black).pointerInput(Unit) { detectTapGestures { } }
+
+// light (white) status/nav bar icons while a black viewer is open; previous look restored on close
 @Composable
-private fun EdgeToEdgeBlackDialogWindow() {
-    val w = (LocalView.current.parent as? DialogWindowProvider)?.window
-    SideEffect {
-        w?.let {
-            WindowCompat.setDecorFitsSystemWindows(it, false)
-            it.statusBarColor = android.graphics.Color.TRANSPARENT
-            it.navigationBarColor = android.graphics.Color.TRANSPARENT
-            it.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.BLACK))
-            it.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            it.setDimAmount(0f)
-            it.addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS)
-            it.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                val a = it.attributes
-                a.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-                it.attributes = a
-            }
+private fun ForceLightSystemBarIcons() {
+    val view = LocalView.current
+    DisposableEffect(view) {
+        var c: Context? = view.context
+        while (c is android.content.ContextWrapper && c !is Activity) c = c.baseContext
+        val win = (c as? Activity)?.window
+        val ctl = win?.let { WindowCompat.getInsetsController(it, view) }
+        val prevStatus = ctl?.isAppearanceLightStatusBars ?: false
+        val prevNav = ctl?.isAppearanceLightNavigationBars ?: false
+        ctl?.isAppearanceLightStatusBars = false
+        ctl?.isAppearanceLightNavigationBars = false
+        onDispose {
+            ctl?.isAppearanceLightStatusBars = prevStatus
+            ctl?.isAppearanceLightNavigationBars = prevNav
         }
     }
 }
@@ -5774,17 +5784,10 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
         if (showViewers) runCatching { pl.pause() } else if (videoReady) runCatching { pl.play() }
     }
 
-    Dialog(
-        onDismissRequest = onClose,
-        // V5: draw behind system bars so no header from the underlying screen leaks above the viewer.
-        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
-    ) {
-        // B1: make the window itself opaque black + edge-to-edge. The dialog window
-        // background is transparent by default, so during the AyxAnimatedScreen
-        // enter transition (or if insets aren't consumed) the underlying screen's
-        // header could peek through at the top. An opaque window kills that leak.
-        // J: no dim layer, window really covers the status-bar area → the status list row behind can't leak.
-        EdgeToEdgeBlackDialogWindow()
+    // K: overlay inside the activity window (not a Dialog) so it truly covers the status bar + nav bar zones.
+    BackHandler(onBack = onClose)
+    ForceLightSystemBarIcons()
+    Box(Modifier.fullscreenOverlay()) {
         Surface(Modifier.fillMaxSize(), color = Color.Black) {
             Box(Modifier.fillMaxSize().blur(statusBlur).pointerInput(myMine) {
                 if (myMine) { var dyAcc = 0f; detectVerticalDragGestures(onDragEnd = { if (dyAcc < -80f) showViewers = true; dyAcc = 0f }) { _, dy -> dyAcc += dy } }

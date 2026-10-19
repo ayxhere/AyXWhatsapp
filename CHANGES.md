@@ -167,3 +167,6 @@ delivery is polling + local notifications — see "Deliberate deviations").
 - Node remember()/handleUpdates: a late echo merge can no longer reset a sent message's status to the clock icon; receipts that arrive before the entry exists are kept and applied (fixes "photo read but still shows clock").
 - Chat photo/video viewer: new ViewerTopBar — frosted rounded box starting behind the notification bar with round back/download/share/3-dot buttons (3-dot: Forward, Copy caption, Download, Share). Viewer dialogs are edge-to-edge.
 - Status viewer: window forced edge-to-edge, opaque black, no dim; header block has a solid black background from the notification bar down (no status-list row leaking through the top).
+
+## K: viewers as in-window overlays
+- Status viewer + chat photo/video viewers are no longer Dialog windows (some phones lay Dialogs out inside the status/nav bar zones, so the screen underneath — status-list ring on top, Home/Status bar at the bottom — showed through). They are now opaque black top-z overlays inside the edge-to-edge activity window, with a touch blocker, BackHandler and white system-bar icons while open.
