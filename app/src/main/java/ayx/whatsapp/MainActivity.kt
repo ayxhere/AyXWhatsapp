@@ -138,6 +138,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Shield
@@ -1285,7 +1286,7 @@ fun GatewayApp() {
                     if (!st.id.isNullOrBlank()) {
                         StatusData.markSeen(st.id)
                         if (!settings.hideStatusRead) {
-                            scope.launch { GatewayClient.markStatusSeen(st.id!!, st.sender) }
+                            scope.launch { GatewayClient.markStatusRead(st.id!!, st.sender) }
                         }
                     }
                 },
@@ -2858,8 +2859,6 @@ private fun BubbleTimeTicks(m: GatewayClient.Msg, textColor: Color, modifier: Mo
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String, ImageBitmap?>, dpCache: MutableMap<String, ImageBitmap?>, onMedia: (GatewayClient.Msg) -> Unit, onShare: (GatewayClient.Msg) -> Unit, onDownload: (GatewayClient.Msg) -> Unit, onReply: (GatewayClient.Msg) -> Unit, onAvatarClick: (String) -> Unit, selMode: Boolean = false, selected: Boolean = false, onToggleSelect: (GatewayClient.Msg) -> Unit = {}, onTranslate: (GatewayClient.Msg) -> Unit = {}, onLongClick: (GatewayClient.Msg) -> Unit) {
