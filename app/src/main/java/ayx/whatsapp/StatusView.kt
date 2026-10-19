@@ -63,8 +63,8 @@ private fun viewTime(ts: Long): String {
     val dayDiff = ((now.apply { set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0) }.timeInMillis -
         c.apply { set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0) }.timeInMillis) / 86_400_000L).toInt()
     val day = when {
-        dayDiff <= 0 -> Lang.s("today")
-        dayDiff == 1 -> Lang.s("yesterday")
+        dayDiff <= 0 -> "Today"
+        dayDiff == 1 -> "Yesterday"
         dayDiff < 7 -> SimpleDateFormat("EEE", Locale.getDefault()).format(Date(ts))
         else -> SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(ts))
     }
@@ -110,18 +110,18 @@ fun StatusViewersSheet(statusIds: List<String>, dpCache: MutableMap<String, Imag
             ) {
                 Column(Modifier.fillMaxSize().navigationBarsPadding()) {
                     Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 14.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(Lang.s("viewed_by") + " " + viewers.size, color = Color.White, fontWeight = FontWeight.Medium, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                        Text("Viewed by" + " " + viewers.size, color = Color.White, fontWeight = FontWeight.Medium, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
                         Box {
                             IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "more", tint = Color.White) }
                             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                                DropdownMenuItem(text = { Text(Lang.s("refresh")) }, onClick = { menu = false; reload++ })
+                                DropdownMenuItem(text = { Text("Refresh") }, onClick = { menu = false; reload++ })
                             }
                         }
                     }
                     if (loading) {
                         Box(Modifier.fillMaxWidth().padding(36.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Color.White) }
                     } else if (viewers.isEmpty()) {
-                        Text(Lang.s("no_views_yet"), color = Color.White.copy(alpha = 0.6f), modifier = Modifier.padding(24.dp))
+                        Text("No views yet", color = Color.White.copy(alpha = 0.6f), modifier = Modifier.padding(24.dp))
                     } else {
                         LazyColumn(Modifier.fillMaxSize()) {
                             items(viewers, key = { it.jid }) { v ->
@@ -130,7 +130,7 @@ fun StatusViewersSheet(statusIds: List<String>, dpCache: MutableMap<String, Imag
                                     !device.isNullOrBlank() -> device
                                     v.name.isNotBlank() -> v.name
                                     v.jid.endsWith("@s.whatsapp.net") -> "+" + v.jid.substringBefore("@").filter { it.isDigit() }
-                                    else -> Lang.s("unknown_contact")   // unresolved hidden id — don't show its digits
+                                    else -> "Unknown contact"   // unresolved hidden id — don't show its digits
                                 }
                                 Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Avatar(v.jid, name, dpCache, 50.dp, CircleShape)

@@ -24,13 +24,13 @@ import org.json.JSONObject
 @Composable
 internal fun ChatForwardSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(Lang.s("cf_memory_title"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp, bottom = 2.dp))
+        Text("MEMORY / CONTEXT", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp, bottom = 2.dp))
         Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(Lang.s("cf_forward_title"), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-                        Text(Lang.s("cf_forward_desc"),
+                        Text("Forward full chat to AI", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                        Text("Sends the chat's full recent conversation to the AI before every reply, so replies come with context (not generic).",
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(checked = settings.aiFullContext, onCheckedChange = { onToggle(JSONObject().put("aiFullContext", it)) })

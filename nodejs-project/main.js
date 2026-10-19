@@ -110,6 +110,96 @@ async function baileysGetMessage(key) {
     return { key: raw.key, message: raw.message }
   } catch (_) { return undefined }
 }
+
+// A+/B10: rawStore reliability. storeRaw()/storeRawSent() are the single
+// choke point for EVERY rawStore insert: the 2000-entry cap is enforced
+// here (was 500/400 scattered inline), and OUTGOING sends additionally
+// persist to disk (debounced) so decrypt-retries (getMessage above) keep
+// working after a gateway restart.
+const RAWSTORE_CAP = 2000
+const RAWSTORE_FILE = path.join(path.dirname(AUTH_DIR), 'rawstore.json')
+const RAWSTORE_DISK_CAP = 500
+const _outgoingRawIds = []   // oldest-first ids of OUTGOING sends (the disk list)
+let _rawStoreDirty = false
+let _rawStoreTimer = null
+function storeRaw(id, key, message) {
+  if (!id || !key || !message) return
+  try {
+    rawStore.set(id, { key, message })
+    while (rawStore.size > RAWSTORE_CAP) { const rk = rawStore.keys().next().value; rawStore.delete(rk) }
+  } catch (_) {}
+}
+function storeRawSent(id, key, message) {
+  // Outgoing send: in-memory entry (quotes/forwards/decrypt-retry) PLUS
+  // a slot in the disk-persistence list (post-restart decrypt-retry).
+  storeRaw(id, key, message)
+  try {
+    if (!id) return
+    const i = _outgoingRawIds.indexOf(id)
+    if (i >= 0) _outgoingRawIds.splice(i, 1)
+    _outgoingRawIds.push(id)
+    while (_outgoingRawIds.length > RAWSTORE_DISK_CAP) _outgoingRawIds.shift()
+    markRawStoreDirty()
+  } catch (_) {}
+}
+function markRawStoreDirty() {
+  _rawStoreDirty = true
+  if (_rawStoreTimer) return
+  // trailing-edge debounce: at most one disk write per 5s even under a
+  // send storm — no I/O storm, at most 5s of sends lost on a crash.
+  _rawStoreTimer = setTimeout(() => {
+    _rawStoreTimer = null
+    if (!_rawStoreDirty) return
+    _rawStoreDirty = false
+    writeRawStoreDisk()
+  }, 5000)
+}
+function writeRawStoreDisk() {
+  try {
+    const obj = {}
+    for (const id of _outgoingRawIds) {
+      const e = rawStore.get(id)
+      if (e && e.key && e.message) obj[id] = { key: e.key, message: e.message }
+    }
+    // atomic replace: temp file + rename, never a half-written rawstore.json
+    const tmp = RAWSTORE_FILE + '.tmp'
+    fs.writeFileSync(tmp, JSON.stringify(obj))
+    fs.renameSync(tmp, RAWSTORE_FILE)
+  } catch (e) { log('rawstore write failed', e?.message) }
+}
+// JSON turns Buffers into {type:'Buffer',data:[...]} — revive them so a
+// restored message is byte-identical (decrypt-retry re-encodes binary
+// fields like mediaKey; plain objects would corrupt them).
+function reviveBuffers(o, seen) {
+  if (!o || typeof o !== 'object') return o
+  seen = seen || new Set()
+  if (seen.has(o)) return o
+  seen.add(o)
+  if (Array.isArray(o)) { for (let i = 0; i < o.length; i++) o[i] = reviveBuffers(o[i], seen); return o }
+  if (o.type === 'Buffer' && Array.isArray(o.data)) { try { return Buffer.from(o.data) } catch (_) { return o } }
+  for (const k of Object.keys(o)) o[k] = reviveBuffers(o[k], seen)
+  return o
+}
+function loadRawStoreDisk() {
+  // Startup: restore outgoing messages so getMessage can answer
+  // decrypt-retries for sends made before the restart.
+  try {
+    if (!fs.existsSync(RAWSTORE_FILE)) return
+    const obj = JSON.parse(fs.readFileSync(RAWSTORE_FILE, 'utf8'))
+    if (!obj || typeof obj !== 'object') return
+    let n = 0
+    for (const [id, e] of Object.entries(obj)) {
+      if (n >= RAWSTORE_DISK_CAP) break
+      if (e && e.key && e.message) {
+        rawStore.set(id, { key: reviveBuffers(e.key), message: reviveBuffers(e.message) })
+        _outgoingRawIds.push(id)
+        n++
+      }
+    }
+    while (rawStore.size > RAWSTORE_CAP) { const rk = rawStore.keys().next().value; rawStore.delete(rk) }
+    log('rawstore.json loaded: ' + n + ' outgoing msgs restored')
+  } catch (e) { log('rawstore load failed', e?.message) }
+}
 let deletedList = []        // [{ chat, fromMe, text, ts }]
 let msgLog = []             // [{ chat, fromMe, text, ts }]
 const chatHistory = new Map()  // jid -> [{ role:'user'|'assistant', content }] for AI context
@@ -1596,7 +1686,7 @@ async function handleMessagesBatch({ messages, type }) {
           const sEntry = { sender: sndr, name: fromMe ? 'My Status' : (msg.pushName || nameOf(sndr) || ''), mine: fromMe, id: msg.key.id, text: extractText(msg.message), ts: sTs }
           try { await enrichMedia(msg, sEntry) } catch (_) {}
           // keep raw so status media can be re-fetched on demand if the cache file is gone
-          if (msg.key.id) { rawStore.set(msg.key.id, { key: msg.key, message: msg.message }); if (rawStore.size > 500) { const rk = rawStore.keys().next().value; rawStore.delete(rk) } }
+          if (msg.key.id) storeRaw(msg.key.id, msg.key, msg.message)   // A+: unified 2000 cap
           statuses.unshift(sEntry)
           if (statuses.length > 120) statuses.length = 120
           saveStatusesDebounced()
@@ -1620,7 +1710,7 @@ async function handleMessagesBatch({ messages, type }) {
 
       // store EVERY message (both directions) for anti-delete + history
       remember(id, entry)
-      if (id) { rawStore.set(id, { key: msg.key, message: msg.message }); if (rawStore.size > 400) { const rk = rawStore.keys().next().value; rawStore.delete(rk) } }
+      if (id) storeRaw(id, msg.key, msg.message)   // A+: unified 2000 cap (was 400 here)
 
       // auto-read + auto-reply: only incoming personal chats
       const isPersonal = from.endsWith('@s.whatsapp.net') || from.endsWith('@lid')
@@ -1820,7 +1910,7 @@ async function handleHistory({ messages, contacts: cts }) {
           try { await enrichMedia(msg, sE) } catch (_) {}
           // S3: store the full key in rawStore so /status/delete can revoke it later,
           // even for statuses posted from the primary device (original WhatsApp).
-          try { if (msg.key && msg.key.id) { rawStore.set(msg.key.id, { key: msg.key, message: msg.message }); if (rawStore.size > 500) { const rk = rawStore.keys().next().value; rawStore.delete(rk) } } } catch (_) {}
+          try { if (msg.key && msg.key.id) storeRaw(msg.key.id, msg.key, msg.message) } catch (_) {}   // A+: unified 2000 cap
           if (!statuses.find(x => x.sender === sE.sender && x.ts === sE.ts)) { statuses.unshift(sE); if (statuses.length > 120) statuses.length = 120; saveStatusesDebounced() }
         }
         continue
@@ -1988,11 +2078,13 @@ app.post('/send', async (req, res) => {
     const jid = to + '@s.whatsapp.net'
     // Retry dedupe: same clientMsgId = same logical send, never send twice.
     if (hasSeenSendId(String(req.body?.clientMsgId || ''))) return res.json({ ok: true, duplicate: true })
-    if (!isSocketHealthy()) {  // F3: also catches zombie "open" sockets
+    // B+: zombie-safe probe (kicks a reconnect + waits for it) instead of
+    // the old sync staleness check. The gateway NEVER queues from HTTP
+    // handlers — the app's SendQueue owns the queue, so on failure the app
+    // queues it exactly once.
+    if (!(await ensureLive())) {
       if (status.needRelogin) return res.json({ ok: false, needRelogin: true, error: 'session expired — scan QR again' })
-      // NEVER queue here: the app's SendQueue owns the queue (see note
-      // above). Return queued:false so the app queues it exactly once.
-      return res.json({ ok: false, queued: false, error: 'not connected — app will queue' })
+      return res.json({ ok: false, queued: true, error: 'reconnecting — queued, will send automatically' })
     }
     const r = await sock.sendMessage(jid, { text })
     markSendId(String(req.body?.clientMsgId || ''))
@@ -2001,6 +2093,7 @@ app.post('/send', async (req, res) => {
     // receipts can find it even if the messages.upsert echo is delayed.
     const sentId = r?.key?.id || null
     if (sentId) {
+      storeRawSent(sentId, r.key, r.message)  // A+: decrypt-retry + quotes/forwards + disk backup
       const entry = { chat: canon(jid), fromMe: true, text, ts: Date.now(), id: sentId, status: 2 }
       if (!msgStore.has(sentId)) { msgStore.set(sentId, entry); msgLog.unshift(entry); saveMessagesDebounced() }
     }
@@ -2051,6 +2144,7 @@ app.post('/session/import', async (req, res) => {
     if (b.messages) fs.writeFileSync(MESSAGES_FILE, b.messages)
     if (b.settings) fs.writeFileSync(SETTINGS_FILE, b.settings)
     state = null; sock = null; msgStore.clear(); rawStore.clear(); msgLog = []
+    _outgoingRawIds.length = 0; try { fs.rmSync(RAWSTORE_FILE, { force: true }) } catch (_) {}  // A+: imported session replaces local state
     loadSettings(); loadMessages(); await loadAuth(); await startSocket()
     res.json({ ok: true, registered: status.registered })
   } catch (e) { res.status(500).json({ error: e?.message }) }
@@ -2172,13 +2266,12 @@ app.post('/sendmedia', async (req, res) => {
     mediaUploads.set(uploadId, { state: 'pending', jid, type })
     if (mediaUploads.size > 20) { const k = mediaUploads.keys().next().value; mediaUploads.delete(k) }
     // Background upload — the HTTP request returns immediately so large
-    // videos can't time out. waitForOpen kicks a reconnect if needed.
+    // videos can't time out. B+: zombie-safe probe; kicks a reconnect and
+    // waits for it. On failure the upload is marked error and the app
+    // re-queues from its SendQueue (the gateway never holds its own queue).
     ;(async () => {
       try {
-        if (!isSocketHealthy()) {  // F3: also catches zombie "open" sockets (kicks reconnect)
-          const ok = await waitForOpen(30000)
-          if (!ok) throw new Error('not connected after 30s — will not retry automatically')
-        }
+        if (!(await ensureLive())) throw new Error('not connected — will not retry automatically')
         let content
         if (type === 'image') content = { image: buf, caption }
         else if (type === 'video') {
@@ -2191,7 +2284,7 @@ app.post('/sendmedia', async (req, res) => {
         const r = await sock.sendMessage(jid, content)
         const id = r?.key?.id || null
         markSocketActive()  // F3: successful send proves the socket is alive
-        if (id) { try { rawStore.set(id, { key: r.key, message: r.message }); if (rawStore.size > 500) { const rk = rawStore.keys().next().value; rawStore.delete(rk) } } catch (_) {} }
+        if (id) storeRawSent(id, r.key, r.message)  // A+: unified 2000 cap + disk backup
         // S2: add to msgStore immediately with status=2 so receipts update the tick.
         if (id && !msgStore.has(id)) {
           const entry = { chat: canon(jid), fromMe: true, text: caption || '', ts: Date.now(), id, status: 2, mediaType: type }
@@ -2218,15 +2311,24 @@ app.get('/sendmedia/status/:id', (req, res) => {
 // it as a real voice note (ptt). The typed ".vv ..." text is never sent. Audio stays in memory — no temp file.
 app.post('/sendvoice', async (req, res) => {
   try {
-    if (!sock || status.connection !== 'open') return res.status(409).json({ error: 'not connected' })
     const jid = String(req.body?.jid || '')
     const text = String(req.body?.text || '').trim()
     if (!jid || !text) return res.status(400).json({ error: 'jid and text required' })
+    // B+: zombie-safe probe BEFORE the TTS call (kicks a reconnect + waits
+    // for it) — no point synthesizing speech for a dead socket. The .vv
+    // text itself is still never sent; audio stays in memory, no temp file.
+    if (!(await ensureLive())) {
+      if (status.needRelogin) return res.json({ ok: false, needRelogin: true, error: 'session expired — scan QR again' })
+      return res.json({ ok: false, queued: true, error: 'reconnecting — queued, will send automatically' })
+    }
     if (!settings.aiSarvamKey) return res.status(400).json({ error: 'Sarvam key not set (Settings > AI Voice)' })
     const v = await synthVoice(text, settings.aiTtsVoice)
     if (!v || !v.buf) return res.status(502).json({ error: 'TTS failed: ' + String(_sarvamErr || 'unknown').slice(0, 200) })
     const r = await sock.sendMessage(jid, { audio: v.buf, ptt: v.ptt !== false, mimetype: v.mime, seconds: estSeconds(text) })
-    res.json({ ok: true, id: r?.key?.id || null, voiceNote: v.ptt === true })
+    markSocketActive()
+    const vid = r?.key?.id || null
+    if (vid) storeRawSent(vid, r.key, r.message)  // A+: decrypt-retry + disk backup
+    res.json({ ok: true, id: vid, voiceNote: v.ptt === true })
   } catch (e) { log('sendvoice error', e?.message); res.status(500).json({ error: e?.message || 'send failed' }) }
 })
 
@@ -2353,25 +2455,53 @@ app.get('/music/lyrics', async (req, res) => {
   } catch (e) { res.json({ synced: '', plain: '' }) }
 })
 
-// F3: zombie-socket detection. status.connection only flips on 'close' events,
-// so a dead-but-not-closed socket still reads "open" and sends hang until the
-// 60s query timeout. Track last successful socket activity; if it's stale,
-// treat the socket as dead: force a reconnect now and report unhealthy so the
-// send routes queue instead of hanging on a zombie socket.
-// NOTE: 5min threshold — long enough that a healthy-but-idle connection isn't
-// flagged; the cost of a false positive is just one reconnect cycle.
+// B+/B10: ensureLive() — upgrade of the batch-9 (F3) staleness check.
+// status.connection only flips on 'close' events, so a dead-but-not-closed
+// socket still reads "open" and sends hang until the 60s query timeout.
+// If the connection isn't open, or the socket has been idle > 60s, run a
+// lightweight round-trip probe. A half-open "zombie" socket fails the
+// probe, so we force close + reconnect and wait for the socket to come
+// back instead of letting the send hang.
 let _lastSocketActivity = Date.now()
 function markSocketActive() { _lastSocketActivity = Date.now() }
-const SOCKET_STALE_MS = 5 * 60 * 1000
-function isSocketHealthy() {
-  if (!sock || status.connection !== 'open') return false
-  const idleMs = Date.now() - _lastSocketActivity
-  if (idleMs > SOCKET_STALE_MS) {
-    log('F3: socket stale (no activity for ' + Math.round(idleMs / 1000) + 's) — forcing reconnect')
-    try { scheduleReconnect(0) } catch (_) {}
-    return false
-  }
-  return true
+const PROBE_IDLE_MS = 60 * 1000
+const PROBE_TIMEOUT_MS = 5000
+async function probeSocket() {
+  // iq ping (w:p) — the canonical Baileys connectivity check: a
+  // server-level keepalive answered by the WhatsApp server. No chat
+  // traffic, and — unlike a presence update — it never changes the user's
+  // online/offline visibility (stayOffline/alwaysOnline untouched).
+  // sock.query() sends the node and waits for the tagged response, so a
+  // zombie socket times out here instead of silently "succeeding" the way
+  // a fire-and-forget presence write would.
+  if (!sock) throw new Error('no socket')
+  const node = { tag: 'iq', attrs: { type: 'get', xmlns: 'w:p', to: 's.whatsapp.net' }, content: [{ tag: 'ping', attrs: {} }] }
+  await Promise.race([
+    sock.query(node, PROBE_TIMEOUT_MS),
+    new Promise((_, rej) => setTimeout(() => rej(new Error('probe timeout')), PROBE_TIMEOUT_MS)),
+  ])
+}
+let _ensureLiveFlight = null
+async function ensureLive() {
+  if (!sock) return false
+  if (status.needRelogin) return false   // session dead — the route surfaces "scan QR again"
+  // open + recently active → healthy, no probe needed
+  if (status.connection === 'open' && (Date.now() - _lastSocketActivity) <= PROBE_IDLE_MS) return true
+  // one probe/reconnect at a time — concurrent sends share the same flight
+  if (_ensureLiveFlight) return _ensureLiveFlight
+  _ensureLiveFlight = (async () => {
+    try {
+      await probeSocket()
+      markSocketActive()  // an answered probe proves the socket is alive
+      return status.connection === 'open'
+    } catch (e) {
+      log('B+: probe failed (' + (e?.message || e) + ') — forcing reconnect')
+      try { status.connection = 'close' } catch (_) {}
+      try { scheduleReconnect(0) } catch (_) {}
+      try { return await waitForOpen(15000) } catch (_) { return false }  // ensureLive never throws — always true/false
+    } finally { _ensureLiveFlight = null }
+  })()
+  return _ensureLiveFlight
 }
 
 // wait for the socket to actually be open (mobile networks drop/reconnect; sending on a closed
@@ -2387,6 +2517,32 @@ async function waitForOpen(ms = 15000) {
   while (status.connection !== 'open' && Date.now() - start < ms) await new Promise(r => setTimeout(r, 400))
   return status.connection === 'open'
 }
+
+// B+: background zombie check — every 30s, run the same probe WITHOUT
+// blocking any request; a dead socket just kicks a reconnect.
+// Guards: unref'd so it never keeps the process alive on its own; skips
+// while a reconnect is already pending/in-flight, while the session needs
+// re-login, while the connection isn't open (the connection.update
+// handler owns that path), while recently active, and never overlaps
+// itself.
+let _zombieCheckRunning = false
+const _zombieTimer = setInterval(() => {
+  if (_zombieCheckRunning) return
+  if (!sock || status.needRelogin) return
+  if (_reconnTimer || _ensureLiveFlight) return   // reconnect already pending/in flight — don't pile on
+  if (status.connection !== 'open') return
+  if ((Date.now() - _lastSocketActivity) <= PROBE_IDLE_MS) return
+  _zombieCheckRunning = true
+  ;(async () => {
+    try { await probeSocket(); markSocketActive() }
+    catch (e) {
+      log('B+: bg zombie check — probe failed, forcing reconnect')
+      try { status.connection = 'close' } catch (_) {}
+      try { scheduleReconnect(0) } catch (_) {}
+    } finally { _zombieCheckRunning = false }
+  })()
+}, 30000)
+if (_zombieTimer.unref) _zombieTimer.unref()
 
 app.post('/status/post', async (req, res) => {
   const diag = []
@@ -2424,7 +2580,7 @@ app.post('/status/post', async (req, res) => {
     diag.push('id=' + id)
     // B3: keep the raw message so "Forward status to anyone" works for my own media statuses
     // (text statuses already did this; media/voice did not → forward failed with "no content").
-    if (id) { try { rawStore.set(id, { key: r.key, message: r.message }); if (rawStore.size > 500) { const rk = rawStore.keys().next().value; rawStore.delete(rk) } } catch (_) {} }
+    if (id) storeRawSent(id, r.key, r.message)   // A+: unified 2000 cap + disk backup
     try {
       fs.mkdirSync(MEDIA_DIR, { recursive: true })
       const ext = type === 'video' ? '.mp4' : '.jpg'
@@ -2466,7 +2622,7 @@ app.post('/status/text', async (req, res) => {
     try { const meJid = sock?.user?.id?.split(':')[0] + '@s.whatsapp.net'; if (meJid && !jids.includes(meJid)) jids.push(meJid) } catch (_) {}
     const r = await sock.sendMessage('status@broadcast', { text }, { statusJidList: jids, broadcast: true, backgroundColor: bg, font })
     const id = (r && r.key && r.key.id) || null
-    if (id) { try { rawStore.set(id, { key: r.key, message: r.message }) } catch (_) {} }
+    if (id) storeRawSent(id, r.key, r.message)   // A+: was uncapped; unified 2000 cap + disk backup
     const meJid = (sock && sock.user && sock.user.id) || 'me'
     statuses = statuses.filter(x => !(x.mine && x.id === id))
     statuses.unshift({ sender: meJid, name: 'My Status', mine: true, id, text, ts: Date.now(), bg })
@@ -2483,24 +2639,27 @@ app.post('/sendreply', async (req, res) => {
     const quotedId = String(req.body?.quotedId || '')
     if (!jid || !text) return res.status(400).json({ error: 'jid,text required' })
     if (hasSeenSendId(String(req.body?.clientMsgId || ''))) return res.json({ ok: true, duplicate: true })
-    if (!isSocketHealthy()) {  // F3: also catches zombie "open" sockets
+    // B+: zombie-safe probe (kicks a reconnect + waits for it). V3: NEVER
+    // block the user — on failure the app queues immediately and its
+    // SendQueue flush delivers when the socket is back. Connected sends
+    // stay <2s.
+    if (!(await ensureLive())) {
       if (status.needRelogin) return res.json({ ok: false, needRelogin: true, error: 'session expired — scan QR again' })
-      // V3: NEVER block the user — kick a reconnect in the background and
-      // queue immediately. The app shows "sending…" and the background flush
-      // delivers when the socket is back. Connected sends stay <2s.
-      try { scheduleReconnect(0) } catch (_) {}
       return res.json({ ok: false, queued: true, error: 'reconnecting — queued, will send automatically' })
     }
     const quoted = rawStore.get(quotedId)
     let sentId = null
+    let sentRaw = null
     try {
       let r
       if (quoted && quoted.message) r = await sock.sendMessage(jid, { text }, { quoted })
       else r = await sock.sendMessage(jid, { text })
       sentId = r?.key?.id || null
-    } catch (e) { const r2 = await sock.sendMessage(jid, { text }); sentId = r2?.key?.id || null }
+      sentRaw = r
+    } catch (e) { const r2 = await sock.sendMessage(jid, { text }); sentId = r2?.key?.id || null; sentRaw = r2 }
     markSendId(String(req.body?.clientMsgId || ''))
     markSocketActive()  // F3: successful send proves the socket is alive
+    if (sentId && sentRaw) storeRawSent(sentId, sentRaw.key, sentRaw.message)  // A+: decrypt-retry + disk backup
     // S2: add to msgStore immediately with status=2 (sent) so delivery/read
     // receipts can find it even if the messages.upsert echo is delayed.
     if (sentId) {
@@ -2631,7 +2790,7 @@ app.post('/cleardata', async (req, res) => {
     groupSubjects = {}
     for (const k of Object.keys(statusViewers)) delete statusViewers[k]
     wipeDirContents(MEDIA_DIR)
-    for (const F of [MESSAGES_FILE, STATUS_FILE, NAMES_FILE, SETTINGS_FILE, GROUP_SUBJECTS_FILE, CHATS_FILE]) { try { fs.rmSync(F, { force: true }) } catch (_) {} }
+    for (const F of [MESSAGES_FILE, STATUS_FILE, NAMES_FILE, SETTINGS_FILE, GROUP_SUBJECTS_FILE, CHATS_FILE, RAWSTORE_FILE]) { try { fs.rmSync(F, { force: true }) } catch (_) {} }
     wipeDirContents(AUTH_DIR)
     status.registered = false
     res.json({ ok: true })
@@ -2644,12 +2803,11 @@ app.post('/sendraw', async (req, res) => {
     const text = String(req.body?.text || '')
     if (!jid || !text) return res.status(400).json({ error: 'jid and text required' })
     if (hasSeenSendId(String(req.body?.clientMsgId || ''))) return res.json({ ok: true, duplicate: true })
-    if (!isSocketHealthy()) {  // F3: also catches zombie "open" sockets
+    // B+: zombie-safe probe (kicks a reconnect + waits for it). V3: NEVER
+    // block the user — on failure the app queues immediately and its
+    // SendQueue flush delivers when the socket is back.
+    if (!(await ensureLive())) {
       if (status.needRelogin) return res.json({ ok: false, needRelogin: true, error: 'session expired — scan QR again' })
-      // V3: NEVER block the user — kick a reconnect in the background and
-      // queue immediately. The app shows "sending…" and the background flush
-      // delivers when the socket is back. Connected sends stay <2s.
-      try { scheduleReconnect(0) } catch (_) {}
       return res.json({ ok: false, queued: true, error: 'reconnecting — queued, will send automatically' })
     }
     const r = await sock.sendMessage(jid, { text })
@@ -2659,6 +2817,7 @@ app.post('/sendraw', async (req, res) => {
     // receipts can find it even if the messages.upsert echo is delayed.
     const sentId = r?.key?.id || null
     if (sentId) {
+      storeRawSent(sentId, r.key, r.message)  // A+: decrypt-retry + quotes/forwards + disk backup
       const entry = { chat: canon(jid), fromMe: true, text, ts: Date.now(), id: sentId, status: 2 }
       if (!msgStore.has(sentId)) { msgStore.set(sentId, entry); msgLog.unshift(entry); saveMessagesDebounced() }
     }
@@ -2975,7 +3134,7 @@ app.post('/status/voice', async (req, res) => {
     const r = await sock.sendMessage('status@broadcast', content, { statusJidList: jids, broadcast: true })
     const id = (r && r.key && r.key.id) || null
     // B3: keep raw so voice statuses can be forwarded too.
-    if (id) { try { rawStore.set(id, { key: r.key, message: r.message }); if (rawStore.size > 500) { const rk = rawStore.keys().next().value; rawStore.delete(rk) } } catch (_) {} }
+    if (id) storeRawSent(id, r.key, r.message)   // A+: unified 2000 cap + disk backup
     try {
       fs.mkdirSync(MEDIA_DIR, { recursive: true })
       const ext = (v.mime && v.mime.includes('ogg')) ? '.ogg' : (v.mime && v.mime.includes('mpeg') ? '.mp3' : '.wav')
@@ -3141,9 +3300,11 @@ app.post('/logout', async (req, res) => {
     fs.rmSync(AUTH_DIR, { recursive: true, force: true })
     sock = null; currentQr = null; pairingCode = null; pairingNumber = null
     msgStore.clear(); rawStore.clear(); deletedList = []; msgLog = []; chatHistory.clear(); dpCache.clear(); presences.clear(); statuses = []
+    _outgoingRawIds.length = 0
     chatMap.clear()
     try { fs.rmSync(MESSAGES_FILE, { force: true }) } catch (_) {}
     try { fs.rmSync(CHATS_FILE, { force: true }) } catch (_) {}
+    try { fs.rmSync(RAWSTORE_FILE, { force: true }) } catch (_) {}  // A+: auth wiped → persisted outgoing msgs are stale
     status = { connection: 'close', registered: false, me: null, lastError: null }
     await loadAuth(); await startSocket()
     res.json({ ok: true })
@@ -3155,7 +3316,7 @@ app.use((err, req, res, next) => { log('http err', err?.message); res.status(500
 
 app.listen(PORT, '127.0.0.1', async () => {
   log('server on 127.0.0.1:' + PORT, 'auth=', AUTH_DIR)
-  loadSettings(); loadChats(); loadMessages(); loadAiMem(); await loadAuth()
+  loadSettings(); loadChats(); loadMessages(); loadAiMem(); loadRawStoreDisk(); await loadAuth()
   startSocket().catch(e => log('initial start err', e?.message))
 })
 

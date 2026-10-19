@@ -189,25 +189,25 @@ fun AiSettingsFields(ctx: Context, dark: Boolean = true, onSaved: () -> Unit) {
         focusedBorderColor = borderF, unfocusedBorderColor = border,
         focusedLabelColor = tDim, unfocusedLabelColor = tDim)
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(Lang.s("aiedit_privacy"),
+        Text("Your OpenRouter key is stored only on this device and sent only to openrouter.ai with your own requests. Image edits use your OpenRouter credits.",
             style = MaterialTheme.typography.bodySmall, color = tDim)
-        OutlinedTextField(key, { key = it }, label = { Text(Lang.s("aiedit_key_label"), color = tDim) }, singleLine = true,
+        OutlinedTextField(key, { key = it }, label = { Text("OpenRouter API key", color = tDim) }, singleLine = true,
             visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
             trailingIcon = {
-                TextButton(onClick = { showKey = !showKey }) { Text(if (showKey) Lang.s("aiedit_hide") else Lang.s("aiedit_show"), color = Color(0xFF4EA1FF)) }
+                TextButton(onClick = { showKey = !showKey }) { Text(if (showKey) "Hide" else "Show", color = Color(0xFF4EA1FF)) }
             },
             colors = fieldColors, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(model, { model = it }, label = { Text(Lang.s("aiedit_model_label"), color = tDim) }, singleLine = true,
+        OutlinedTextField(model, { model = it }, label = { Text("Image model", color = tDim) }, singleLine = true,
             placeholder = { Text(AiImgSettings.DEFAULT_MODEL, color = tFaint) },
             colors = fieldColors, modifier = Modifier.fillMaxWidth())
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
                 AiImgSettings.save(ctx, key, model)
                 savedTick = true
-                Toast.makeText(ctx, Lang.s("toast_ai_saved"), Toast.LENGTH_SHORT).show()
+                Toast.makeText(ctx, "AI settings saved", Toast.LENGTH_SHORT).show()
                 onSaved()
-            }) { Text(Lang.s("save")) }
-            if (savedTick) Text(Lang.s("aiedit_saved_tick"), color = Color(0xFF7ED957), style = MaterialTheme.typography.labelMedium)
+            }) { Text("Save") }
+            if (savedTick) Text("Saved ✓", color = Color(0xFF7ED957), style = MaterialTheme.typography.labelMedium)
         }
     }
 }
@@ -217,10 +217,10 @@ fun AiSettingsDialog(ctx: Context, onClose: () -> Unit) {
     Dialog(onDismissRequest = onClose) {
         Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp), color = Color(0xFF161616)) {
             Column(Modifier.padding(18.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(Lang.s("aiedit_settings"), color = Color.White, style = MaterialTheme.typography.titleMedium)
+                Text("AI Settings", color = Color.White, style = MaterialTheme.typography.titleMedium)
                 AiSettingsFields(ctx, onSaved = {})
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = onClose) { Text(Lang.s("close"), color = Color(0xFF4EA1FF)) }
+                    TextButton(onClick = onClose) { Text("Close", color = Color(0xFF4EA1FF)) }
                 }
             }
         }
@@ -337,7 +337,7 @@ fun AiImageEditSheet(ctx: Context, sourceUri: Uri, onDone: (ByteArray) -> Unit, 
         scope.launch {
             val key = AiImgSettings.getKey(ctx)
             val model = AiImgSettings.getModel(ctx)
-            if (key.isBlank()) { generating = false; genError = Lang.s("aiedit_no_key_err"); return@launch }
+            if (key.isBlank()) { generating = false; genError = "No API key — add it in AI Settings first."; return@launch }
             val jpeg = downscaleJpeg(ctx, sourceUri)
             if (jpeg == null) { generating = false; genError = "Could not read the image."; return@launch }
             val r = openRouterImageEdit(key, model, jpeg, p)
@@ -353,24 +353,24 @@ fun AiImageEditSheet(ctx: Context, sourceUri: Uri, onDone: (ByteArray) -> Unit, 
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF0E2A28), Color(0xFF101418), Color(0xFF08090B))))) {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = onCancel) { Text(Lang.s("cancel"), color = Color.White) }
-                    Text(Lang.s("aiedit_edit_image"), color = Color.White, style = MaterialTheme.typography.titleMedium)
+                    TextButton(onClick = onCancel) { Text("Cancel", color = Color.White) }
+                    Text("Edit image", color = Color.White, style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.size(64.dp))
                 }
                 // ---------- SECTION 1: real AI edit ----------
-                Text(Lang.s("aiedit_section_ai"), color = Color.White, style = MaterialTheme.typography.titleSmall)
-                Text(Lang.s("aiedit_section_ai_desc"),
+                Text("AI Edit (OpenRouter)", color = Color.White, style = MaterialTheme.typography.titleSmall)
+                Text("Real image-to-image AI using your own OpenRouter key and credits.",
                     color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall)
                 Spacer(Modifier.height(6.dp))
                 if (!hasKey) {
-                    Text(Lang.s("aiedit_no_key"),
+                    Text("Add your OpenRouter API key in AI Settings to use AI edit.",
                         color = Color(0xFFFFB84D), style = MaterialTheme.typography.bodySmall)
                     Spacer(Modifier.height(6.dp))
-                    Button(onClick = onOpenSettings) { Text(Lang.s("aiedit_open_settings")) }
+                    Button(onClick = onOpenSettings) { Text("Open AI Settings") }
                 } else {
                     OutlinedTextField(promptText, { promptText = it; promptError = null },
                         placeholder = { Text("Change the background to a beautiful Indian village at sunset.", color = Color.White.copy(alpha = 0.45f)) },
-                        label = { Text(Lang.s("aiedit_describe"), color = Color.White.copy(alpha = 0.6f)) }, minLines = 2, maxLines = 4,
+                        label = { Text("Describe the edit", color = Color.White.copy(alpha = 0.6f)) }, minLines = 2, maxLines = 4,
                         colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White,
                             focusedBorderColor = Color.White.copy(alpha = 0.4f), unfocusedBorderColor = Color.White.copy(alpha = 0.2f),
                             focusedLabelColor = Color.White.copy(alpha = 0.7f), unfocusedLabelColor = Color.White.copy(alpha = 0.5f)),
@@ -384,63 +384,63 @@ fun AiImageEditSheet(ctx: Context, sourceUri: Uri, onDone: (ByteArray) -> Unit, 
                     }
                     Spacer(Modifier.height(8.dp))
                     Button(onClick = { runGenerate() }, enabled = !generating, modifier = Modifier.fillMaxWidth()) {
-                        if (generating) { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White); Spacer(Modifier.size(8.dp)); Text(Lang.s("aiedit_generating")) }
-                        else Text(Lang.s("aiedit_generate"))
+                        if (generating) { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White); Spacer(Modifier.size(8.dp)); Text("Generating…") }
+                        else Text("✨ Generate edit")
                     }
                     if (genError != null) {
                         Text(genError!!, color = Color(0xFFFF8A80), style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
-                        TextButton(onClick = { runGenerate() }, enabled = !generating) { Text(Lang.s("retry"), color = Color(0xFF4EA1FF)) }
+                        TextButton(onClick = { runGenerate() }, enabled = !generating) { Text("Retry", color = Color(0xFF4EA1FF)) }
                     }
                     val res = genResult
                     if (res != null) {
                         Spacer(Modifier.height(8.dp))
-                        Text(Lang.s("aiedit_result_hint"), color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelMedium)
+                        Text("Result (original unchanged until you Apply):", color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelMedium)
                         Spacer(Modifier.height(4.dp))
                         Image(res.asImageBitmap(), null, Modifier.fillMaxWidth().heightIn(max = 320.dp))
                         Spacer(Modifier.height(6.dp))
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = { onDone(resultBytes(res)) }, modifier = Modifier.weight(1f)) { Text(Lang.s("aiedit_apply")) }
+                            Button(onClick = { onDone(resultBytes(res)) }, modifier = Modifier.weight(1f)) { Text("Apply") }
                             TextButton(onClick = {
                                 saving = true
                                 scope.launch {
                                     val ok = withContext(Dispatchers.IO) { MediaSaver.save(ctx, resultBytes(res), "ayx-ai-edit-${System.currentTimeMillis()}.jpg", "image") }
                                     saving = false
-                                    Toast.makeText(ctx, if (ok) Lang.s("aiedit_saved_to") else Lang.s("aiedit_save_failed"), Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(ctx, if (ok) "Saved to Pictures/WhatsAyX" else "Save failed", Toast.LENGTH_SHORT).show()
                                 }
-                            }, enabled = !saving) { Text(if (saving) Lang.s("aiedit_saving") else Lang.s("save"), color = Color(0xFF4EA1FF)) }
-                            TextButton(onClick = { genResult = null; genError = null }) { Text(Lang.s("discard"), color = Color.White.copy(alpha = 0.7f)) }
+                            }, enabled = !saving) { Text(if (saving) "Saving…" else "Save", color = Color(0xFF4EA1FF)) }
+                            TextButton(onClick = { genResult = null; genError = null }) { Text("Discard", color = Color.White.copy(alpha = 0.7f)) }
                         }
                     }
                 }
                 Spacer(Modifier.height(14.dp))
                 // ---------- SECTION 2: on-device filters ----------
-                Text(Lang.s("aiedit_filters"), color = Color.White, style = MaterialTheme.typography.titleSmall)
-                Text(Lang.s("aiedit_filters_desc"), color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall)
+                Text("Filters (on-device)", color = Color.White, style = MaterialTheme.typography.titleSmall)
+                Text("Quick local adjustments — not AI.", color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall)
                 Spacer(Modifier.height(6.dp))
                 Box(Modifier.fillMaxWidth().height(220.dp).background(Color(0xFF111111)), contentAlignment = Alignment.Center) {
                     val bmp = preview
-                    if (bmp != null) Image(bmp.asImageBitmap(), null, Modifier.fillMaxSize()) else Text(Lang.s("preview_unavailable"), color = Color.White)
+                    if (bmp != null) Image(bmp.asImageBitmap(), null, Modifier.fillMaxSize()) else Text("Preview unavailable", color = Color.White)
                 }
                 Spacer(Modifier.height(8.dp))
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     AiEditFilter.entries.forEach { f -> FilterChip(selected = filter == f, onClick = { filter = f }, label = { Text(f.label) }) }
-                    FilterChip(selected = false, onClick = { brightness = 8f; contrast = 1.15f; saturation = 1.2f; filter = AiEditFilter.ORIGINAL }, label = { Text(Lang.s("aiedit_auto_enhance")) })
-                    FilterChip(selected = vignette, onClick = { vignette = !vignette }, label = { Text(Lang.s("aiedit_vignette")) })
+                    FilterChip(selected = false, onClick = { brightness = 8f; contrast = 1.15f; saturation = 1.2f; filter = AiEditFilter.ORIGINAL }, label = { Text("✨ Auto enhance") })
+                    FilterChip(selected = vignette, onClick = { vignette = !vignette }, label = { Text("Vignette") })
                 }
                 Spacer(Modifier.height(6.dp))
-                EditSlider(Lang.s("aiedit_brightness"), brightness, -50f..50f, { brightness = it })
-                EditSlider(Lang.s("aiedit_contrast"), contrast, 0.5f..1.5f, { contrast = it })
-                EditSlider(Lang.s("aiedit_saturation"), saturation, 0f..2f, { saturation = it })
+                EditSlider("Brightness", brightness, -50f..50f, { brightness = it })
+                EditSlider("Contrast", contrast, 0.5f..1.5f, { contrast = it })
+                EditSlider("Saturation", saturation, 0f..2f, { saturation = it })
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = { rotation = (rotation + 90f) % 360f }) { Text(Lang.s("aiedit_rotate"), color = Color.White) }
-                    TextButton(onClick = { flip = !flip }) { Text(if (flip) Lang.s("aiedit_unflip") else Lang.s("aiedit_flip"), color = Color.White) }
-                    TextButton(onClick = { filter = AiEditFilter.ORIGINAL; brightness = 0f; contrast = 1f; saturation = 1f; rotation = 0f; flip = false; vignette = false }) { Text(Lang.s("aiedit_reset"), color = Color.White) }
+                    TextButton(onClick = { rotation = (rotation + 90f) % 360f }) { Text("Rotate 90°", color = Color.White) }
+                    TextButton(onClick = { flip = !flip }) { Text(if (flip) "Unflip" else "Flip", color = Color.White) }
+                    TextButton(onClick = { filter = AiEditFilter.ORIGINAL; brightness = 0f; contrast = 1f; saturation = 1f; rotation = 0f; flip = false; vignette = false }) { Text("Reset", color = Color.White) }
                     Spacer(Modifier.weight(1f))
                     Button(onClick = {
                         val bmp = preview ?: return@Button
                         busy = true
                         onDone(resultBytes(bmp)); busy = false
-                    }, enabled = preview != null && !busy) { Text(Lang.s("aiedit_apply_filters")) }
+                    }, enabled = preview != null && !busy) { Text("Apply filters") }
                 }
                 Spacer(Modifier.height(16.dp))
             }

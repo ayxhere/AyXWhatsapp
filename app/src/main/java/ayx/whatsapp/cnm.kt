@@ -107,13 +107,13 @@ private fun InitialAvatar(label: String, size: Dp = 44.dp) {
 @Composable
 internal fun LanguageSelector(current: String, onSelect: (String) -> Unit) {
     val opts = listOf(
-        "auto" to Lang.s("lang_auto_mirror"),
+        "auto" to "Auto (mirror)",
         "hinglish" to "Hinglish",
         "bangla" to "Roman Bangla",
         "english" to "English",
         "hindi" to "हिंदी",
         "banglascript" to "বাংলা",
-        "custom" to Lang.s("lang_custom"),
+        "custom" to "Custom",
     )
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         opts.forEach { (key, label) ->
@@ -142,16 +142,16 @@ internal fun AiMemoryScreen() {
         Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
             Row(Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(Lang.s("aimem_title"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Text(if (loading) Lang.s("aimem_loading") else "${items.size} contacts remembered",
+                    Text("AI Memory", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(if (loading) "Loading…" else "${items.size} contacts remembered",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                FilledTonalButton(onClick = { refresh() }) { Text(Lang.s("refresh")) }
+                FilledTonalButton(onClick = { refresh() }) { Text("Refresh") }
             }
         }
 
         if (!loading && items.isEmpty()) {
-            Text(Lang.s("aimem_empty"),
+            Text("No memory yet. As people message you, their name, number/lid, language and full chat history are saved here — and the AI uses exactly that to reply.",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp))
         }
 
@@ -162,7 +162,7 @@ internal fun AiMemoryScreen() {
         }
 
         if (items.isNotEmpty()) {
-            OutlinedButton(onClick = { confirmClearAll = true }, modifier = Modifier.fillMaxWidth()) { Text(Lang.s("aimem_clear_all")) }
+            OutlinedButton(onClick = { confirmClearAll = true }, modifier = Modifier.fillMaxWidth()) { Text("Clear all memory") }
         }
         Spacer(Modifier.height(20.dp))
     }
@@ -171,10 +171,10 @@ internal fun AiMemoryScreen() {
         AlertDialog(
             onDismissRequest = { confirmClearAll = false },
             containerColor = dialogBg(),
-            title = { Text(Lang.s("aimem_clear_all_q")) },
-            text = { Text(Lang.s("aimem_clear_all_desc")) },
-            confirmButton = { TextButton(onClick = { confirmClearAll = false; scope.launch { GatewayClient.clearAiMemory(""); refresh() } }) { Text(Lang.s("clear_all")) } },
-            dismissButton = { TextButton(onClick = { confirmClearAll = false }) { Text(Lang.s("cancel")) } },
+            title = { Text("Clear all memory?") },
+            text = { Text("Saari contacts ki chat history aur saved info delete ho jayegi.") },
+            confirmButton = { TextButton(onClick = { confirmClearAll = false; scope.launch { GatewayClient.clearAiMemory(""); refresh() } }) { Text("Clear all") } },
+            dismissButton = { TextButton(onClick = { confirmClearAll = false }) { Text("Cancel") } },
         )
     }
 }
@@ -182,7 +182,7 @@ internal fun AiMemoryScreen() {
 @Composable
 private fun MemCard(c: GatewayClient.MemContact, expanded: Boolean, onToggle: () -> Unit, onClear: () -> Unit) {
     val arrow by animateFloatAsState(if (expanded) 180f else 0f, tween(220), label = "arrow")
-    val title = c.name.ifBlank { c.number.ifBlank { Lang.s("aimem_unknown") } }
+    val title = c.name.ifBlank { c.number.ifBlank { "Unknown" } }
     val lang = langLabel(c.lang)
     Surface(
         onClick = onToggle,
@@ -216,12 +216,12 @@ private fun MemCard(c: GatewayClient.MemContact, expanded: Boolean, onToggle: ()
                         Spacer(Modifier.height(6.dp))
                     }
                     if (c.recent.isEmpty()) {
-                        Text(Lang.s("aimem_no_msgs"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("No saved messages yet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
                         c.recent.forEach { m -> LogLine(m) }
                     }
                     Spacer(Modifier.height(8.dp))
-                    TextButton(onClick = onClear) { Text(Lang.s("aimem_clear_chat")) }
+                    TextButton(onClick = onClear) { Text("Clear this chat's memory") }
                 }
             }
         }
@@ -316,15 +316,15 @@ internal fun VoicePickerScreen(settings: GatewayClient.Settings, onToggle: (JSON
             player.setDataSource(GatewayClient.ttsDemoUrl(v))
             player.setOnPreparedListener { loading = null; playing = v; it.start() }
             player.setOnCompletionListener { playing = null }
-            player.setOnErrorListener { _, _, _ -> loading = null; playing = null; Toast.makeText(ctx, Lang.s("voice_demo_failed_play"), Toast.LENGTH_SHORT).show(); true }
+            player.setOnErrorListener { _, _, _ -> loading = null; playing = null; Toast.makeText(ctx, "Demo didn't play, try again", Toast.LENGTH_SHORT).show(); true }
             player.prepareAsync()
-        }.onFailure { loading = null; Toast.makeText(ctx, Lang.s("voice_demo_failed"), Toast.LENGTH_SHORT).show() }
+        }.onFailure { loading = null; Toast.makeText(ctx, "Demo failed", Toast.LENGTH_SHORT).show() }
     }
 
     fun pick(v: String) {
         selected = v
         onToggle(JSONObject().put("aiTtsVoice", v))
-        Toast.makeText(ctx, Lang.s("voice_set"), Toast.LENGTH_SHORT).show()
+        Toast.makeText(ctx, "Voice set", Toast.LENGTH_SHORT).show()
     }
 
     val scope = rememberCoroutineScope()
@@ -341,25 +341,25 @@ internal fun VoicePickerScreen(settings: GatewayClient.Settings, onToggle: (JSON
         Spacer(Modifier.height(6.dp))
 
         // Voice feature switches (voice read + voice play) — moved out of AI Assistant
-        Text(Lang.s("voice_section"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp))
+        Text("VOICE REPLY", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp))
         Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
             Column {
                 VoiceToggle(
-                    Lang.s("voice_hear_t"),
-                    Lang.s("voice_hear_d"),
+                    "Hear voice notes + reply",
+                    "Transcribes incoming voice notes, then the AI replies",
                     replyVoice,
                 ) { replyVoice = it; onToggle(JSONObject().put("aiReplyVoice", it)) }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                 VoiceToggle(
-                    Lang.s("voice_vn_t"),
-                    Lang.s("voice_vn_d"),
+                    "Reply with a voice note",
+                    "Replies with a real voice note (TTS) instead of text — the toggle above must be ON",
                     voiceNote,
                     enabled = replyVoice,
                 ) { voiceNote = it; onToggle(JSONObject().put("aiVoiceNoteReply", it)) }
             }
         }
 
-        Text(Lang.s("voice_pick_desc"),
+        Text("Pick a voice — tap ▶ for a demo, then tap to select. Replies go as a real recording voice note. If someone speaks Bangla, it auto-switches to a Bangla voice.",
             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 2.dp))
 
         FilledTonalButton(onClick = {
@@ -373,39 +373,39 @@ internal fun VoicePickerScreen(settings: GatewayClient.Settings, onToggle: (JSON
                 checking = false
             }
         }, enabled = !checking, modifier = Modifier.fillMaxWidth()) {
-            Text(if (checking) Lang.s("voice_checking") else Lang.s("voice_check_btn"))
+            Text(if (checking) "Checking…" else "Check voice (selected)")
         }
 
         // SARVAM — real Hindi/Bangla human voices (needs a free Sarvam key)
         Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(Lang.s("voice_sarvam_t"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                Text(Lang.s("voice_sarvam_d"),
+                Text("HINDI / BANGLA — real human (Sarvam)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text("A free Sarvam key is needed for Hindi/Bangla human voices. Sign up at sarvam.ai, copy the key, paste it here and Save.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                FilledTonalButton(onClick = { runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://dashboard.sarvam.ai")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }) { Text(Lang.s("voice_get_key")) }
-                OutlinedTextField(sarvamKey, { sarvamKey = it }, label = { Text(Lang.s("voice_sarvam_key")) }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+                FilledTonalButton(onClick = { runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://dashboard.sarvam.ai")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }) { Text("Get free Sarvam key") }
+                OutlinedTextField(sarvamKey, { sarvamKey = it }, label = { Text("Sarvam API key") }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    FilledTonalButton(onClick = { onToggle(JSONObject().put("aiSarvamKey", sarvamKey.trim())); Toast.makeText(ctx, Lang.s("voice_key_saved"), Toast.LENGTH_SHORT).show() }) { Text(Lang.s("voice_save_key")) }
+                    FilledTonalButton(onClick = { onToggle(JSONObject().put("aiSarvamKey", sarvamKey.trim())); Toast.makeText(ctx, "Sarvam key saved", Toast.LENGTH_SHORT).show() }) { Text("Save key") }
                 }
             }
         }
 
-        Text(Lang.s("voice_hindi"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 4.dp))
+        Text("HINDI (Sarvam)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 4.dp))
         SARVAM_HINDI.forEach { v -> VoiceRow(v, selected == v.id, playing == v.id, loading == v.id, { demo(v.id) }, { pick(v.id) }) }
 
-        Text(Lang.s("voice_bangla"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
+        Text("BANGLA (Sarvam)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
         SARVAM_BANGLA.forEach { v -> VoiceRow(v, selected == v.id, playing == v.id, loading == v.id, { demo(v.id) }, { pick(v.id) }) }
 
-        Text(Lang.s("voice_en_f"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
+        Text("ENGLISH · FEMALE (Groq)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
         GROQ_FEMALE.forEach { v -> VoiceRow(v, selected == v.id, playing == v.id, loading == v.id, { demo(v.id) }, { pick(v.id) }) }
 
-        Text(Lang.s("voice_en_m"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
+        Text("ENGLISH · MALE (Groq)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
         GROQ_MALE.forEach { v -> VoiceRow(v, selected == v.id, playing == v.id, loading == v.id, { demo(v.id) }, { pick(v.id) }) }
 
-        Text(Lang.s("voice_indic"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
+        Text("HINDI / BANGLA (no key — may not play on your network)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
         INDIC_VOICES.forEach { v -> VoiceRow(v, selected == v.id, playing == v.id, loading == v.id, { demo(v.id) }, { pick(v.id) }) }
 
-        Text(Lang.s("voice_backup"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
+        Text("BACKUP", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
         BACKUP_VOICES.forEach { v -> VoiceRow(v, selected == v.id, playing == v.id, loading == v.id, { demo(v.id) }, { pick(v.id) }) }
 
         Spacer(Modifier.height(20.dp))
@@ -415,9 +415,9 @@ internal fun VoicePickerScreen(settings: GatewayClient.Settings, onToggle: (JSON
         AlertDialog(
             onDismissRequest = { checkResult = null },
             containerColor = dialogBg(),
-            title = { Text(Lang.s("voice_check_t")) },
+            title = { Text("Voice check") },
             text = { Text(checkResult ?: "") },
-            confirmButton = { TextButton(onClick = { checkResult = null }) { Text(Lang.s("ok")) } },
+            confirmButton = { TextButton(onClick = { checkResult = null }) { Text("OK") } },
         )
     }
 }
