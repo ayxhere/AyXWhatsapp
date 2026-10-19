@@ -1720,8 +1720,8 @@ fun GatewayApp() {
                 // U2: selection mode renders inside the header (3-dot replaced by delete + select-all).
                 selCount = if (chatSelMode) chatSelIds.size else 0,
                 onExitSel = { exitChatSel() },
-                onDeleteSel = { selActions?.deleteSelected() },
-                onSelectAll = { selActions?.selectAll() },
+                onDeleteSel = { selActions?.deleteSelected?.invoke() },
+                onSelectAll = { selActions?.selectAll?.invoke() },
             )
         } else {
         Box(Modifier.fillMaxSize().consumeWindowInsets(pad)) {
