@@ -49,6 +49,7 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.ui.BiasAlignment
@@ -112,6 +113,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.DonutLarge
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Download
@@ -565,7 +567,7 @@ private fun downloadMedia(scope: CoroutineScope, ctx: Context, m: GatewayClient.
     val name = m.mediaName ?: return
     scope.launch {
         val bytes = GatewayClient.mediaBytes(name)
-        if (bytes == null) { onLog("turn on Save media (Settings) to download"); return@launch }
+        if (bytes == null) { onLog(Lang.s("t_save_media_dl")); return@launch }
         val ok = MediaSaver.save(ctx, bytes, name, m.mediaType ?: "document")
         onLog(if (ok) "saved to $APP_NAME folder" else "save failed")
     }
@@ -766,6 +768,13 @@ fun GatewayApp() {
 
     var screen by remember { mutableStateOf("chats") }
     var openChat by remember { mutableStateOf<String?>(null) }
+    // U2: message multi-select state lives HERE (not inside ChatDetail) so the
+    // floating glass header can render selection mode itself (3-dot menu is
+    // replaced by delete + select-all). Keyed by openChat: switching chats resets.
+    var chatSelMode by remember(openChat) { mutableStateOf(false) }
+    val chatSelIds = remember(openChat) { mutableStateListOf<String>() }
+    var selActions by remember(openChat) { mutableStateOf<SelActions?>(null) }
+    fun exitChatSel() { chatSelMode = false; chatSelIds.clear() }
     // Unread badge: jid -> wall-clock ms when that chat was marked read.
     // The badge clears the moment a chat is opened (see markChatRead), so
     // going back home never shows a stale count — but a message arriving
@@ -802,13 +811,13 @@ fun GatewayApp() {
     fun notify(s: String) { toast = s }
     fun openMedia(m: GatewayClient.Msg) {
         if (m.mediaType == "video") {
-            if (m.mediaName != null) viewVideoUrl = GatewayClient.mediaUrl(m.mediaName!!) to m else notify("turn on Save media to play video")
+            if (m.mediaName != null) viewVideoUrl = GatewayClient.mediaUrl(m.mediaName!!) to m else notify(Lang.s("t_save_media_video"))
             return
         }
         scope.launch {
             val full = m.mediaName?.let { GatewayClient.mediaBytes(it) }
             val bmp = if (full != null) BitmapFactory.decodeByteArray(full, 0, full.size)?.asImageBitmap() else decodeThumb(m.thumb)
-            if (bmp != null) viewImg = bmp to m else notify("turn on Save media to view full image")
+            if (bmp != null) viewImg = bmp to m else notify(Lang.s("t_save_media_image"))
         }
     }
 
@@ -877,12 +886,12 @@ fun GatewayApp() {
         if (ok && u != null && jid != null) scope.launch {
             try {
                 val bytes = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(u)?.use { it.readBytes() } }
-                if (bytes != null) { notify("sending photo…"); GatewayClient.sendMedia(jid, Base64.encodeToString(bytes, Base64.NO_WRAP), "image", "camera.jpg", "") }
+                if (bytes != null) { notify(Lang.s("t_sending_photo")); GatewayClient.sendMedia(jid, Base64.encodeToString(bytes, Base64.NO_WRAP), "image", "camera.jpg", "") }
             } catch (e: Exception) { notify("send failed: ${e.message}") }
         }
     }
     val cameraPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) cameraUri?.let { cameraLauncher.launch(it) } else notify("camera permission needed")
+        if (granted) cameraUri?.let { cameraLauncher.launch(it) } else notify(Lang.s("t_camera_perm"))
     }
     fun openCamera() {
         val dir = File(ctx.cacheDir, "shared").apply { mkdirs() }
@@ -907,7 +916,7 @@ fun GatewayApp() {
         }
     }
     val contactsPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) doLoadContacts() else notify("contacts permission needed")
+        if (granted) doLoadContacts() else notify(Lang.s("t_contacts_perm"))
     }
     fun ensureContacts() {
         if (deviceContacts.isNotEmpty() || contactsLoading) return
@@ -924,14 +933,14 @@ fun GatewayApp() {
                     File(ctx.filesDir, "wallpaper.jpg").outputStream().use { input.copyTo(it) }
                 }
             }
-            loadWallpaper(); wallpaperVersion++; notify("wallpaper set")
+            loadWallpaper(); wallpaperVersion++; notify(Lang.s("t_wallpaper_set"))
         }
     }
     val profilePicPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null) scope.launch {
             try {
                 val bytes = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() } }
-                if (bytes != null) { GatewayClient.setProfilePicture(Base64.encodeToString(bytes, Base64.NO_WRAP)); notify("profile photo updated") }
+                if (bytes != null) { GatewayClient.setProfilePicture(Base64.encodeToString(bytes, Base64.NO_WRAP)); notify(Lang.s("t_photo_updated")) }
             } catch (e: Exception) { notify("failed: ${e.message}") }
         }
     }
@@ -950,7 +959,7 @@ fun GatewayApp() {
                     File(ctx.filesDir, "wp_${jid.hashCode()}.jpg").outputStream().use { input.copyTo(it) }
                 }
             }
-            loadChatWp(jid); notify("chat wallpaper set")
+            loadChatWp(jid); notify(Lang.s("t_chat_wp_set"))
         }
     }
     var lastNotifTs by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -1019,7 +1028,7 @@ fun GatewayApp() {
                 withContext(Dispatchers.IO) { NodeRuntime.ensureStarted(ctx.applicationContext) }
             }
             if (status.needRelogin) {
-                if (!toldRelogin) { toldRelogin = true; notify("Session expired — scan QR again") }
+                if (!toldRelogin) { toldRelogin = true; notify(Lang.s("t_session_expired")) }
             } else toldRelogin = false
             if (!status.registered) {
                 settingsLoaded = false; openChat = null
@@ -1029,8 +1038,8 @@ fun GatewayApp() {
                     runCatching {
                         if (SessionBackup.exists(ctx)) {
                             SessionBackup.load(ctx)?.let { js ->
-                                notify("restoring login…")
-                                if (GatewayClient.importSession(js)) { status = GatewayClient.status(); notify("login restored") }
+                                notify(Lang.s("t_restoring"))
+                                if (GatewayClient.importSession(js)) { status = GatewayClient.status(); notify(Lang.s("t_login_restored")) }
                             }
                         }
                     }
@@ -1087,6 +1096,7 @@ fun GatewayApp() {
         when {
             viewImg != null -> viewImg = null
             viewVideoUrl != null -> viewVideoUrl = null
+            openChat != null && chatSelMode -> exitChatSel()
             openChat != null -> openChat = null
             storyView != null -> storyView = null
             screen == "settings" && settingsPage != "home" -> settingsPage = settingsParent(settingsPage)
@@ -1105,7 +1115,7 @@ fun GatewayApp() {
             // 'all' audience: send to every WhatsApp contact on the device so distribution never depends on
             // the gateway's accumulated contact list (which can be empty after a fresh link / clear data).
             val recipients: List<String> = if (audience == "all") deviceContacts.map { c -> c.number + "@s.whatsapp.net" } else jids
-            if (u == null) { notify("Add a photo or video first") } else scope.launch {
+            if (u == null) { notify(Lang.s("t_add_media_first")) } else scope.launch {
                 try {
                     val vTrimActive = t == "video" && vTrimEnd > vTrimStart && vTrimEnd > 0L
                     if (song == null) {
@@ -1116,7 +1126,7 @@ fun GatewayApp() {
                             val bytes = if (rawBytes != null && !isJpeg(rawBytes)) {
                                 withContext(Dispatchers.IO) { convertToJpeg(rawBytes) } ?: rawBytes
                             } else rawBytes
-                            if (bytes != null) { notify("uploading status…"); val res = GatewayClient.postStatus(t, Base64.encodeToString(bytes, Base64.NO_WRAP), caption, audience, recipients); notify((if (res.first) "✅ " else "❌ ") + res.second); if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) } }
+                            if (bytes != null) { notify(Lang.s("uploading_status")); val res = GatewayClient.postStatus(t, Base64.encodeToString(bytes, Base64.NO_WRAP), caption, audience, recipients); notify((if (res.first) "✅ " else "❌ ") + res.second); if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) } }
                         } else {
                             // Video, no song: trim + mute apply for real (no re-encode, sample copy).
                             // V1: NEVER silently skip — every failure path notifies the user explicitly.
@@ -1131,29 +1141,29 @@ fun GatewayApp() {
                                             val fast = File(ctx.cacheDir, "vfast_${System.currentTimeMillis()}.mp4")
                                             val final = if (MediaTools.faststart(trimmed, fast) && MediaTools.isValidMp4(fast)) fast else trimmed
                                             if (!final.exists() || final.length() == 0L) {
-                                                withContext(Dispatchers.Main) { notify("❌ Video processing produced an empty file") }
+                                                withContext(Dispatchers.Main) { notify(Lang.s("t_video_empty_file")) }
                                                 null
                                             } else final.readBytes().also { runCatching { trimmed.delete() }; runCatching { fast.delete() } }
                                         }
                                         else {
-                                            withContext(Dispatchers.Main) { notify("Video trim failed — posting original") }
+                                            withContext(Dispatchers.Main) { notify(Lang.s("t_trim_failed")) }
                                             ctx.contentResolver.openInputStream(u)?.use { it.readBytes() }
-                                                ?: run { withContext(Dispatchers.Main) { notify("❌ Could not read video file") }; null }
+                                                ?: run { withContext(Dispatchers.Main) { notify(Lang.s("t_video_noread")) }; null }
                                         }
                                     } else {
                                         ctx.contentResolver.openInputStream(u)?.use { it.readBytes() }
-                                            ?: run { withContext(Dispatchers.Main) { notify("❌ Could not read video file (permission lost?)") }; null }
+                                            ?: run { withContext(Dispatchers.Main) { notify(Lang.s("t_video_noread_perm")) }; null }
                                     }
                                 } catch (e: Exception) {
                                     withContext(Dispatchers.Main) { notify("❌ Video read failed: " + (e.message ?: "unknown error")) }
                                     null
                                 }
                             }
-                            if (bytes != null && bytes.isNotEmpty()) { notify("uploading status…"); val res = GatewayClient.postStatus(t, Base64.encodeToString(bytes, Base64.NO_WRAP), caption, audience, recipients); notify((if (res.first) "✅ " else "❌ ") + res.second); if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) } }
-                            else if (bytes != null) notify("❌ Video file is empty")
+                            if (bytes != null && bytes.isNotEmpty()) { notify(Lang.s("uploading_status")); val res = GatewayClient.postStatus(t, Base64.encodeToString(bytes, Base64.NO_WRAP), caption, audience, recipients); notify((if (res.first) "✅ " else "❌ ") + res.second); if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) } }
+                            else if (bytes != null) notify(Lang.s("t_video_empty"))
                         }
                     } else {
-                        notify("Creating status video…")
+                        notify(Lang.s("t_creating_sv"))
                         val finalMp4 = withContext(Dispatchers.IO) {
                             val dir = ctx.cacheDir
                             val stamp = System.currentTimeMillis()
@@ -1191,11 +1201,11 @@ fun GatewayApp() {
                                 } else runCatching { ctx.contentResolver.openInputStream(u)?.use { inp -> FileOutputStream(vFile).use { inp.copyTo(it) } }; true }.getOrDefault(false)
                             } else runCatching { ctx.contentResolver.openInputStream(u)?.use { inp -> FileOutputStream(vFile).use { inp.copyTo(it) } }; true }.getOrDefault(false)
                             if (!vOk) return@withContext null
-                            notify("Preparing audio…")
+                            notify(Lang.s("t_preparing_audio"))
                             // song audio; if it fails, fall back to a silent AAC track so the MP4 always has audio (WhatsApp needs it)
                             val haveSong = song != null && MediaTools.downloadAndTrimAudio(song.url, aFile, tStart, tEnd) && aFile.length() > 0
                             val audioSrc = if (haveSong) aFile else File(dir, "sil_$stamp.m4a").also { MediaTools.makeSilentAac(durMs, it) }
-                            notify("Finalizing video…")
+                            notify(Lang.s("t_finalizing_video"))
                             val muxTmp = File(dir, "mux_$stamp.mp4")
                             if (!MediaTools.muxVideoAudio(vFile, audioSrc, muxTmp)) return@withContext null
                             // move moov atom to front (faststart) so WhatsApp can play it; fall back to raw mux if it fails
@@ -1205,13 +1215,13 @@ fun GatewayApp() {
                             outFile
                         }
                         if (finalMp4 != null && finalMp4.exists()) {
-                            notify("Uploading…")
+                            notify(Lang.s("uploading"))
                             val bytes = withContext(Dispatchers.IO) { finalMp4.readBytes() }
                             val res = GatewayClient.postStatus("video", Base64.encodeToString(bytes, Base64.NO_WRAP), caption, audience, recipients)
                             notify((if (res.first) "✅ " else "❌ ") + res.second)
                             runCatching { finalMp4.delete() }
                             if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) }
-                        } else notify("video processing failed")
+                        } else notify(Lang.s("t_video_proc_failed"))
                     }
                 } catch (e: Exception) { notify("failed: " + e.message) }
                 finally { statusUploading = false }
@@ -1263,7 +1273,7 @@ fun GatewayApp() {
                 TextButton(enabled = vtext.isNotBlank(), onClick = {
                     val t = vtext.trim(); textStatusDlg = false
                     if (t.isNotEmpty()) scope.launch {
-                        notify("Posting text status…")
+                        notify(Lang.s("t_posting_text"))
                         val res = GatewayClient.postTextStatus(t, hex(bgColors[bgIdx]), "all", emptyList())
                         notify((if (res.first) "✅ " else "❌ ") + res.second)
                         if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) }
@@ -1321,7 +1331,7 @@ fun GatewayApp() {
                     val name = st.mediaName
                     if (name != null) scope.launch {
                         val bytes = GatewayClient.mediaBytes(name)
-                        if (bytes == null) { notify("turn on Save media (Settings) to download"); return@launch }
+                        if (bytes == null) { notify(Lang.s("t_save_media_dl")); return@launch }
                         val ok = MediaSaver.save(ctx, bytes, name, st.mediaType ?: "document")
                         notify(if (ok) "saved to $APP_NAME folder" else "save failed")
                     }
@@ -1336,9 +1346,9 @@ fun GatewayApp() {
                 onReply = { sid, text ->
                     scope.launch {
                         when (GatewayClient.sendTextReliable(sid, text)) {
-                            is GatewayClient.SendOutcome.Sent -> notify("Reply sent")
-                            is GatewayClient.SendOutcome.Queued -> notify("Reply queued — will send when reconnected")
-                            is GatewayClient.SendOutcome.NeedRelogin -> notify("Session expired — scan QR again")
+                            is GatewayClient.SendOutcome.Sent -> notify(Lang.s("t_reply_sent"))
+                            is GatewayClient.SendOutcome.Queued -> notify(Lang.s("t_reply_queued"))
+                            is GatewayClient.SendOutcome.NeedRelogin -> notify(Lang.s("t_session_expired"))
                         }
                     }
                 },
@@ -1365,7 +1375,7 @@ fun GatewayApp() {
             onDownload = {
                 scope.launch {
                     val bytes = GatewayClient.dpBytes(jid)
-                    if (bytes == null) notify("no profile photo to download")
+                    if (bytes == null) notify(Lang.s("t_no_dp"))
                     else {
                         val ok = MediaSaver.save(ctx, bytes, "dp_" + jid.substringBefore("@").filter { it.isDigit() } + ".jpg", "image")
                         notify(if (ok) "photo saved to $APP_NAME folder" else "save failed")
@@ -1521,12 +1531,12 @@ fun GatewayApp() {
                             if (!isBlocked) DropdownMenuItem(text = { Text(Lang.s("block_contact")) }, onClick = {
                                 menu = false
                                 val c = openChat
-                                if (c != null) scope.launch { runCatching { GatewayClient.blockChat(c, true) }.onSuccess { notify("blocked"); blockedJids = blockedJids + c; blkPrefs.edit().putStringSet("blocked", blockedJids).apply() }.onFailure { notify("failed: ${it.message}") } }
+                                if (c != null) scope.launch { runCatching { GatewayClient.blockChat(c, true) }.onSuccess { notify(Lang.s("t_blocked")); blockedJids = blockedJids + c; blkPrefs.edit().putStringSet("blocked", blockedJids).apply() }.onFailure { notify("failed: ${it.message}") } }
                             })
                             if (isBlocked) DropdownMenuItem(text = { Text(Lang.s("unblock_contact")) }, onClick = {
                                 menu = false
                                 val c = openChat
-                                if (c != null) scope.launch { runCatching { GatewayClient.blockChat(c, false) }.onSuccess { notify("unblocked"); blockedJids = blockedJids - c; blkPrefs.edit().putStringSet("blocked", blockedJids).apply() }.onFailure { notify("failed: ${it.message}") } }
+                                if (c != null) scope.launch { runCatching { GatewayClient.blockChat(c, false) }.onSuccess { notify(Lang.s("t_unblocked")); blockedJids = blockedJids - c; blkPrefs.edit().putStringSet("blocked", blockedJids).apply() }.onFailure { notify("failed: ${it.message}") } }
                             })
                         }
                     }
@@ -1565,14 +1575,14 @@ fun GatewayApp() {
                         if (mjid != null) scope.launch {
                             try {
                                 val mbytes = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(muri)?.use { it.readBytes() } }
-                                if (mbytes == null) { notify("can't read file"); return@launch }
+                                if (mbytes == null) { notify(Lang.s("t_cant_read")); return@launch }
                                 // S4: show uploading progress in chat (WhatsApp-style).
                                 val up = UploadingMedia(mjid, muri, mtypeSend)
                                 uploading.add(up)
                                 try {
                                     // images/videos go as real inline media (original bytes, no re-compression = high quality by default); other files as documents
                                     GatewayClient.sendMedia(mjid, Base64.encodeToString(mbytes, Base64.NO_WRAP), mtypeSend, queryName(ctx, muri) ?: "file", mcap)
-                                    notify("sent")
+                                    notify(Lang.s("t_sent"))
                                 } finally {
                                     uploading.remove(up)
                                 }
@@ -1587,9 +1597,9 @@ fun GatewayApp() {
                         // 2) gateway makes the voice + sends ONLY the voice note
                         scope.launch {
                             try {
-                                notify("Voice bana raha hai...")
+                                notify(Lang.s("t_voice_making"))
                                 GatewayClient.sendVoice(ocChat, speakText)
-                                notify("Voice bheja gaya")
+                                notify(Lang.s("t_voice_sent"))
                             } catch (e: Exception) { notify("VV error: " + e.message) }
                         }
                     } else {
@@ -1618,11 +1628,11 @@ fun GatewayApp() {
                                 // Keep the message visible but marked
                                 // queued — never fake it as sent.
                                 optimistic.add(OptMsg(ocChat, text, ts, queued = true))
-                                notify("Connecting… message queued — will send when reconnected")
+                                notify(Lang.s("t_msg_queued"))
                             }
                             is GatewayClient.SendOutcome.NeedRelogin -> {
                                 optimistic.remove(opt)
-                                notify("Session expired — scan QR again")
+                                notify(Lang.s("t_session_expired"))
                             }
                         }
                     }
@@ -1632,7 +1642,11 @@ fun GatewayApp() {
                 onShare = { shareMedia(scope, ctx, it) { s -> notify(s) } },
                 onDownload = { downloadMedia(scope, ctx, it) { s -> notify(s) } },
                 onReact = { m, e -> scope.launch { m.id?.let { GatewayClient.react(m.chat, it, e, m.fromMe) } } },
-                onDeleteMsg = { m, everyone -> scope.launch { GatewayClient.deleteMessage(m.chat, m.id, m.text, m.ts, everyone, m.fromMe); messages = GatewayClient.getMessages() } },
+                onDeleteMsg = { m, everyone ->
+                    // U3: delete-for-me leaves a "This message was deleted" placeholder (gateway drops it entirely).
+                    if (!everyone && m.id != null) DeletedMsgs.markDeleted(ctx, m.chat, m.id, m.fromMe, m.ts)
+                    scope.launch { GatewayClient.deleteMessage(m.chat, m.id, m.text, m.ts, everyone, m.fromMe); messages = GatewayClient.getMessages() }
+                },
                 onAttach = { picker.launch("*/*") },
                 onPickChatPhoto = { photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                 onPickChatVideo = { videoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)) },
@@ -1653,25 +1667,25 @@ fun GatewayApp() {
                                 optimistic.remove(opt)
                                 SendQueue.enqueue(ctx, ocChat, text, qid, mid)
                                 optimistic.add(OptMsg(ocChat, text, ts, qtext, queued = true))
-                                notify("Connecting… message queued — will send when reconnected")
+                                notify(Lang.s("t_msg_queued"))
                             }
                             is GatewayClient.SendOutcome.NeedRelogin -> {
                                 optimistic.remove(opt)
-                                notify("Session expired — scan QR again")
+                                notify(Lang.s("t_session_expired"))
                             }
                         }
                     }
                 },
                 onEditMsg = { m, txt ->
                     val mid = m.id
-                    if (mid == null) notify("can't edit this message")
+                    if (mid == null) notify(Lang.s("t_cant_edit"))
                     else scope.launch {
                         runCatching { GatewayClient.editMessage(m.chat, mid, txt) }
-                            .onSuccess { r -> if (r.optBoolean("ok", false)) { notify("edited"); messages = GatewayClient.getMessages() } else notify("edit failed: " + r.optString("error", "too old?")) }
+                            .onSuccess { r -> if (r.optBoolean("ok", false)) { notify(Lang.s("edited")); messages = GatewayClient.getMessages() } else notify("edit failed: " + r.optString("error", "too old?")) }
                             .onFailure { notify("edit error: ${it.message}") }
                     }
                 },
-                onForward = { m -> if (m.id == null) notify("can't forward this") else forwardMsg = m },
+                onForward = { m -> if (m.id == null) notify(Lang.s("t_cant_forward")) else forwardMsg = m },
                 onAvatarClick = { jid -> dpView = jid },
                 previewCache = previewCache,
                 dpCache = dpCache,
@@ -1682,6 +1696,12 @@ fun GatewayApp() {
                     delivered.forEach { q -> optimistic.removeAll { it.chat == q.jid && it.text == q.text && it.ts == q.ts } }
                     notify(if (delivered.isNotEmpty()) "${delivered.size} queued message(s) sent" else "Still connecting… will retry automatically")
                 } },
+                // U2: selection state lives in the parent so the glass header renders selection mode.
+                selMode = chatSelMode,
+                onSelModeChange = { chatSelMode = it },
+                selIds = chatSelIds,
+                onExitSel = { exitChatSel() },
+                onSelectionActions = { selActions = it },
             )
             }
             val ocBlocked = ocChat in blockedJids
@@ -1694,9 +1714,14 @@ fun GatewayApp() {
                 onBack = { markChatRead(ocChat); openChat = null },
                 onEdit = { showSetName = true },
                 onWallpaper = { chatWallpaperPicker.launch("image/*") },
-                onBlock = { scope.launch { runCatching { GatewayClient.blockChat(ocChat, true) }.onSuccess { notify("blocked"); blockedJids = blockedJids + ocChat; blkPrefs.edit().putStringSet("blocked", blockedJids).apply() }.onFailure { notify("failed: ${it.message}") } } },
-                onUnblock = { scope.launch { runCatching { GatewayClient.blockChat(ocChat, false) }.onSuccess { notify("unblocked"); blockedJids = blockedJids - ocChat; blkPrefs.edit().putStringSet("blocked", blockedJids).apply() }.onFailure { notify("failed: ${it.message}") } } },
-                onAvatarClick = { dpView = ocChat }
+                onBlock = { scope.launch { runCatching { GatewayClient.blockChat(ocChat, true) }.onSuccess { notify(Lang.s("t_blocked")); blockedJids = blockedJids + ocChat; blkPrefs.edit().putStringSet("blocked", blockedJids).apply() }.onFailure { notify("failed: ${it.message}") } } },
+                onUnblock = { scope.launch { runCatching { GatewayClient.blockChat(ocChat, false) }.onSuccess { notify(Lang.s("t_unblocked")); blockedJids = blockedJids - ocChat; blkPrefs.edit().putStringSet("blocked", blockedJids).apply() }.onFailure { notify("failed: ${it.message}") } } },
+                onAvatarClick = { dpView = ocChat },
+                // U2: selection mode renders inside the header (3-dot replaced by delete + select-all).
+                selCount = if (chatSelMode) chatSelIds.size else 0,
+                onExitSel = { exitChatSel() },
+                onDeleteSel = { selActions?.deleteSelected() },
+                onSelectAll = { selActions?.selectAll() },
             )
         } else {
         Box(Modifier.fillMaxSize().consumeWindowInsets(pad)) {
@@ -1710,22 +1735,22 @@ fun GatewayApp() {
                 // AyX Group system channel — independent of WhatsApp link state.
                 !status.registered -> Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode,
                     onPair = { n -> scope.launch { try { notify("code: " + GatewayClient.pair(n)) } catch (e: Exception) { notify("pair error: ${e.message}") } } },
-                    onReset = { scope.launch { GatewayClient.logout(); SessionBackup.delete(ctx); notify("reset") } }) }
+                    onReset = { scope.launch { GatewayClient.logout(); SessionBackup.delete(ctx); notify(Lang.s("t_reset")) } }) }
                 screen == "settings" -> Box(Modifier.padding(pad)) { SettingsScreen(status, settings, page = settingsPage, onPage = { settingsPage = it }, wallpaperVersion = wallpaperVersion,
                     onToggle = { patch -> scope.launch { settings = GatewayClient.patchSettings(patch) } },
                     onRules = { r -> scope.launch { settings = GatewayClient.setRules(r) } },
-                    onLogout = { scope.launch { GatewayClient.logout(); SessionBackup.delete(ctx); notify("logged out") } }, ctx = ctx,
+                    onLogout = { scope.launch { GatewayClient.logout(); SessionBackup.delete(ctx); notify(Lang.s("t_logged_out")) } }, ctx = ctx,
                     onPickWallpaper = { wallpaperPicker.launch("image/*") },
-                    onRemoveWallpaper = { File(ctx.filesDir, "wallpaper.jpg").delete(); loadWallpaper(); wallpaperVersion++; notify("wallpaper removed") },
+                    onRemoveWallpaper = { File(ctx.filesDir, "wallpaper.jpg").delete(); loadWallpaper(); wallpaperVersion++; notify(Lang.s("t_wp_removed")) },
                     onPickPhoto = { profilePicPicker.launch("image/*") },
-                    onSaveName = { n -> scope.launch { runCatching { GatewayClient.setProfileName(n) }.onSuccess { notify("name updated") }.onFailure { notify("name: ${it.message}") } } },
+                    onSaveName = { n -> scope.launch { runCatching { GatewayClient.setProfileName(n) }.onSuccess { notify(Lang.s("t_name_updated")) }.onFailure { notify("name: ${it.message}") } } },
                     dpCache = dpCache,
                     messages = messages) }
                 screen == "newchat" -> Box(Modifier.padding(pad)) { NewChatScreen(deviceContacts, contactsLoading, dpCache,
                     onPickNumber = { num -> openChat = num + "@s.whatsapp.net"; screen = "chats" }) }
                 screen == "profile" -> Box(Modifier.padding(pad)) { ProfileScreen(myJid, dpCache,
                     onPickPhoto = { profilePicPicker.launch("image/*") },
-                    onSaveName = { n -> scope.launch { runCatching { GatewayClient.setProfileName(n) }.onSuccess { notify("name updated") }.onFailure { notify("name: ${it.message}") } } }) }
+                    onSaveName = { n -> scope.launch { runCatching { GatewayClient.setProfileName(n) }.onSuccess { notify(Lang.s("t_name_updated")) }.onFailure { notify("name: ${it.message}") } } }) }
                 else -> ChatsWithStatus(messages, chats, statuses, dpCache, searchQuery, chatsPage, topInset = pad.calculateTopPadding(),
                     ayxSnippet = ayxSnippet,
                     onPageChange = { chatsPage = it },
@@ -1816,10 +1841,10 @@ fun GatewayApp() {
                                 modifier = Modifier.fillMaxWidth())
                         }
                     },
-                    confirmButton = { TextButton(onClick = { if (isGroupName) GroupNameStore.setAlias(jidForName, nameInput) else SetName.set(jidForName, nameInput); showSetName = false; notify("name saved") }, enabled = nameInput.isNotBlank() && nameInput != saved) { Text(Lang.s("save"), color = AYX_GREEN) } },
+                    confirmButton = { TextButton(onClick = { if (isGroupName) GroupNameStore.setAlias(jidForName, nameInput) else SetName.set(jidForName, nameInput); showSetName = false; notify(Lang.s("t_name_saved")) }, enabled = nameInput.isNotBlank() && nameInput != saved) { Text(Lang.s("save"), color = AYX_GREEN) } },
                     dismissButton = {
                         Row {
-                            if (saved.isNotEmpty()) TextButton(onClick = { if (isGroupName) GroupNameStore.clearAlias(jidForName) else SetName.clear(jidForName); showSetName = false; notify("name removed") }) { Text(Lang.s("remove"), color = AYX_RED) }
+                            if (saved.isNotEmpty()) TextButton(onClick = { if (isGroupName) GroupNameStore.clearAlias(jidForName) else SetName.clear(jidForName); showSetName = false; notify(Lang.s("t_name_removed")) }) { Text(Lang.s("remove"), color = AYX_RED) }
                             TextButton(onClick = { showSetName = false }) { Text(Lang.s("cancel")) }
                         }
                     }
@@ -1834,7 +1859,7 @@ fun GatewayApp() {
                         val mid = fm.id
                         forwardMsg = null
                         if (mid != null && targets.isNotEmpty()) {
-                            notify("forwarding…")
+                            notify(Lang.s("t_forwarding"))
                             scope.launch {
                                 runCatching { GatewayClient.forward(mid, targets) }
                                     .onSuccess { r ->
@@ -1856,7 +1881,7 @@ fun GatewayApp() {
                     onForward = { targets ->
                         forwardStatusId = null
                         if (targets.isNotEmpty()) {
-                            notify("forwarding…")
+                            notify(Lang.s("t_forwarding"))
                             scope.launch {
                                 runCatching { GatewayClient.forward(sid, targets) }
                                     .onSuccess { r ->
@@ -1867,7 +1892,7 @@ fun GatewayApp() {
                             }
                         }
                     },
-                    title = "Forward status to",
+                    title = Lang.s("fwd_status_to"),
                     action = "Forward"
                 )
             }
@@ -2243,6 +2268,9 @@ private fun MuteTimerDialog(onDismiss: () -> Unit, onPick: (Long) -> Unit) {
     }
 }
 
+/** U2: actions ChatDetail hands up so the glass header can drive selection mode. */
+private data class SelActions(val selectAll: () -> Unit, val deleteSelected: () -> Unit)
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChatDetail(
@@ -2273,6 +2301,12 @@ private fun ChatDetail(
     /** Queued (not yet sent) messages in this chat — shown as a banner, never faked as sent. */
     queuedCount: Int = 0,
     onRetryQueued: () -> Unit = {},
+    /** U2: selection state is hoisted to the parent so ChatGlassHeader renders it. */
+    selMode: Boolean,
+    onSelModeChange: (Boolean) -> Unit,
+    selIds: SnapshotStateList<String>,
+    onExitSel: () -> Unit,
+    onSelectionActions: (SelActions) -> Unit = {},
 ) {
     val clipboard = LocalClipboardManager.current
     val ctx = LocalContext.current
@@ -2285,10 +2319,8 @@ private fun ChatDetail(
     var reactMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
     var editMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
     var infoMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
-    // multi-select state: long-press → "Select" enters a mode where tapping bubbles toggles them
-    var selMode by remember { mutableStateOf(false) }
-    val selIds = remember { mutableStateListOf<String>() }
-    fun exitSel() { selMode = false; selIds.clear() }
+    // multi-select state: long-press → "Select" enters a mode where tapping bubbles toggles them.
+    // U2: selMode/selIds are hoisted (parent params) so the glass header renders selection mode.
     // blur the chat behind the long-press action sheet (iOS/WhatsApp context-menu style)
     val menuBlur by animateDpAsState(if (reactMsg != null) 18.dp else 0.dp, label = "msgblur")
     // message translation (double-tap). Ask the target language once, then translate directly.
@@ -2326,7 +2358,7 @@ private fun ChatDetail(
             onReply = { replyTo = rm; reactMsg = null },
             onForward = { onForward(rm); reactMsg = null },
             onCopy = { clipboard.setText(AnnotatedString(rm.text)); reactMsg = null },
-            onSelect = { selMode = true; rm.id?.let { if (it !in selIds) selIds.add(it) }; reactMsg = null },
+            onSelect = { onSelModeChange(true); rm.id?.let { if (it !in selIds) selIds.add(it) }; reactMsg = null },
             onDeleteEveryone = { onDeleteMsg(rm, true); reactMsg = null },
             onDeleteMe = { onDeleteMsg(rm, false); reactMsg = null },
         )
@@ -2364,7 +2396,15 @@ private fun ChatDetail(
     // ONE optimistic, so sending the same text twice keeps both bubbles.
     // Without this, a late echo (or a flushed queued send) showed the
     // same text twice, stacked/overlapping with the optimistic bubble.
-    val rows = remember(serverMsgs, optimistic) {
+    // U3: deleted-for-me tombstones — the gateway REMOVES these from its store,
+    // so re-inject a placeholder bubble ("This message was deleted") at its position.
+    val tombstones = remember(chat, serverMsgs) {
+        val liveIds = serverMsgs.mapNotNull { it.id }.toSet()
+        DeletedMsgs.getForChat(ctx, chat)
+            .filter { it.id !in liveIds }
+            .map { GatewayClient.Msg(chat, "", it.fromMe, "", it.ts, id = it.id, deleted = true) }
+    }
+    val rows = remember(serverMsgs, optimistic, tombstones) {
         val echoes = serverMsgs.filter { it.fromMe }.toMutableList()
         val liveOptimistic = optimistic.filterNot { opt ->
             val idx = echoes.indexOfFirst { e ->
@@ -2372,7 +2412,17 @@ private fun ChatDetail(
             }
             if (idx >= 0) { echoes.removeAt(idx); true } else false
         }
-        (serverMsgs + liveOptimistic.map { GatewayClient.Msg(chat, "", true, it.text, it.ts, quotedText = it.quotedText) }).sortedByDescending { it.ts }
+        (serverMsgs + tombstones + liveOptimistic.map { GatewayClient.Msg(chat, "", true, it.text, it.ts, quotedText = it.quotedText) }).sortedByDescending { it.ts }
+    }
+    // U2: hand selection actions up so the glass header drives them.
+    LaunchedEffect(rows) {
+        onSelectionActions(SelActions(
+            selectAll = { selIds.clear(); rows.forEach { it.id?.let { id -> if (id !in selIds) selIds.add(id) } } },
+            deleteSelected = {
+                rows.filter { it.id != null && it.id in selIds }.forEach { onDeleteMsg(it, it.fromMe) }
+                onExitSel()
+            }
+        ))
     }
     // Keyed by chat: an unkeyed list state let one chat's scroll position
     // leak into the next chat opened in the same composition.
@@ -2459,7 +2509,7 @@ private fun ChatDetail(
                     MessageBubble(m, previewCache, dpCache, onMedia, onShare, onDownload,
                         onReply = { replyTo = it }, onAvatarClick = onAvatarClick,
                         selMode = selMode, selected = m.id != null && m.id in selIds,
-                        onToggleSelect = { mm -> mm.id?.let { if (it in selIds) selIds.remove(it) else selIds.add(it) } },
+                        onToggleSelect = { mm -> mm.id?.let { if (it in selIds) selIds.remove(it) else selIds.add(it); if (selIds.isEmpty()) onExitSel() } },
                         onTranslate = { onTranslateMsg(it) },
                         onLongClick = { reactMsg = it })
                 }
@@ -2471,7 +2521,7 @@ private fun ChatDetail(
                 Box(Modifier.width(3.dp).height(34.dp).background(IOS_BLUE, uiShapeFor(2)))
                 Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(if (rt.fromMe) "You" else rt.name.ifBlank { "Reply" }, style = MaterialTheme.typography.labelMedium, color = IOS_BLUE, maxLines = 1)
+                    Text(if (rt.fromMe) Lang.s("you_str") else rt.name.ifBlank { Lang.s("reply_str") }, style = MaterialTheme.typography.labelMedium, color = IOS_BLUE, maxLines = 1)
                     Text(rt.text.ifBlank { "\uD83D\uDCCE media" }, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 IconButton(onClick = { replyTo = null }) { Icon(Icons.Filled.Close, "cancel reply") }
@@ -2586,19 +2636,6 @@ private fun ChatDetail(
         }
         }
       }
-      // multi-select top bar — appears while selecting messages (tap bubbles to pick), then delete
-      if (selMode) {
-          val selMsgs = rows.filter { it.id != null && it.id in selIds }
-          Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 3.dp, shadowElevation = 6.dp,
-              modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)) {
-              Row(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = 4.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                  IconButton(onClick = { exitSel() }) { Icon(Icons.Filled.Close, "cancel") }
-                  Text("${selIds.size} selected", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                  IconButton(onClick = { selIds.clear(); rows.forEach { it.id?.let { id -> selIds.add(id) } } }) { Icon(Icons.Filled.Checklist, "select all") }
-                  IconButton(onClick = { selMsgs.forEach { onDeleteMsg(it, it.fromMe) }; exitSel() }, enabled = selIds.isNotEmpty()) { Icon(Icons.Filled.Delete, "delete selected", tint = AYX_RED) }
-              }
-          }
-      }
     }
 }
 
@@ -2696,7 +2733,7 @@ private fun MessageActionSheet(
                 Spacer(Modifier.height(10.dp))
                 // floating copy of the long-pressed message
                 Surface(color = spec.first, shape = spec.third, shadowElevation = 8.dp, modifier = Modifier.widthIn(max = 300.dp)) {
-                    val preview = when { m.deleted -> "This message was deleted"; m.text.isNotBlank() -> m.text; m.mediaType == "sticker" -> "Sticker"; m.mediaType != null -> "[${m.mediaType}]"; else -> "" }
+                    val preview = when { m.deleted -> Lang.s("msg_deleted_placeholder"); m.text.isNotBlank() -> m.text; m.mediaType == "sticker" -> "Sticker"; m.mediaType != null -> "[${m.mediaType}]"; else -> "" }
                     Text(preview, color = spec.second, style = MaterialTheme.typography.bodyLarge, maxLines = 10, overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
                 }
@@ -2708,15 +2745,15 @@ private fun MessageActionSheet(
                     Column(Modifier.padding(vertical = 6.dp)) {
                         val canEdit = m.fromMe && m.text.isNotBlank() && !m.deleted
                         val canCopy = m.text.isNotBlank() && !m.deleted
-                        if (canEdit) ActionSheetItem(Icons.Filled.Edit, "Edit message", AYX_GREEN, onEdit)
-                        ActionSheetItem(Icons.Filled.Info, "Message info", AYX_GREEN, onInfo)
-                        if (!m.deleted) ActionSheetItem(Icons.AutoMirrored.Filled.Reply, "Reply", AYX_GREEN, onReply)
-                        if (!m.deleted) ActionSheetItem(Icons.AutoMirrored.Filled.ArrowForward, "Forward", AYX_GREEN, onForward)
-                        if (canCopy) ActionSheetItem(Icons.Filled.ContentCopy, "Copy", AYX_GREEN, onCopy)
-                        ActionSheetItem(Icons.Filled.Checklist, "Select", AYX_GREEN, onSelect)
+                        if (canEdit) ActionSheetItem(Icons.Filled.Edit, Lang.s("edit_message"), AYX_GREEN, onEdit)
+                        ActionSheetItem(Icons.Filled.Info, Lang.s("message_info"), AYX_GREEN, onInfo)
+                        if (!m.deleted) ActionSheetItem(Icons.AutoMirrored.Filled.Reply, Lang.s("reply_str"), AYX_GREEN, onReply)
+                        if (!m.deleted) ActionSheetItem(Icons.AutoMirrored.Filled.ArrowForward, Lang.s("forward_str"), AYX_GREEN, onForward)
+                        if (canCopy) ActionSheetItem(Icons.Filled.ContentCopy, Lang.s("copy_str"), AYX_GREEN, onCopy)
+                        ActionSheetItem(Icons.Filled.Checklist, Lang.s("select_str"), AYX_GREEN, onSelect)
                         HorizontalDivider(color = onSurf.copy(alpha = 0.08f))
-                        if (m.fromMe && !m.deleted) ActionSheetItem(Icons.Filled.Delete, "Delete for everyone", AYX_RED, onDeleteEveryone, destructive = true)
-                        ActionSheetItem(Icons.Filled.DeleteOutline, "Delete for me", AYX_RED, onDeleteMe, destructive = true)
+                        if (m.fromMe && !m.deleted) ActionSheetItem(Icons.Filled.Delete, Lang.s("delete_everyone"), AYX_RED, onDeleteEveryone, destructive = true)
+                        ActionSheetItem(Icons.Filled.DeleteOutline, Lang.s("delete_for_me"), AYX_RED, onDeleteMe, destructive = true)
                     }
                 }
             }
@@ -2816,6 +2853,11 @@ private fun ChatGlassHeader(
     onBlock: () -> Unit,
     onUnblock: () -> Unit,
     onAvatarClick: () -> Unit,
+    /** U2: >0 while messages are selected — the 3-dot menu is REPLACED by delete + select-all. */
+    selCount: Int = 0,
+    onExitSel: () -> Unit = {},
+    onDeleteSel: () -> Unit = {},
+    onSelectAll: () -> Unit = {},
 ) {
     val dark = isSystemInDarkTheme()
     val frost = ChatStyle.headerAlpha()                       // 1f = solid, lower = more see-through
@@ -2825,10 +2867,19 @@ private fun ChatGlassHeader(
     val pillShape = uiShapeFor(24)
     var menu by remember { mutableStateOf(false) }
 
-    // ONE floating frosted card: back + avatar + name/presence + edit + menu (original WhatsApp layout, no separate arrow chip)
+    // ONE floating frosted card: back + avatar + name/presence + edit + menu (original WhatsApp layout, no separate arrow chip).
+    // U2: in selection mode the header itself becomes the selection bar — close + count + select-all + delete
+    // (the 3-dot menu is hidden until selection is cleared). Same pill, so nothing renders behind/overlaps.
     Box(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 6.dp)) {
         Box(Modifier.fillMaxWidth().clip(pillShape).background(pill).border(1.dp, borderCol, pillShape)) {
             Row(Modifier.padding(start = 2.dp, end = 2.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (selCount > 0) {
+                    IconButton(onClick = onExitSel) { Icon(Icons.Filled.Close, Lang.s("cancel"), tint = onPill) }
+                    Text(Lang.f("n_selected", selCount), maxLines = 1, fontWeight = FontWeight.Bold, color = onPill,
+                        style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f).padding(start = 4.dp))
+                    IconButton(onClick = onSelectAll) { Icon(Icons.Filled.Checklist, Lang.s("select_all"), tint = onPill) }
+                    IconButton(onClick = onDeleteSel) { Icon(Icons.Filled.Delete, Lang.s("delete"), tint = AYX_RED) }
+                } else {
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "back", tint = onPill) }
                 Box(Modifier.clip(CircleShape).clickable { onAvatarClick() }) { Avatar(jid, name, dpCache, 38.dp, CircleShape) }
                 Spacer(Modifier.width(10.dp))
@@ -2846,6 +2897,7 @@ private fun ChatGlassHeader(
                         if (!isBlocked) DropdownMenuItem(text = { Text(Lang.s("block_contact")) }, onClick = { menu = false; onBlock() })
                         else DropdownMenuItem(text = { Text(Lang.s("unblock_contact")) }, onClick = { menu = false; onUnblock() })
                     }
+                }
                 }
             }
         }
@@ -3048,6 +3100,15 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                         if (m.mediaName != null) AudioPlayer(GatewayClient.mediaUrl(m.mediaName!!), textColor)
                         else Text(Lang.s("voice_message_save_media"), color = textColor, style = MaterialTheme.typography.bodySmall)
                     }
+                    // U3: deleted placeholder — WhatsApp style italic gray with blocked icon.
+                    if (m.deleted) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
+                            Icon(Icons.Filled.Block, null, modifier = Modifier.size(16.dp), tint = textColor.copy(alpha = 0.55f))
+                            Spacer(Modifier.width(6.dp))
+                            Text(Lang.s("msg_deleted_placeholder"), color = textColor.copy(alpha = 0.6f),
+                                style = MaterialTheme.typography.bodyMedium, fontStyle = FontStyle.Italic)
+                        }
+                    }
                     // WhatsApp style: time + ticks inline at the bottom-right of the message text.
                     if (m.text.isNotBlank()) {
                         Row(verticalAlignment = Alignment.Bottom) {
@@ -3076,12 +3137,11 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                             Text(m.reaction, modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp))
                         }
                     }
-                    // Footer: edited/deleted markers + media actions (time+ticks now live inline, WhatsApp style).
-                    val showFooter = (m.edited && !m.deleted) || m.deleted || m.mediaName != null
+                    // Footer: edited marker + media actions (deleted bubbles show the placeholder above, no footer).
+                    val showFooter = (m.edited || m.mediaName != null) && !m.deleted
                     if (showFooter) Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        if (m.edited && !m.deleted) Text(Lang.s("edited"), style = MaterialTheme.typography.labelSmall, fontStyle = FontStyle.Italic,
+                        if (m.edited) Text(Lang.s("edited"), style = MaterialTheme.typography.labelSmall, fontStyle = FontStyle.Italic,
                             color = if (m.fromMe) Color.White.copy(alpha = 0.6f) else textColor.copy(alpha = 0.55f))
-                        if (m.deleted) Text(Lang.s("deleted"), color = Color(0xFFFF4D4D), style = MaterialTheme.typography.labelSmall, fontStyle = FontStyle.Italic)
                         if (m.mediaName != null) {
                             IconButton(onClick = { onDownload(m) }, modifier = Modifier.size(22.dp)) {
                                 Icon(Icons.Filled.Download, "download", modifier = Modifier.size(15.dp), tint = if (m.fromMe) Color.White else textColor)
@@ -3099,9 +3159,9 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
 
 // sub-page title shown in the top app bar (single source of the back arrow)
 private fun settingsTitle(page: String): String = when (page) {
-    "general" -> "General"; "autoreply" -> "Auto-reply"; "ai" -> "AI Assistant"; "chat" -> "Chat Settings"
-    "imageai" -> "Image AI"; "aimemory" -> "AI Memory"; "voice" -> "AI Voice"; "font" -> "App Font"; "emoji" -> "Emoji"
-    "wallpaper" -> "Chat Wallpaper"; "appearance" -> Lang.s("appearance_title"); "applanguage" -> Lang.s("app_language"); "about" -> "About"; "support" -> "Support Development"; else -> Lang.s("settings_title")
+    "general" -> Lang.s("general"); "autoreply" -> Lang.s("auto_reply"); "ai" -> Lang.s("ai_assistant"); "chat" -> Lang.s("chat_settings")
+    "imageai" -> Lang.s("image_ai"); "aimemory" -> Lang.s("aimem_title"); "voice" -> Lang.s("ai_voice"); "font" -> Lang.s("app_font"); "emoji" -> Lang.s("emoji_title")
+    "wallpaper" -> Lang.s("chat_wallpaper"); "appearance" -> Lang.s("appearance_title"); "applanguage" -> Lang.s("app_language"); "about" -> Lang.s("about"); "support" -> Lang.s("support_dev"); else -> Lang.s("settings_title")
 }
 // parent page for nested back (Wallpaper under Chat Settings; Image AI / AI Memory / Voice under AI Assistant; Font under General)
 private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "general"; "emoji" -> "general"; else -> "home" }
@@ -3259,14 +3319,14 @@ private fun FontSettings(ctx: Context) {
             else Toast.makeText(ctx, Lang.s("toast_font_failed"), Toast.LENGTH_SHORT).show()
         }
     }
-    SettingsGroup("Preview") {
+    SettingsGroup(Lang.s("sg_preview")) {
         Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
             Text("The quick brown fox 123 😀🎉❤️", fontFamily = FontStore.family(ctx, current), style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(4.dp))
             Text(Lang.s("tap_font_applies"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
-    SettingsGroup("App font") {
+    SettingsGroup(Lang.s("app_font")) {
         FontStore.fonts.keys.forEach { name ->
             val fam = FontStore.family(ctx, name)
             Row(Modifier.fillMaxWidth().clip(uiShapeFor(12)).clickable { FontStore.chooseFont(name); current = name }.padding(horizontal = 6.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -3285,14 +3345,14 @@ private fun FontSettings(ctx: Context) {
 @Composable
 private fun EmojiSettings(ctx: Context) {
     val scope = rememberCoroutineScope()
-    SettingsGroup("Preview") {
+    SettingsGroup(Lang.s("sg_preview")) {
         Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
             Text("😀 😂 ❤️ 👍 🙏 🎉 🔥 ✨ 😎 🥳", style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(4.dp))
             Text(Lang.s("pick_style_downloads"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
-    SettingsGroup("Emoji style") {
+    SettingsGroup(Lang.s("sg_emoji_style")) {
         EmojiStylePicker(ctx, scope)
     }
 }
@@ -3355,23 +3415,23 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
     val mediaSize = remember(refreshTick) { AppStorage.mediaSize(ctx) }
     val cacheSize = remember(refreshTick) { AppStorage.cacheSize(ctx) }
 
-    SettingsGroup("Online & Privacy") {
+    SettingsGroup(Lang.s("sg_online_privacy")) {
         SettingRow(Icons.Filled.Bolt, CAT_GENERAL, "Always online", "Keep showing online", settings.alwaysOnline) { onToggle(JSONObject().put("alwaysOnline", it)) }
         SettingRow(Icons.Filled.CloudOff, Color(0xFFFF7EB6), "Freeze last seen", "Never broadcast online (overrides Always online)", settings.stayOffline) { onToggle(JSONObject().put("stayOffline", it)) }
         SettingRow(Icons.Filled.Bolt, Color(0xFF4DD0C4), "Human-like presence", "For each AI reply: read it, come online + type, reply, then go back offline", settings.aiPresenceFlow) { onToggle(JSONObject().put("aiPresenceFlow", it)) }
         SettingRow(Icons.Filled.RemoveRedEye, Color(0xFF82AAFF), "Hide status view", "Don't show senders you saw their status", settings.hideStatusRead) { onToggle(JSONObject().put("hideStatusRead", it)) }
     }
-    SettingsGroup("Messages & Media") {
+    SettingsGroup(Lang.s("sg_messages_media")) {
         SettingRow(Icons.Filled.DoneAll, CAT_WALLPAPER, "Auto-read messages", "Mark incoming chats as read", settings.autoRead) { onToggle(JSONObject().put("autoRead", it)) }
         SettingRow(Icons.Filled.PermMedia, CAT_AUTOREPLY, "Save media", "Download incoming photos/videos (needed for view, deleted media)", settings.saveMedia) { onToggle(JSONObject().put("saveMedia", it)) }
         SettingRow(Icons.AutoMirrored.Filled.ArrowForward, CAT_AI, "Forwarded tag", "Show the \"Forwarded\" label on forwarded messages", ChatStyle.showForwardTag.value) { ChatStyle.setShowForwardTag(it) }
     }
-    SettingsGroup("Appearance") {
-        ActionRow(Icons.Filled.TextFields, CAT_GENERAL, "App font", "Current: ${FontStore.appFont}  ·  preview, pick or upload .ttf/.otf") { onOpenFont() }
+    SettingsGroup(Lang.s("appearance_title")) {
+        ActionRow(Icons.Filled.TextFields, CAT_GENERAL, Lang.s("app_font"), "Current: ${FontStore.appFont}  ·  preview, pick or upload .ttf/.otf") { onOpenFont() }
         ActionRow(Icons.Filled.EmojiEmotions, CAT_GENERAL, "Emoji", "Current: ${EmojiStore.selected}  ·  download & apply emoji style") { onOpenEmoji() }
     }
 
-    SettingsGroup("Message translation") {
+    SettingsGroup(Lang.s("sg_msg_translation")) {
         Text(Lang.s("double_tap_translate"),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 4.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -3388,7 +3448,7 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
         }
     }
 
-    SettingsGroup("Background & battery") {
+    SettingsGroup(Lang.s("sg_bg_battery")) {
         SettingRow(Icons.Filled.CloudOff, CAT_AI, "Run in background", "Keeps a silent notification so messages arrive when the app is closed. Turn OFF to remove the notification (messages then arrive only while the app is open).", ChatStyle.runBackground.value) { ChatStyle.setRunBackground(it) }
         ActionRow(Icons.Filled.Bolt, WARN_AMBER, "Allow battery (no optimization)", "Keep the gateway alive in the background") {
             runCatching {
@@ -3402,25 +3462,25 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
             }
         }
     }
-    SettingsGroup("Storage & data") {
+    SettingsGroup(Lang.s("sg_storage_data")) {
         StorageRow(Icons.Filled.PermMedia, CAT_AUTOREPLY, "Downloaded media", AppStorage.fmtSize(mediaSize), enabled = !busy) {
             busy = true
             scope.launch {
                 runCatching { GatewayClient.clearCache() }
                 AppStorage.clearCacheLocal(ctx); refreshTick++; busy = false
-                Toast.makeText(ctx, "Media cache cleared", Toast.LENGTH_SHORT).show()
+                Toast.makeText(ctx, Lang.s("t_media_cache_cleared"), Toast.LENGTH_SHORT).show()
             }
         }
         StorageRow(Icons.Filled.Storage, CAT_AI, "Cache", AppStorage.fmtSize(cacheSize), enabled = !busy) {
             AppStorage.clearCacheLocal(ctx); refreshTick++
-            Toast.makeText(ctx, "Cache cleared", Toast.LENGTH_SHORT).show()
+            Toast.makeText(ctx, Lang.s("t_cache_cleared"), Toast.LENGTH_SHORT).show()
         }
         ActionRow(Icons.Filled.DeleteSweep, OK_GREEN, "Clear cache", "Free space — keeps chats, settings and your login") {
             busy = true
             scope.launch {
                 runCatching { GatewayClient.clearCache() }
                 AppStorage.clearCacheLocal(ctx); refreshTick++; busy = false
-                Toast.makeText(ctx, "Cache cleared", Toast.LENGTH_SHORT).show()
+                Toast.makeText(ctx, Lang.s("t_cache_cleared"), Toast.LENGTH_SHORT).show()
             }
         }
         ActionRow(Icons.Filled.Delete, ERR_RED, "Clear app data", "Removes everything local — you'll need to link again") { confirmClearData = true }
@@ -3443,7 +3503,7 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
                     scope.launch {
                         runCatching { GatewayClient.clearData() }
                         AppStorage.clearDataLocal(ctx)
-                        Toast.makeText(ctx, "Data cleared — restarting", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(ctx, Lang.s("t_data_cleared"), Toast.LENGTH_SHORT).show()
                         delay(700)
                         val i = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)
                         i?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
@@ -3499,7 +3559,7 @@ private fun AutoReplySection(settings: GatewayClient.Settings, onToggle: (JSONOb
     var match by remember { mutableStateOf("") }
     var reply by remember { mutableStateOf("") }
     var mode by remember { mutableStateOf("contains") }
-    SettingsGroup("Automatic replies") {
+    SettingsGroup(Lang.s("sg_auto_replies")) {
         SettingRow(Icons.Filled.QuestionAnswer, CAT_AUTOREPLY, "Auto-reply enabled", "Reply automatically to incoming messages", settings.autoReplyEnabled) { onToggle(JSONObject().put("autoReplyEnabled", it)) }
     }
     Text(Lang.s("rules"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
@@ -3549,16 +3609,16 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
     Text("Powered by Groq AI", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
 
     // MAIN box — the three reply types + group
-    SettingsGroup("Replies") {
+    SettingsGroup(Lang.s("sg_replies")) {
         SettingRow(Icons.Filled.AutoAwesome, CAT_AI, "AI reply (master)", "Master switch — OFF stops ALL AI replies (text, image, voice, groups). Keyword rules still work", settings.aiReplyEnabled) { onToggle(JSONObject().put("aiReplyEnabled", it)) }
         SettingRow(Icons.Filled.Image, Color(0xFFFFB26B), "Image reply", "AI looks at incoming images (vision) then swipe-replies", settings.aiReplyImage) { onToggle(JSONObject().put("aiReplyImage", it)) }
         SettingRow(Icons.Filled.QuestionAnswer, Color(0xFFB69DF8), "Group AI reply", "Answer greetings/questions in groups (max 10/day); /ai works anytime", settings.groupAiEnabled) { onToggle(JSONObject().put("groupAiEnabled", it)) }
-        Text("Image replies come as a swipe-left quote on the exact message. Voice note reply is now in \"AI Voice\" settings.",
+        Text(Lang.s("ai_img_reply_desc"),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 2.dp, top = 2.dp, bottom = 6.dp))
     }
 
     // Image AI + AI Memory — each opens its own page
-    SettingsGroup("AI tools") {
+    SettingsGroup(Lang.s("sg_ai_tools")) {
         ActionRow(Icons.Filled.Image, Color(0xFFFFB26B), "Image AI", "Vision provider, auto-fallback, OCR & API keys") { onOpenImageAi() }
         ActionRow(Icons.Filled.Memory, CAT_AI, "AI Memory", "Har contact ki chat history, naam & language") { onOpenMemory() }
     }
@@ -3567,17 +3627,17 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
     ChatForwardSettings(settings, onToggle)
 
     // Custom commands
-    SettingsGroup("Commands") {
+    SettingsGroup(Lang.s("sg_commands")) {
         SettingRow(Icons.Filled.Terminal, Color(0xFFB69DF8), "Enable /create, /prompt & /voice", "/create <text> → image · /prompt on an image → its prompt · /voice <text> → voice note", settings.aiCommandsEnabled) { onToggle(JSONObject().put("aiCommandsEnabled", it)) }
     }
 
     // Reply language — pick ONE language so the AI stops mixing Hindi/Bangla
-    SettingsGroup("Reply language") {
-        Text("Pick one language — the AI replies only in it (stops Hindi/Bangla mixing). \"Auto\" mirrors the sender's language.",
+    SettingsGroup(Lang.s("sg_reply_lang")) {
+        Text(Lang.s("ai_reply_lang_desc"),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 4.dp))
         LanguageSelector(settings.aiLangMode) {
             onToggle(JSONObject().put("aiLangMode", it))
-            Toast.makeText(ctx, "Reply language: " + it, Toast.LENGTH_SHORT).show()
+            Toast.makeText(ctx, Lang.s("reply_lang_set") + it, Toast.LENGTH_SHORT).show()
         }
         if (settings.aiLangMode == "custom") {
             var lang by remember(settings.aiReplyLang) { mutableStateOf(settings.aiReplyLang) }
@@ -3585,13 +3645,13 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
             OutlinedTextField(lang, { lang = it }, placeholder = { Text("e.g. Reply only in Roman Bangla, English letters") },
                 shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                FilledTonalButton(onClick = { onToggle(JSONObject().put("aiReplyLang", lang.trim())); Toast.makeText(ctx, "Language saved", Toast.LENGTH_SHORT).show() }) { Text(Lang.s("save")) }
+                FilledTonalButton(onClick = { onToggle(JSONObject().put("aiReplyLang", lang.trim())); Toast.makeText(ctx, Lang.s("t_lang_saved"), Toast.LENGTH_SHORT).show() }) { Text(Lang.s("save")) }
             }
         }
     }
 
     // Exclude list — chats where NO auto-reply / AI reply is sent ("reply nothing to this person")
-    SettingsGroup("Don't reply to these chats") {
+    SettingsGroup(Lang.s("sg_dont_reply")) {
         if (settings.aiExcludeJids.isEmpty()) {
             Text(Lang.s("add_chats_stop_ai"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 8.dp))
         } else {
@@ -3610,7 +3670,7 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
     if (showExcludePicker) {
         ForwardPicker(messages, dpCache, onDismiss = { showExcludePicker = false },
             onForward = { sel -> setExcludes(settings.aiExcludeJids + sel); showExcludePicker = false },
-            title = "Exclude chats", action = "Exclude")
+            title = Lang.s("ai_exclude_chats"), action = "Exclude")
     }
 
     var url by remember { mutableStateOf(settings.aiApiUrl) }
@@ -3642,12 +3702,12 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
     }
 
     // AI Lyrics — multiple API configs with automatic failover (tried IN ORDER).
-    SettingsGroup("AI Lyrics") {
+    SettingsGroup(Lang.s("sg_ai_lyrics")) {
         AiLyricsSettings(settings, onToggle)
     }
 
     // AI image edit (OpenRouter) — client-side key used by the status editor's AI Edit.
-    SettingsGroup("AI image edit") {
+    SettingsGroup(Lang.s("sg_ai_image_edit")) {
         AiSettingsFields(ctx, dark = false, onSaved = {})
     }
 }
@@ -3678,14 +3738,14 @@ private fun AiLyricsSettings(settings: GatewayClient.Settings, onToggle: (JSONOb
         val arr = org.json.JSONArray()
         list.forEach { arr.put(lyricApiJson(it)) }
         onToggle(JSONObject().put("aiLyricsApis", arr))
-        Toast.makeText(ctx, "AI Lyrics APIs saved", Toast.LENGTH_SHORT).show()
+        Toast.makeText(ctx, Lang.s("ai_lyrics_saved"), Toast.LENGTH_SHORT).show()
     }
 
-    Text("Lyrics translate tries these IN ORDER — if the first fails, the next is tried automatically. Add Groq, OpenRouter and/or Agent Router keys.",
+    Text(Lang.s("ai_lyrics_order"),
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(vertical = 4.dp))
     if (apis.isEmpty()) {
-        Text("No API added yet — translation will ask you to add one.",
+        Text(Lang.s("ai_lyrics_none"),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(vertical = 8.dp))
     } else {
@@ -3747,8 +3807,8 @@ private fun AiLyricApiDialog(prefill: GatewayClient.LyricApi, onDismiss: () -> U
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = uiShapeFor(18), color = Color(0xFF161616)) {
             Column(Modifier.padding(18.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Add AI Lyrics API", color = Color.White, style = MaterialTheme.typography.titleMedium)
-                if (prefill.name == "Agent Router") Text("Agent Router ka OpenAI-compatible chat-completions URL yahan paste karo (uske endpoint ka pata nahi — koi bhi .../chat/completions jaisa URL chalega).",
+                Text(Lang.s("ai_lyrics_add"), color = Color.White, style = MaterialTheme.typography.titleMedium)
+                if (prefill.name == "Agent Router") Text(Lang.s("ai_router_hint"),
                     color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.bodySmall)
                 DarkField("Display name", name, { name = it })
                 DarkField("Base URL (chat completions)", url, { url = it })
@@ -3806,7 +3866,7 @@ private fun ImageAiSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
         onToggle(JSONObject()
             .put("aiVisionModel", vision.trim()).put("aiVisionApiUrl", visionUrl.trim()).put("aiVisionApiKey", visionKey.trim())
             .put("aiVisionModel2", vision2.trim()).put("aiVisionApiUrl2", vision2Url.trim()).put("aiVisionApiKey2", vision2Key.trim()))
-        Toast.makeText(ctx, "Image AI saved", Toast.LENGTH_SHORT).show()
+        Toast.makeText(ctx, Lang.s("imgai_saved"), Toast.LENGTH_SHORT).show()
     }
     StyledSurface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -3814,7 +3874,7 @@ private fun ImageAiSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
                 Text(Lang.s("image_ai"), style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                 FilledTonalButton(onClick = { saveVision() }) { Text(Lang.s("save")) }
             }
-            Text("Images now work without any API key (free). Add your Gemini/OpenRouter key below to use it first; otherwise the free one is used automatically.",
+            Text(Lang.s("imgai_free_desc"),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
             SettingRow(Icons.Filled.Image, Color(0xFF4DD07A), "Free image AI (no key)", "Understands images without an API key — default ON", settings.aiImageFree) { onToggle(JSONObject().put("aiImageFree", it)) }
@@ -3826,7 +3886,7 @@ private fun ImageAiSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
             }, enabled = !testing, modifier = Modifier.fillMaxWidth()) {
                 Text(if (testing) "Testing… (thoda ruk)" else "Test Image AI")
             }
-            Text("Tap Save first, then Test. This shows whether the AI can see the image (and what the error is).",
+            Text(Lang.s("imgai_test_desc"),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
             Text("PROVIDER 1", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
@@ -3834,9 +3894,9 @@ private fun ImageAiSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
             FilledTonalButton(onClick = {
                 visionUrl = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
                 vision = "gemini-flash-latest, gemini-3-flash, gemini-2.5-flash, gemini-2.0-flash"
-                Toast.makeText(ctx, "Gemini filled — paste your key and Save", Toast.LENGTH_LONG).show()
-            }) { Text("Use Gemini (free)") }
-            OutlinedTextField(vision, { vision = it }, label = { Text("Vision model(s) — comma se multiple") }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
+                Toast.makeText(ctx, Lang.s("imgai_gemini_filled"), Toast.LENGTH_LONG).show()
+            }) { Text(Lang.s("imgai_use_gemini")) }
+            OutlinedTextField(vision, { vision = it }, label = { Text(Lang.s("imgai_vision_models")) }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
             OutlinedTextField(visionUrl, { visionUrl = it }, label = { Text("Vision API URL") }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
             OutlinedTextField(visionKey, { visionKey = it }, label = { Text("Vision API key") }, singleLine = true, shape = uiShapeFor(14),
                 visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
@@ -3844,14 +3904,14 @@ private fun ImageAiSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
                 modifier = Modifier.fillMaxWidth())
 
             HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-            Text("PROVIDER 2 — fallback (jab pehla down ho)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            Text(Lang.s("imgai_p2"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
             LinkRow(Icons.Filled.Language, Color(0xFFFFB26B), "Get OpenRouter key", "openrouter.ai → tap to create key") { openUrl(ctx, "https://openrouter.ai/keys") }
             FilledTonalButton(onClick = {
                 vision2Url = "https://openrouter.ai/api/v1/chat/completions"
                 vision2 = "google/gemini-2.0-flash-exp:free, qwen/qwen2.5-vl-72b-instruct:free, meta-llama/llama-3.2-11b-vision-instruct:free"
-                Toast.makeText(ctx, "OpenRouter filled — paste your key and Save", Toast.LENGTH_LONG).show()
-            }) { Text("Use OpenRouter (free)") }
-            OutlinedTextField(vision2, { vision2 = it }, label = { Text("Fallback model(s) — comma se multiple") }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
+                Toast.makeText(ctx, Lang.s("imgai_or_filled"), Toast.LENGTH_LONG).show()
+            }) { Text(Lang.s("imgai_use_or")) }
+            OutlinedTextField(vision2, { vision2 = it }, label = { Text(Lang.s("imgai_fallback_models")) }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
             OutlinedTextField(vision2Url, { vision2Url = it }, label = { Text("Fallback API URL") }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
             OutlinedTextField(vision2Key, { vision2Key = it }, label = { Text("Fallback API key") }, singleLine = true, shape = uiShapeFor(14),
                 visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
@@ -3867,7 +3927,7 @@ private fun ImageAiSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
         AlertDialog(
             onDismissRequest = { testResult = null },
             containerColor = dialogBg(),
-            title = { Text("Image AI test") },
+            title = { Text(Lang.s("imgai_test_t")) },
             text = { Text(testResult ?: "", style = MaterialTheme.typography.bodySmall) },
             confirmButton = { TextButton(onClick = { testResult = null }) { Text(Lang.s("ok")) } }
         )
@@ -3901,7 +3961,7 @@ private fun WallpaperSettings(ctx: Context, version: Int, onPickWallpaper: () ->
 private fun ChatSettings(onOpenWallpaper: () -> Unit) {
     val dark = isSystemInDarkTheme()
 
-    SettingsGroup("Wallpaper") {
+    SettingsGroup(Lang.s("sg_wallpaper")) {
         Row(Modifier.fillMaxWidth().clip(uiShapeFor(14)).clickable { onOpenWallpaper() }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             IconChip(Icons.Filled.Wallpaper, CAT_WALLPAPER)
             Spacer(Modifier.width(14.dp))
@@ -3913,7 +3973,7 @@ private fun ChatSettings(onOpenWallpaper: () -> Unit) {
         }
     }
 
-    SettingsGroup("Bubble style") {
+    SettingsGroup(Lang.s("sg_bubble_style")) {
         // live preview
         Column(Modifier.padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             val inSpec = bubbleSpec(false, dark)
@@ -3937,7 +3997,7 @@ private fun ChatSettings(onOpenWallpaper: () -> Unit) {
         }
     }
 
-    SettingsGroup("Bubble color") {
+    SettingsGroup(Lang.s("sg_bubble_color")) {
         Text(Lang.s("sent_right"), style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 10.dp, start = 2.dp))
         BubbleColorRow(ChatStyle.sentColor.value) { ChatStyle.setSentColor(it) }
         Text(Lang.s("received_left"), style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 6.dp, start = 2.dp))
@@ -3945,7 +4005,7 @@ private fun ChatSettings(onOpenWallpaper: () -> Unit) {
         Spacer(Modifier.height(4.dp))
     }
 
-    SettingsGroup("Chat header blur") {
+    SettingsGroup(Lang.s("sg_chat_header_blur")) {
         Column(Modifier.padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             ChatStyle.blurSteps.chunked(4).forEach { row ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -3956,7 +4016,7 @@ private fun ChatSettings(onOpenWallpaper: () -> Unit) {
                     repeat(4 - row.size) { Spacer(Modifier.weight(1f)) }
                 }
             }
-            Text("Higher = more see-through frosted header over your wallpaper. Applies instantly.",
+            Text(Lang.s("blur_desc"),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
@@ -4027,7 +4087,7 @@ private fun AppearanceSettings() {
     val mode = ThemeStore.mode.value
     val accent = ThemeStore.accent.value
     val modes = listOf(
-        "system" to "System", "light" to "Light", "dark" to "Dark", "amoled" to "AMOLED"
+        "system" to Lang.s("theme_system"), "light" to Lang.s("theme_light"), "dark" to Lang.s("theme_dark"), "amoled" to Lang.s("theme_amoled")
     )
     // Blur / animation settings (moved here from the removed "User Interface" screen).
     val blurEnabled by UiAnimationSettings.materialBlurEnabled
@@ -4037,7 +4097,7 @@ private fun AppearanceSettings() {
     val scrollAnim by UiAnimationSettings.scrollAnimationEnabled
     var showElementsDialog by remember { mutableStateOf(false) }
     var showStyleDialog by remember { mutableStateOf(false) }
-    SettingsGroup("Theme") {
+    SettingsGroup(Lang.s("sg_theme")) {
         Column(Modifier.padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             // 2x2 grid of theme options — cleaner than a cramped chip row.
             for (row in modes.chunked(2)) {
@@ -4067,7 +4127,7 @@ private fun AppearanceSettings() {
             }
         }
     }
-    SettingsGroup("Accent color") {
+    SettingsGroup(Lang.s("sg_accent")) {
         Column(Modifier.padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                 ThemeStore.accents.forEach { (key, color) ->
@@ -4086,12 +4146,12 @@ private fun AppearanceSettings() {
     }
     Text(Lang.s("theme_accent_instant"), style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp, top = 2.dp))
-    SettingsGroup("Blur") {
+    SettingsGroup(Lang.s("sg_blur")) {
         UiToggleRow(
             icon = Icons.Filled.BlurOn,
             tint = Color(0xFF8B7CFF),
-            title = "Material Blur Effects",
-            desc = "Apply a background blur effect to navigation and menus",
+            title = Lang.s("blur_material_t"),
+            desc = Lang.s("blur_material_d"),
             checked = blurEnabled,
             onChange = { UiAnimationSettings.setMaterialBlur(it) },
         )
@@ -4099,18 +4159,18 @@ private fun AppearanceSettings() {
         UiNavRow(
             icon = Icons.Filled.Layers,
             tint = Color(0xFF6EC3E8),
-            title = "Elements to have blur effect",
-            desc = "Choose which UI elements use the blur effect",
-            value = if (blurElements.isEmpty()) "None"
+            title = Lang.s("elements_blur_effect"),
+            desc = Lang.s("blur_elements_d"),
+            value = if (blurElements.isEmpty()) Lang.s("anim_none")
             else blurElements.sortedBy { it.ordinal }.joinToString(", ") { it.label },
             onClick = { showElementsDialog = true },
         )
     }
-    SettingsGroup("Animation") {
+    SettingsGroup(Lang.s("sg_animation")) {
         UiNavRow(
             icon = Icons.Filled.SwapHoriz,
             tint = Color(0xFF4DD0C4),
-            title = "Animation Style",
+            title = Lang.s("animation_style"),
             desc = animStyle.subtitle,
             value = animStyle.label,
             onClick = { showStyleDialog = true },
@@ -4119,8 +4179,8 @@ private fun AppearanceSettings() {
         UiToggleRow(
             icon = Icons.Filled.MotionPhotosOn,
             tint = Color(0xFFE88BD0),
-            title = "Motion Blur in Animation",
-            desc = "Apply dynamic motion blur during zoom page transitions",
+            title = Lang.s("anim_motion_t"),
+            desc = Lang.s("anim_motion_d"),
             checked = motionBlur,
             onChange = { UiAnimationSettings.setMotionBlur(it) },
         )
@@ -4128,8 +4188,8 @@ private fun AppearanceSettings() {
         UiToggleRow(
             icon = Icons.Filled.ViewCarousel,
             tint = Color(0xFF6EA8FF),
-            title = "Scroll Animation",
-            desc = "Fade-in animation for list items as you scroll",
+            title = Lang.s("anim_scroll_t"),
+            desc = Lang.s("anim_scroll_d"),
             checked = scrollAnim,
             onChange = { UiAnimationSettings.setScrollAnimation(it) },
         )
@@ -4320,7 +4380,7 @@ private fun openUrl(ctx: Context, url: String) {
 @Composable
 private fun SupportSettings(ctx: Context) {
     val clip = LocalClipboardManager.current
-    fun copy(v: String) { clip.setText(AnnotatedString(v)); Toast.makeText(ctx, "Copied", Toast.LENGTH_SHORT).show() }
+    fun copy(v: String) { clip.setText(AnnotatedString(v)); Toast.makeText(ctx, Lang.s("copied"), Toast.LENGTH_SHORT).show() }
 
     val bep20  = AyxHere.bep20
     val trc20  = AyxHere.trc20
@@ -4330,7 +4390,7 @@ private fun SupportSettings(ctx: Context) {
     Text(Lang.s("support_keeps_free"), style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp))
 
-    Text("SUPPORT · INDIA (UPI)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
+    Text(Lang.s("support_india"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
     // UPI is TEMPORARILY DISABLED: tapping shows the notice — no copy, no external app.
     StyledSurface(shape = uiShapeFor(22), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.30f), modifier = Modifier.fillMaxWidth()
         .clickable {
@@ -4349,7 +4409,7 @@ private fun SupportSettings(ctx: Context) {
         }
     }
 
-    Text("SUPPORT · OTHER COUNTRIES (USDT)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
+    Text(Lang.s("support_other"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
     PayCard("USDT · BEP20", "BNB Smart Chain (BSC)", bep20, bep20, onCopy = { copy(bep20) })
     PayCard("USDT · TRC20", "Tron network", trc20, trc20, onCopy = { copy(trc20) })
     PayCard("USDT · ERC20", "Ethereum network", erc20, erc20, onCopy = { copy(erc20) })
@@ -4359,8 +4419,8 @@ private fun SupportSettings(ctx: Context) {
             IconChip(Icons.Filled.Bolt, WARN_AMBER)
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                Text("Binance — Pay directly", style = MaterialTheme.typography.bodyLarge)
-                Text("Opens the Binance app to pay instantly", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(Lang.s("support_binance"), style = MaterialTheme.typography.bodyLarge)
+                Text(Lang.s("support_binance_d"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -4483,7 +4543,7 @@ private fun AboutSettings(ctx: Context, onLogout: () -> Unit) {
     StyledSurface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(APP_NAME, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text("Version " + ver, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(Lang.s("about_version") + " " + ver, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(Lang.s("runs_locally"),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -4501,7 +4561,7 @@ private fun AboutSettings(ctx: Context, onLogout: () -> Unit) {
         }
     }
 
-    Text("CONNECT", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
+    Text(Lang.s("link_connect"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
     LinkRowSlot({ InstagramGlyph(21.dp) }, AyxHere.igLabel, "Instagram") { openUrl(ctx, AyxHere.igUrl) }
     LinkRowSlot({ TelegramGlyph(21.dp) }, AyxHere.tgLabel, "Telegram") { openUrl(ctx, AyxHere.tgUrl) }
 
@@ -4965,7 +5025,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                             // V4: Crop button next to AI Edit.
                             Row(Modifier.align(Alignment.TopEnd).padding(top = overlayTopPad, end = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 TextButton(onClick = { cropOpen = true }, contentPadding = PaddingValues(0.dp)) {
-                                    Text("✂ Crop", color = Color.White, style = MaterialTheme.typography.labelSmall,
+                                    Text(Lang.s("crop_btn"), color = Color.White, style = MaterialTheme.typography.labelSmall,
                                         modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), uiShapeFor(16)).padding(horizontal = 10.dp, vertical = 6.dp))
                                 }
                                 TextButton(onClick = { showAiPausedMsg = true }, contentPadding = PaddingValues(0.dp)) {
@@ -4986,7 +5046,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                     // V1: surface preview errors instead of showing a grey/blank view silently.
                                     onError = { msg ->
                                         videoPlaying = false
-                                        runCatching { Toast.makeText(ctx, "Video preview failed — try re-selecting the video", Toast.LENGTH_LONG).show() }
+                                        runCatching { Toast.makeText(ctx, Lang.s("t_video_preview_failed"), Toast.LENGTH_LONG).show() }
                                     },
                                     // E1: on natural completion, reset to trim start
                                     // so replay always works (no stuck end screen).
@@ -5120,7 +5180,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                             if (showTranslateRow && song != null) {
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                     TextButton(onClick = {
-                                        if (songLyrics.isEmpty()) { Toast.makeText(ctx, "Add a song first", Toast.LENGTH_SHORT).show() }
+                                        if (songLyrics.isEmpty()) { Toast.makeText(ctx, Lang.s("t_add_song"), Toast.LENGTH_SHORT).show() }
                                         else translateOpen = true
                                     }) { Text(if (translatedActive) "✓ AI Lyrics Translated" else "🌐 AI Lyrics Translate", color = Color.White) }
                                 }
@@ -5171,7 +5231,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
         titleContentColor = MaterialTheme.colorScheme.onSurface,
         textContentColor = MaterialTheme.colorScheme.onSurface,
         title = { Text(Lang.s("edit_image_ai")) },
-        text = { Text("Due to Technical error developer finding tools to use this mode.") },
+        text = { Text(Lang.s("aiedit_paused_msg")) },
         confirmButton = { TextButton(onClick = { showAiPausedMsg = false }) { Text(Lang.s("ok")) } }
     )
     // V4: photo crop dialog.
@@ -5234,7 +5294,7 @@ private fun PhotoCropDialog(ctx: android.content.Context, uri: android.net.Uri, 
             Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(16.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = onCancel) { Text(Lang.s("cancel"), color = Color.White) }
-                    Text("✂ Crop", color = Color.White, fontWeight = FontWeight.Bold)
+                    Text(Lang.s("crop_btn"), color = Color.White, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.size(64.dp))
                 }
                 Spacer(Modifier.height(8.dp))
@@ -5398,8 +5458,8 @@ private fun AiLyricsTranslateSheet(songTitle: String, lyrics: List<Pair<Long, St
                 }
                 if (needKey) {
                     Spacer(Modifier.height(6.dp))
-                    Text("Add an API in Settings → AI Assistant → AI Lyrics.", color = Color(0xFFFFB84D), style = MaterialTheme.typography.bodySmall)
-                    TextButton(onClick = onOpenApiSettings) { Text("Open API settings", color = Color.White) }
+                    Text(Lang.s("tr_add_api"), color = Color(0xFFFFB84D), style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = onOpenApiSettings) { Text(Lang.s("tr_open_api"), color = Color.White) }
                 }
                 if (error != null) {
                     Spacer(Modifier.height(6.dp))
@@ -5443,7 +5503,7 @@ private fun GroqKeyDialog(ctx: Context, onClose: () -> Unit) {
         Surface(shape = uiShapeFor(18), color = Color(0xFF161616)) {
             Column(Modifier.padding(18.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("API settings", color = Color.White, style = MaterialTheme.typography.titleMedium)
-                Text("Translation uses your own AI key (also saved to Settings → AI Assistant → AI Lyrics, where you can add backup APIs for automatic failover). It is stored on this device and sent only to your API URL.",
+                Text(Lang.s("tr_uses_key"),
                     color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(url, { url = it }, label = { Text("API URL", color = Color.White.copy(alpha = 0.6f)) }, singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White,
@@ -5483,7 +5543,7 @@ private fun GroqKeyDialog(ctx: Context, onClose: () -> Unit) {
                                 GatewayClient.patchSettings(JSONObject().put("aiApiUrl", url.trim()).put("aiApiKey", key.trim()).put("aiModel", model.trim()).put("aiLyricsApis", arr))
                             }.isSuccess
                             saving = false
-                            if (ok) { Toast.makeText(ctx, "API settings saved", Toast.LENGTH_SHORT).show(); onClose() }
+                            if (ok) { Toast.makeText(ctx, Lang.s("tr_api_saved"), Toast.LENGTH_SHORT).show(); onClose() }
                             else err = "Could not reach the gateway — is AyX connected?"
                         }
                     }, enabled = !saving) { Text(if (saving) "Saving…" else "Save") }

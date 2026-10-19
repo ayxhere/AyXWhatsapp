@@ -59,7 +59,7 @@ fun AyxAppearanceScreen(onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Appearance", color = activeTheme.colors.onBackground) },
+                title = { Text(Lang.s("appearance_title"), color = activeTheme.colors.onBackground) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, "Back", tint = activeTheme.colors.onBackground)

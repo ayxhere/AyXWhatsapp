@@ -63,8 +63,8 @@ private fun viewTime(ts: Long): String {
     val dayDiff = ((now.apply { set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0) }.timeInMillis -
         c.apply { set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0) }.timeInMillis) / 86_400_000L).toInt()
     val day = when {
-        dayDiff <= 0 -> "Today"
-        dayDiff == 1 -> "Yesterday"
+        dayDiff <= 0 -> Lang.s("today")
+        dayDiff == 1 -> Lang.s("yesterday")
         dayDiff < 7 -> SimpleDateFormat("EEE", Locale.getDefault()).format(Date(ts))
         else -> SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(ts))
     }
@@ -130,7 +130,7 @@ fun StatusViewersSheet(statusIds: List<String>, dpCache: MutableMap<String, Imag
                                     !device.isNullOrBlank() -> device
                                     v.name.isNotBlank() -> v.name
                                     v.jid.endsWith("@s.whatsapp.net") -> "+" + v.jid.substringBefore("@").filter { it.isDigit() }
-                                    else -> "Unknown contact"   // unresolved hidden id — don't show its digits
+                                    else -> Lang.s("unknown_contact")   // unresolved hidden id — don't show its digits
                                 }
                                 Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Avatar(v.jid, name, dpCache, 50.dp, CircleShape)

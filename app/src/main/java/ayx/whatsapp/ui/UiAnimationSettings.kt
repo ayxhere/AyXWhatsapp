@@ -2,6 +2,7 @@ package ayx.whatsapp.ui
 
 import android.content.Context
 import androidx.compose.runtime.mutableStateOf
+import ayx.whatsapp.Lang
 
 /**
  * Fresh implementation of "User Interface" animation preferences.
@@ -17,22 +18,25 @@ import androidx.compose.runtime.mutableStateOf
  */
 
 /** UI surfaces that may receive the background blur effect. */
-enum class BlurElement(val label: String) {
-    NAVIGATION("Navigation"),
-    MENUS("Menus"),
-    DIALOGS("Dialogs"),
-    BOTTOM_SHEET("Bottom Sheet"),
+enum class BlurElement(val labelKey: String) {
+    NAVIGATION("blur_nav"),
+    MENUS("blur_menus"),
+    DIALOGS("blur_dialogs"),
+    BOTTOM_SHEET("blur_bottom");
+    val label: String get() = Lang.s(labelKey)
 }
 
 /** Page-transition animation style. */
-enum class AnimationStyle(val label: String, val subtitle: String) {
-    ZOOM("Zoom", "Zoom (in/out)"),
-    FADE("Fade", "Fade in/out"),
-    SLIDE("Slide", "Slide from right"),
-    SLIDE_UP("Slide Up", "Slide from bottom"),
-    SCALE("Scale", "Grow from center"),
-    FADE_SLIDE("Fade+Slide", "Fade with slide-up"),
-    NONE("None", "No animation"),
+enum class AnimationStyle(val labelKey: String, val subtitleKey: String) {
+    ZOOM("anim_zoom", "anim_zoom_d"),
+    FADE("anim_fade", "anim_fade_d"),
+    SLIDE("anim_slide", "anim_slide_d"),
+    SLIDE_UP("anim_slideup", "anim_slideup_d"),
+    SCALE("anim_scale", "anim_scale_d"),
+    FADE_SLIDE("anim_fadeslide", "anim_fadeslide_d"),
+    NONE("anim_none", "anim_none_d");
+    val label: String get() = Lang.s(labelKey)
+    val subtitle: String get() = Lang.s(subtitleKey)
 }
 
 object UiAnimationSettings {
