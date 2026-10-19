@@ -116,7 +116,7 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.9.0")          // periodic AyX updates sync (no Firebase in this app)
     // Media3 ExoPlayer — replaces the laggy VideoView/MediaPlayer for all video playback
     // (chat viewer, composer preview, status editor, status viewer).
-    implementation("androidx.media3:media3-exoplayer:1.5.1")
-    implementation("androidx.media3:media3-ui:1.5.1")
+    implementation("androidx.media3:media3-exoplayer:1.4.1")
+    implementation("androidx.media3:media3-ui:1.4.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
