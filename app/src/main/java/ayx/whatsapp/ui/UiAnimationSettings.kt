@@ -29,6 +29,9 @@ enum class AnimationStyle(val label: String, val subtitle: String) {
     ZOOM("Zoom", "Zoom (in/out)"),
     FADE("Fade", "Fade in/out"),
     SLIDE("Slide", "Slide from right"),
+    SLIDE_UP("Slide Up", "Slide from bottom"),
+    SCALE("Scale", "Grow from center"),
+    FADE_SLIDE("Fade+Slide", "Fade with slide-up"),
     NONE("None", "No animation"),
 }
 

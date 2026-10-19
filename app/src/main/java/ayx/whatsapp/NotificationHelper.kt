@@ -17,6 +17,15 @@ private fun notifIcon(c: android.content.Context): Int {
     return if (id != 0) id else android.R.drawable.ic_dialog_email
 }
 
+/** Consistent AyX accent for ALL notification cards so they look uniform. */
+private const val NOTIF_COLOR = 0xFF25D366.toInt()
+
+/** App icon as a Bitmap for notifications that have no sender photo (keeps card layout uniform). */
+private fun appIconBitmap(c: android.content.Context): Bitmap? = runCatching {
+    val id = c.applicationInfo.icon.takeIf { it != 0 } ?: return null
+    android.graphics.BitmapFactory.decodeResource(c.resources, id)
+}.getOrNull()
+
 object AppNav {
     val pendingOpenChat = mutableStateOf<String?>(null)
     val pendingOpenAyxUpdates = mutableStateOf(false)
@@ -69,9 +78,11 @@ object NotificationHelper {
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setColor(NOTIF_COLOR)
             .setAutoCancel(true)
             .setContentIntent(openPending)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .apply { appIconBitmap(ctx)?.let { setLargeIcon(it) } }
             .build()
         try { NotificationManagerCompat.from(ctx).notify(id, n) } catch (_: SecurityException) {}
     }
@@ -98,6 +109,7 @@ object NotificationHelper {
             .setSmallIcon(notifIcon(ctx))
             .setContentTitle(name)
             .setContentText(if (text.isBlank()) "\uD83D\uDCCE Media" else text)
+            .setColor(NOTIF_COLOR)
             .setAutoCancel(true)
             .setContentIntent(openPending)
             .addAction(replyAction)

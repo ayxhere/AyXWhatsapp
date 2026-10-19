@@ -12,6 +12,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -19,6 +20,7 @@ import android.provider.OpenableColumns
 import android.provider.Settings
 import android.widget.Toast
 import android.util.Base64
+import android.view.WindowManager
 import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
 import java.io.FileOutputStream
@@ -181,6 +183,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.ui.graphics.Color
@@ -225,11 +228,13 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -363,7 +368,6 @@ class MainActivity : ComponentActivity() {
         TranslateStore.init(applicationContext)
         FontStore.init(applicationContext)
         EmojiStore.init(applicationContext)
-        StickerSettings.init(applicationContext)
         setContent {
             val sysDark = isSystemInDarkTheme()
             val mode = ThemeStore.mode.value
@@ -763,6 +767,7 @@ fun GatewayApp() {
     var wallpaperVersion by remember { mutableStateOf(0) }
     var showSetName by remember { mutableStateOf(false) }
     var forwardMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
+    var forwardStatusId by remember { mutableStateOf<String?>(null) }   // V1: status ID being forwarded via the viewer menu
     var viewImg by remember { mutableStateOf<ImageBitmap?>(null) }
     var viewVideoUrl by remember { mutableStateOf<String?>(null) }
     var dpView by remember { mutableStateOf<String?>(null) }   // jid whose profile photo is previewed full-screen
@@ -787,8 +792,6 @@ fun GatewayApp() {
 
     // file picker for sending media
     var pendingMedia by remember { mutableStateOf<Pair<Uri, String>?>(null) }
-    // premium stickers (Stickers.kt): custom pack survives restart via prefs
-    var customStickers by remember { mutableStateOf(CustomStickerStore.list(ctx)) }
     // an attachment staged in one chat must NEVER follow you into another chat → drop it whenever the open chat changes
     LaunchedEffect(openChat) { pendingMedia = null }
     var chatsPage by remember { mutableStateOf(0) }
@@ -836,16 +839,6 @@ fun GatewayApp() {
     var wallpaper by remember { mutableStateOf<ImageBitmap?>(null) }
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? -> if (uri != null && openChat != null) pendingMedia = uri to "image" }
     val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? -> if (uri != null && openChat != null) pendingMedia = uri to "video" }
-    // premium stickers (Stickers.kt): gallery pick for the custom pack.
-    // Persistable URI permission so the sticker survives app restarts.
-    val customStickerPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-        if (uri != null) {
-            runCatching { ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-            val added = CustomStickerStore.add(ctx, uri.toString())
-            customStickers = CustomStickerStore.list(ctx)
-            notify(if (added) "Sticker added (${customStickers.size}/10)" else "Custom pack full (10/10) — remove one first")
-        }
-    }
     fun loadWallpaper() {
         val f = File(ctx.filesDir, "wallpaper.jpg")
         wallpaper = if (f.exists()) runCatching { decodeScaled(f.absolutePath, 1440)?.asImageBitmap() }.getOrNull() else null
@@ -1034,10 +1027,13 @@ fun GatewayApp() {
                     didBackup = true
                     runCatching { val js = GatewayClient.exportSession(); if (js.isNotBlank() && js != "{}") SessionBackup.save(ctx, js) }
                 }
-                messages = GatewayClient.getMessages()
-                // Full chat list (incl. chats with no messages) — failure
-                // must never kill the poll; the last good list persists.
-                runCatching { chats = GatewayClient.getChats() }
+                // Messages + full chat list fetched IN PARALLEL (they were serial,
+                // doubling the poll cycle and delaying tick updates after sends).
+                // Chat-list failure must never kill the poll; the last good list persists.
+                val msgDeferred = async(Dispatchers.IO) { GatewayClient.getMessages() }
+                val chatsDeferred = async(Dispatchers.IO) { runCatching { GatewayClient.getChats() } }
+                messages = msgDeferred.await()
+                chatsDeferred.await().onSuccess { chats = it }
                 optimistic.removeAll { opt -> messages.any { it.fromMe && it.chat == opt.chat && it.text == opt.text && it.ts >= opt.ts - 8000 } }
                 // Flush locally queued sends now that the socket is open.
                 if (status.connection == "open") {
@@ -1086,7 +1082,11 @@ fun GatewayApp() {
                     if (song == null) {
                         if (t == "image") {
                             // AI-edited bytes win over the raw file — what you see is what posts.
-                            val bytes = editedBytes ?: withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(u)?.use { it.readBytes() } }
+                            val rawBytes = editedBytes ?: withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(u)?.use { it.readBytes() } }
+                            // Stock WhatsApp renders non-JPEG status photos as broken — re-encode.
+                            val bytes = if (rawBytes != null && !isJpeg(rawBytes)) {
+                                withContext(Dispatchers.IO) { convertToJpeg(rawBytes) } ?: rawBytes
+                            } else rawBytes
                             if (bytes != null) { notify("uploading status…"); val res = GatewayClient.postStatus(t, Base64.encodeToString(bytes, Base64.NO_WRAP), caption, audience, recipients); notify((if (res.first) "✅ " else "❌ ") + res.second); if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) } }
                         } else {
                             // Video, no song: trim + mute apply for real (no re-encode, sample copy).
@@ -1094,7 +1094,13 @@ fun GatewayApp() {
                                 if (vTrimActive || videoMuted) {
                                     val trimmed = File(ctx.cacheDir, "vtrim_${System.currentTimeMillis()}.mp4")
                                     val ok = MediaTools.trimVideoAudio(ctx, u, trimmed, vTrimStart, vTrimEnd, !videoMuted)
-                                    if (ok) trimmed.readBytes().also { runCatching { trimmed.delete() } }
+                                    if (ok) {
+                                        // MediaMuxer writes moov at the END; stock WhatsApp needs it
+                                        // at the FRONT (faststart) or the video shows as broken.
+                                        val fast = File(ctx.cacheDir, "vfast_${System.currentTimeMillis()}.mp4")
+                                        val final = if (MediaTools.faststart(trimmed, fast) && MediaTools.isValidMp4(fast)) fast else trimmed
+                                        final.readBytes().also { runCatching { trimmed.delete() }; runCatching { fast.delete() } }
+                                    }
                                     else { notify("Video trim failed — posting original"); ctx.contentResolver.openInputStream(u)?.use { it.readBytes() } }
                                 } else ctx.contentResolver.openInputStream(u)?.use { it.readBytes() }
                             }
@@ -1109,7 +1115,7 @@ fun GatewayApp() {
                             val aFile = File(dir, "ta_$stamp.m4a")
                             val outFile = File(dir, "final_$stamp.mp4")
                             val durMs = (tEnd - tStart).coerceAtLeast(3000L)
-                            val lyFetched = if (lyrics.isNotEmpty()) lyrics else runCatching { GatewayClient.getLyrics(song.title, song.artist) }.getOrDefault(emptyList())
+                            val lyFetched = if (lyrics.isNotEmpty()) lyrics else getCachedLyrics(song.title, song.artist)
                             // Safety net: romanize any Devanagari that slipped through (lyrics are normally romanized at fetch time).
                             val ly = romanizeLyricPairs(lyFetched)
                             val adjusted0 = ly.filter { it.first in tStart..tEnd }.map { ((it.first - tStart - 450L).coerceAtLeast(0L)) to it.second }
@@ -1239,18 +1245,54 @@ fun GatewayApp() {
             }
         }
     }
-    // status viewer (full screen)
-    storyView?.let { sender ->
-        StatusViewer(
-            statuses = statuses,
-            startSender = sender,
-            dpCache = dpCache,
-            onDownload = { st -> },
-            onDeleteStatus = { id -> },
-            onReply = { sid, text -> },
-            onSeen = { st -> },
-            onClose = { storyView = null }
-        )
+    // Status viewer — wrapped in the chosen page-transition animation so the
+    // Animation Style setting visibly applies when opening/closing a status.
+    AyxAnimatedScreen(screenKey = "story|${storyView ?: "none"}") {
+        storyView?.let { sender ->
+            StatusViewer(
+                statuses = statuses,
+                startSender = sender,
+                dpCache = dpCache,
+                onDownload = { st ->
+                    val name = st.mediaName
+                    if (name != null) scope.launch {
+                        val bytes = GatewayClient.mediaBytes(name)
+                        if (bytes == null) { notify("turn on Save media (Settings) to download"); return@launch }
+                        val ok = MediaSaver.save(ctx, bytes, name, st.mediaType ?: "document")
+                        notify(if (ok) "saved to $APP_NAME folder" else "save failed")
+                    }
+                },
+                onDeleteStatus = { id ->
+                    scope.launch {
+                        val ok = GatewayClient.deleteStatus(id)
+                        notify(if (ok) "Status deleted" else "Delete failed")
+                        if (ok) statuses = StatusData.merge(GatewayClient.getStatuses())
+                    }
+                },
+                onReply = { sid, text ->
+                    scope.launch {
+                        when (GatewayClient.sendTextReliable(sid, text)) {
+                            is GatewayClient.SendOutcome.Sent -> notify("Reply sent")
+                            is GatewayClient.SendOutcome.Queued -> notify("Reply queued — will send when reconnected")
+                            is GatewayClient.SendOutcome.NeedRelogin -> notify("Session expired — scan QR again")
+                        }
+                    }
+                },
+                onSeen = { st ->
+                    // V3: viewing marks the status as READ. The local seen-mark
+                    // always applies (app's own "Viewed" bucket); the network
+                    // receipt respects the "Hide status view" privacy setting.
+                    if (!st.id.isNullOrBlank()) {
+                        StatusData.markSeen(st.id)
+                        if (!settings.hideStatusRead) {
+                            scope.launch { GatewayClient.markStatusSeen(st.id!!, st.sender) }
+                        }
+                    }
+                },
+                onForwardStatus = { id -> forwardStatusId = id },
+                onClose = { storyView = null }
+            )
+        }
     }
     // profile-photo viewer (tap a contact avatar in a chat) — preview full DP + download
     dpView?.let { jid ->
@@ -1493,7 +1535,12 @@ fun GatewayApp() {
                         // gateway dedupes instead of delivering twice.
                         val mid = GatewayClient.newClientMsgId()
                         when (val r = GatewayClient.sendTextReliable(ocChat, text, clientMsgId = mid)) {
-                            is GatewayClient.SendOutcome.Sent -> { /* poll loop swaps optimistic for the real message */ }
+                            is GatewayClient.SendOutcome.Sent -> {
+                                // Don't wait for the next poll cycle — pull messages NOW so the
+                                // optimistic bubble swaps to the real one (with ticks) in ~1s
+                                // instead of lingering until the poll loop's next getMessages().
+                                runCatching { messages = GatewayClient.getMessages() }
+                            }
                             is GatewayClient.SendOutcome.Queued -> {
                                 optimistic.remove(opt)
                                 SendQueue.enqueue(ctx, ocChat, text, null, mid)
@@ -1527,7 +1574,10 @@ fun GatewayApp() {
                         withContext(Dispatchers.IO) { NodeRuntime.ensureStarted(ctx.applicationContext) }
                         val mid = GatewayClient.newClientMsgId()
                         when (val r = GatewayClient.sendTextReliable(ocChat, text, qid, clientMsgId = mid)) {
-                            is GatewayClient.SendOutcome.Sent -> { /* poll loop swaps optimistic for the real message */ }
+                            is GatewayClient.SendOutcome.Sent -> {
+                                // Immediate refresh — see onSend above.
+                                runCatching { messages = GatewayClient.getMessages() }
+                            }
                             is GatewayClient.SendOutcome.Queued -> {
                                 optimistic.remove(opt)
                                 SendQueue.enqueue(ctx, ocChat, text, qid, mid)
@@ -1561,61 +1611,6 @@ fun GatewayApp() {
                     delivered.forEach { q -> optimistic.removeAll { it.chat == q.jid && it.text == q.text && it.ts == q.ts } }
                     notify(if (delivered.isNotEmpty()) "${delivered.size} queued message(s) sent" else "Still connecting… will retry automatically")
                 } },
-                // Premium stickers (Stickers.kt + AnimatedWebP.kt): REAL sticker
-                // protocol — animated WebP via /sendsticker, never image.
-                stickerHost = StickerHost(
-                    customStickers = customStickers,
-                    onSendSticker = { pack, expr ->
-                        val mjid = openChat ?: return@StickerHost
-                        val ts = System.currentTimeMillis()
-                        val opt = OptMsg(ocChat, "", ts)
-                        optimistic.add(opt)
-                        scope.launch {
-                            try {
-                                // Animated WebP (falls back to static WebP inside
-                                // renderAnimatedStickerWebP — still sticker protocol).
-                                val webp = withContext(Dispatchers.IO) { renderAnimatedStickerWebP(pack, expr) }
-                                if (webp == null) {
-                                    optimistic.remove(opt)
-                                    notify("Sticker render failed")
-                                    return@launch
-                                }
-                                val sentId = GatewayClient.sendSticker(mjid, Base64.encodeToString(webp, Base64.NO_WRAP))
-                                // Exact echo match via Baileys id (robust even
-                                // when two stickers are sent seconds apart);
-                                // ts record stays as a fallback.
-                                if (sentId != null) StickerSentStore.recordById(ctx, sentId, pack.id, expr.name)
-                                StickerSentStore.record(ctx, ts, pack.id, expr.name)
-                                // poll loop swaps the optimistic row for the
-                                // server echo (still animated via stickerRefFor)
-                            } catch (e: Exception) {
-                                optimistic.remove(opt)
-                                notify("send failed: ${e.message}")
-                            }
-                        }
-                    },
-                    onSendCustomSticker = { cs ->
-                        val mjid = openChat ?: return@StickerHost
-                        scope.launch {
-                            try {
-                                notify("sending…")
-                                // Gallery image -> static WebP sticker (Fit,
-                                // never cropped) -> REAL sticker protocol.
-                                val webp = withContext(Dispatchers.IO) { uriToStickerWebP(ctx, cs.uri) }
-                                if (webp == null) { notify("can't read sticker"); return@launch }
-                                GatewayClient.sendSticker(mjid, Base64.encodeToString(webp, Base64.NO_WRAP))
-                                notify("sent")
-                            } catch (e: Exception) { notify("send failed: ${e.message}") }
-                        }
-                    },
-                    onAddCustomSticker = { customStickerPicker.launch("image/*") },
-                    onRemoveCustomSticker = { id ->
-                        CustomStickerStore.remove(ctx, id)
-                        customStickers = CustomStickerStore.list(ctx)
-                        notify("Sticker removed")
-                    },
-                    stickerRefFor = { m -> stickerRefForMsg(ctx, m) },
-                ),
             )
             }
             val ocBlocked = ocChat in blockedJids
@@ -1779,6 +1774,30 @@ fun GatewayApp() {
                             }
                         }
                     }
+                )
+            }
+            // V1: forward a status (from the viewer's 3-dot menu) to any chats.
+            forwardStatusId?.let { sid ->
+                ForwardPicker(
+                    messages = messages,
+                    dpCache = dpCache,
+                    onDismiss = { forwardStatusId = null },
+                    onForward = { targets ->
+                        forwardStatusId = null
+                        if (targets.isNotEmpty()) {
+                            notify("forwarding…")
+                            scope.launch {
+                                runCatching { GatewayClient.forward(sid, targets) }
+                                    .onSuccess { r ->
+                                        notify(if (r.optBoolean("ok", false)) "forwarded to ${r.optInt("sent", targets.size)}" else "forward failed: " + r.optString("error", ""))
+                                        messages = GatewayClient.getMessages()
+                                    }
+                                    .onFailure { notify("forward error: ${it.message}") }
+                            }
+                        }
+                    },
+                    title = "Forward status to",
+                    action = "Forward"
                 )
             }
         }
@@ -2182,8 +2201,6 @@ private fun ChatDetail(
     /** Queued (not yet sent) messages in this chat — shown as a banner, never faked as sent. */
     queuedCount: Int = 0,
     onRetryQueued: () -> Unit = {},
-    /** Premium stickers (Stickers.kt) — null hides the sticker button. */
-    stickerHost: StickerHost? = null,
 ) {
     val clipboard = LocalClipboardManager.current
     val ctx = LocalContext.current
@@ -2192,8 +2209,6 @@ private fun ChatDetail(
     // the screen-switch transition ("garbled leftover text").
     var input by remember(chat) { mutableStateOf("") }
     var attachMenu by remember { mutableStateOf(false) }
-    // premium sticker picker (Stickers.kt) — keyed by chat like the composer
-    var showStickers by remember(chat) { mutableStateOf(false) }
     var replyTo by remember { mutableStateOf<GatewayClient.Msg?>(null) }
     var reactMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
     var editMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
@@ -2351,8 +2366,7 @@ private fun ChatDetail(
                         selMode = selMode, selected = m.id != null && m.id in selIds,
                         onToggleSelect = { mm -> mm.id?.let { if (it in selIds) selIds.remove(it) else selIds.add(it) } },
                         onTranslate = { onTranslateMsg(it) },
-                        onLongClick = { reactMsg = it },
-                        stickerRefFor = { m -> stickerHost?.stickerRefFor?.invoke(m) })
+                        onLongClick = { reactMsg = it })
                 }
                 }
             }
@@ -2386,15 +2400,6 @@ private fun ChatDetail(
                 }
             }
         }
-        // Premium sticker button (Stickers.kt) — toggles the picker panel.
-        val stickerButton: @Composable () -> Unit = {
-            if (stickerHost != null) {
-                IconButton(onClick = { showStickers = !showStickers }) {
-                    Icon(Icons.Filled.EmojiEmotions, "stickers",
-                        tint = if (showStickers) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
         val sendButton: @Composable () -> Unit = {
             FilledIconButton(onClick = {
                 if (pendingMedia != null) {
@@ -2423,11 +2428,6 @@ private fun ChatDetail(
                     color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.weight(1f))
                 TextButton(onClick = onRetryQueued) { Text("Retry now") }
             }
-        }
-        // Premium sticker picker panel (Stickers.kt) — sits above the composer.
-        if (showStickers && stickerHost != null) {
-            StickerPicker(host = stickerHost, onDismiss = { showStickers = false },
-                modifier = Modifier.padding(horizontal = 8.dp).padding(bottom = 6.dp))
         }
         Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp).animateContentSize()
             .clip(RoundedCornerShape(28.dp)).background(MaterialTheme.colorScheme.surface.copy(alpha = ayxGlassAlpha(0.90f, BlurElement.BOTTOM_SHEET)))) {
@@ -2480,12 +2480,12 @@ private fun ChatDetail(
                 // expanded (Claude-style): attachment on top → text → [+] ........ [send]
                 textField(Modifier.fillMaxWidth())
                 Row(Modifier.fillMaxWidth().padding(start = 6.dp, end = 8.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    plusButton(); stickerButton(); Spacer(Modifier.weight(1f)); sendButton()
+                    plusButton(); Spacer(Modifier.weight(1f)); sendButton()
                 }
             } else {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    plusButton(); stickerButton(); textField(Modifier.weight(1f)); sendButton()
+                    plusButton(); textField(Modifier.weight(1f)); sendButton()
                 }
             }
         }
@@ -2848,9 +2848,21 @@ private fun styleSpec(fromMe: Boolean, dark: Boolean, recvGrey: Color, recvText:
     }
 }
 
+/** WhatsApp-style inline time + double-tick, bottom-right of the bubble. */
+@Composable
+private fun BubbleTimeTicks(m: GatewayClient.Msg, textColor: Color, modifier: Modifier = Modifier) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(fmt(m.ts), style = MaterialTheme.typography.labelSmall,
+            color = if (m.fromMe) Color.White.copy(alpha = 0.7f) else textColor.copy(alpha = 0.6f))
+        if (m.fromMe && !m.deleted) MsgTicks(m.status, textColor)
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String, ImageBitmap?>, dpCache: MutableMap<String, ImageBitmap?>, onMedia: (GatewayClient.Msg) -> Unit, onShare: (GatewayClient.Msg) -> Unit, onDownload: (GatewayClient.Msg) -> Unit, onReply: (GatewayClient.Msg) -> Unit, onAvatarClick: (String) -> Unit, selMode: Boolean = false, selected: Boolean = false, onToggleSelect: (GatewayClient.Msg) -> Unit = {}, onTranslate: (GatewayClient.Msg) -> Unit = {}, onLongClick: (GatewayClient.Msg) -> Unit, stickerRefFor: (GatewayClient.Msg) -> Pair<StickerPackDef, StickerExpression>? = { null }) {
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String, ImageBitmap?>, dpCache: MutableMap<String, ImageBitmap?>, onMedia: (GatewayClient.Msg) -> Unit, onShare: (GatewayClient.Msg) -> Unit, onDownload: (GatewayClient.Msg) -> Unit, onReply: (GatewayClient.Msg) -> Unit, onAvatarClick: (String) -> Unit, selMode: Boolean = false, selected: Boolean = false, onToggleSelect: (GatewayClient.Msg) -> Unit = {}, onTranslate: (GatewayClient.Msg) -> Unit = {}, onLongClick: (GatewayClient.Msg) -> Unit) {
     val ctx = LocalContext.current
     val dark = isSystemInDarkTheme()
     val spec = bubbleSpec(m.fromMe, dark)
@@ -2863,18 +2875,7 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
     val name = m.mediaName
     LaunchedEffect(name) { if (name != null && !previewCache.containsKey(name)) previewCache[name] = loadPreview(ctx, m) }
     val preview = (name?.let { previewCache[it] }) ?: remember(m.thumb) { decodeThumb(m.thumb) }
-    // Premium stickers (Stickers.kt + AnimatedWebP.kt): OUR OWN sent
-    // stickers are real sticker-protocol messages on the wire — the local
-    // sent-record maps the echo (exact Baileys id first, ts-window
-    // fallback) back to the pack + expression so they render ANIMATED.
-    // Optimistic rows have mediaType == null; echoes have "sticker".
-    // NOTE: the old check excluded mediaType "sticker" here, so own
-    // sent stickers fell through to the static first-frame branch and
-    // looked static — that is why they never animated.
     val isStickerMsg = m.mediaType == "sticker"
-    val ayxStickerRef = remember(m.id, m.ts, m.fromMe, m.mediaType, m.text) {
-        if (m.fromMe && m.text.isBlank() && (m.mediaType == "sticker" || m.mediaType == "image" || m.mediaType == null)) stickerRefFor(m) else null
-    }
 
     var swipeX by remember(m.id) { mutableStateOf(0f) }
     Row(Modifier.fillMaxWidth()
@@ -2925,15 +2926,8 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                     Text(SetName.get(m.sender ?: "") ?: m.name, style = MaterialTheme.typography.labelMedium, color = IOS_BLUE,
                         modifier = Modifier.padding(horizontal = 8.dp))
                 }
-                if (ayxStickerRef != null) {
-                    // Our own premium sticker — animated vector art (Stickers.kt).
-                    // Never the bitmap: the echo is a sticker WebP (first
-                    // frame only), the local sent-record is what makes it animate.
-                    Box(Modifier.padding(2.dp), contentAlignment = Alignment.Center) {
-                        AnimatedStickerArt(ayxStickerRef.first, ayxStickerRef.second, Modifier.size(170.dp))
-                    }
-                } else if (isStickerMsg && preview != null) {
-                    // Incoming Baileys sticker (WebP) — rendered as an IMAGE,
+                if (isStickerMsg && preview != null) {
+                    // Incoming sticker (WebP) — rendered as a STATIC IMAGE,
                     // Fit (never Crop: stickers have transparency + padding).
                     Box(Modifier.clip(uiShapeFor(14)).clickable { onMedia(m) }, contentAlignment = Alignment.Center) {
                         Image(preview, "sticker", Modifier.size(180.dp), contentScale = ContentScale.Fit)
@@ -2961,8 +2955,19 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                         if (m.mediaName != null) AudioPlayer(GatewayClient.mediaUrl(m.mediaName!!), textColor)
                         else Text("Voice message (enable Save media)", color = textColor, style = MaterialTheme.typography.bodySmall)
                     }
-                    if (m.text.isNotBlank()) LinkText(m.text, textColor)
-                    else if (hasMedia && preview == null && m.mediaType != "audio" && m.mediaType != "sticker" && ayxStickerRef == null) Text("[${m.mediaType}]", color = textColor, style = MaterialTheme.typography.bodySmall)
+                    // WhatsApp style: time + ticks inline at the bottom-right of the message text.
+                    if (m.text.isNotBlank()) {
+                        Row(verticalAlignment = Alignment.Bottom) {
+                            Box(Modifier.weight(1f, fill = false)) { LinkText(m.text, textColor) }
+                            BubbleTimeTicks(m, textColor, Modifier.padding(start = 6.dp, top = 2.dp))
+                        }
+                    } else {
+                        if (hasMedia && preview == null && m.mediaType != "audio" && m.mediaType != "sticker") Text("[${m.mediaType}]", color = textColor, style = MaterialTheme.typography.bodySmall)
+                        // Media without caption: time + ticks right-aligned under the media.
+                        if (hasMedia) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            BubbleTimeTicks(m, textColor)
+                        }
+                    }
                     // translated text (double-tap) shown under the original with a translate icon
                     val tr = m.id?.let { TranslateStore.cache[it] }
                     if (!tr.isNullOrBlank()) {
@@ -2978,10 +2983,9 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                             Text(m.reaction, modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp))
                         }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(fmt(m.ts), style = MaterialTheme.typography.labelSmall,
-                            color = if (m.fromMe) Color.White.copy(alpha = 0.7f) else textColor.copy(alpha = 0.6f))
-                        if (m.fromMe && !m.deleted) MsgTicks(m.status, textColor)
+                    // Footer: edited/deleted markers + media actions (time+ticks now live inline, WhatsApp style).
+                    val showFooter = (m.edited && !m.deleted) || m.deleted || m.mediaName != null
+                    if (showFooter) Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                         if (m.edited && !m.deleted) Text("edited", style = MaterialTheme.typography.labelSmall, fontStyle = FontStyle.Italic,
                             color = if (m.fromMe) Color.White.copy(alpha = 0.6f) else textColor.copy(alpha = 0.55f))
                         if (m.deleted) Text("deleted", color = Color(0xFFFF4D4D), style = MaterialTheme.typography.labelSmall, fontStyle = FontStyle.Italic)
@@ -3892,24 +3896,58 @@ private fun BubbleColorRow(selected: Int, onPick: (Int) -> Unit) {
 private fun AppearanceSettings() {
     val mode = ThemeStore.mode.value
     val accent = ThemeStore.accent.value
+    val modes = listOf(
+        "system" to "System", "light" to "Light", "dark" to "Dark", "amoled" to "AMOLED"
+    )
     SettingsGroup("Theme") {
-        Row(Modifier.padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("system" to "System", "light" to "Light", "dark" to "Dark", "amoled" to "AMOLED").forEach { (k, lbl) ->
-                FilterChip(selected = mode == k, onClick = { ThemeStore.setMode(k) }, label = { Text(lbl) })
-            }
-        }
-    }
-    SettingsGroup("Accent color") {
-        Row(Modifier.padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            ThemeStore.accents.forEach { (key, color) ->
-                Box(Modifier.size(38.dp).clip(CircleShape).background(color).clickable { ThemeStore.setAccent(key) },
-                    contentAlignment = Alignment.Center) {
-                    if (accent == key) Box(Modifier.size(14.dp).clip(CircleShape).background(Color.White))
+        Column(Modifier.padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            // 2x2 grid of theme options — cleaner than a cramped chip row.
+            for (row in modes.chunked(2)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    for ((k, lbl) in row) {
+                        val sel = mode == k
+                        StyledSurface(
+                            onClick = { ThemeStore.setMode(k) },
+                            shape = uiShapeFor(16),
+                            color = if (sel) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.size(10.dp).clip(CircleShape)
+                                    .background(if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)))
+                                Spacer(Modifier.width(10.dp))
+                                Text(lbl, style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal,
+                                    color = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                            }
+                        }
+                    }
+                    // Keep the grid aligned when the row has one item.
+                    if (row.size == 1) Spacer(Modifier.weight(1f))
                 }
             }
         }
     }
-    Text("Theme and accent apply instantly across the whole app.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    SettingsGroup("Accent color") {
+        Column(Modifier.padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                ThemeStore.accents.forEach { (key, color) ->
+                    val sel = accent == key
+                    Box(Modifier.size(44.dp).clip(CircleShape).background(color)
+                        .border(if (sel) 3.dp else 1.dp,
+                            if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                            CircleShape)
+                        .clickable { ThemeStore.setAccent(key) },
+                        contentAlignment = Alignment.Center) {
+                        if (sel) Icon(Icons.Filled.Check, "selected", tint = Color.White, modifier = Modifier.size(20.dp))
+                    }
+                }
+            }
+        }
+    }
+    Text("Theme and accent apply instantly across the whole app.", style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp, top = 2.dp))
 }
 
 private fun openUrl(ctx: Context, url: String) {
@@ -3926,8 +3964,6 @@ private fun SupportSettings(ctx: Context) {
     val clip = LocalClipboardManager.current
     fun copy(v: String) { clip.setText(AnnotatedString(v)); Toast.makeText(ctx, "Copied", Toast.LENGTH_SHORT).show() }
 
-    val upiUrl = AyxHere.upiUrl
-    val upiId  = AyxHere.upiId
     val bep20  = AyxHere.bep20
     val trc20  = AyxHere.trc20
     val erc20  = AyxHere.erc20
@@ -3937,8 +3973,23 @@ private fun SupportSettings(ctx: Context) {
         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp))
 
     Text("SUPPORT · INDIA (UPI)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
-    PayCard(title = "UPI", subtitle = upiId, qrContent = upiUrl, address = upiId,
-        actionLabel = "Pay via UPI", onAction = { openUrl(ctx, upiUrl) }, onCopy = { copy(upiId) })
+    // UPI is TEMPORARILY DISABLED: tapping shows the notice — no copy, no external app.
+    StyledSurface(shape = uiShapeFor(22), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.30f), modifier = Modifier.fillMaxWidth()
+        .clickable {
+            Toast.makeText(ctx, "upi id temporary not available please support using another option.", Toast.LENGTH_LONG).show()
+        }) {
+        Column(Modifier.padding(18.dp).fillMaxWidth().alpha(0.55f), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("UPI", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.width(8.dp))
+                Surface(shape = uiShapeFor(8), color = WARN_AMBER.copy(alpha = 0.20f)) {
+                    Text("Temporarily unavailable", style = MaterialTheme.typography.labelSmall, color = WARN_AMBER,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                }
+            }
+            Text("Tap for details", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
 
     Text("SUPPORT · OTHER COUNTRIES (USDT)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
     PayCard("USDT · BEP20", "BNB Smart Chain (BSC)", bep20, bep20, onCopy = { copy(bep20) })
@@ -4245,17 +4296,37 @@ private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, chats: List<Gatew
         while (pager.currentPage == 1) { onLoadStatuses(); delay(5000) }
     }
     HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { pg ->
-        // Tab-switch settle fade: the newly active page fades 0.6 -> 1 over
-        // 250ms after the pager slide settles. graphicsLayer-only (no
-        // layout change), skipped entirely when Animation Style == None.
-        // The pager slide itself is the tab transition; this is only a
-        // gentle settle so the switch reads as animated, never flickery.
+        // Tab-switch settle: the newly active page animates with the chosen
+        // Animation Style (not just a fade) so the setting visibly applies
+        // on the home tabs. graphicsLayer-only (no layout change), skipped
+        // entirely when Animation Style == None. The pager slide itself is
+        // the tab transition; this is the style-aware settle on top.
         // Poll refreshes never touch currentPage, so they never retrigger it.
+        val style = ayx.whatsapp.ui.UiAnimationSettings.animationStyle.value
+        val isActive = pg == pager.currentPage || style == ayx.whatsapp.ui.AnimationStyle.NONE
         val tabAlpha by animateFloatAsState(
-            targetValue = if (pg == pager.currentPage || ayx.whatsapp.ui.UiAnimationSettings.animationStyle.value == ayx.whatsapp.ui.AnimationStyle.NONE) 1f else 0.6f,
+            targetValue = if (isActive) 1f else 0.6f,
             animationSpec = tween(250), label = "tabFade",
         )
-        Box(Modifier.fillMaxSize().graphicsLayer { alpha = tabAlpha }) {
+        val tabScale by animateFloatAsState(
+            targetValue = if (isActive) 1f else when (style) {
+                ayx.whatsapp.ui.AnimationStyle.ZOOM -> 0.95f
+                ayx.whatsapp.ui.AnimationStyle.SCALE -> 0.88f
+                else -> 1f
+            },
+            animationSpec = tween(280), label = "tabScale",
+        )
+        val tabOffsetY by animateFloatAsState(
+            targetValue = if (isActive) 0f else when (style) {
+                ayx.whatsapp.ui.AnimationStyle.SLIDE_UP -> 90f
+                ayx.whatsapp.ui.AnimationStyle.FADE_SLIDE -> 60f
+                else -> 0f
+            },
+            animationSpec = tween(280), label = "tabSlide",
+        )
+        Box(Modifier.fillMaxSize().graphicsLayer {
+            alpha = tabAlpha; scaleX = tabScale; scaleY = tabScale; translationY = tabOffsetY
+        }) {
             if (pg == 0) ChatList(messages, chats, dpCache, query, contentPad, ayxSnippet, onToggleChatReveal, onDelete, onOpen, clearedUnread)
             else StatusScreen(statuses, contentPad, onOpenStatus, dpCache, onToggleStatusReveal)
         }
@@ -4302,8 +4373,7 @@ private fun StatusScreen(statuses: List<GatewayClient.StatusItem>, contentPad: a
             }
             HorizontalDivider()
         }
-        if (unread.isNotEmpty()) item { StatusSectionHeader("Recent updates") }
-        itemsIndexed(unread.toList(), key = { _, e -> "u:" + e.key }) { idx, entry ->
+        if (unread.isNotEmpty()) itemsIndexed(unread.toList(), key = { _, e -> "u:" + e.key }) { idx, entry ->
             AyxFadeInListItem(key = "$statusMountKey:u:${entry.key}", index = idx, delayMs = statusStaggerMs(idx)) {
                 StatusRow(entry.key, entry.value, seen = false, dpCache = dpCache, onOpen = onOpen)
             }
@@ -4472,6 +4542,14 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     }
     val audLabel = when (audience) { "except" -> "Except " + selected.size; "only" -> "Only " + selected.size; else -> "My contacts" }
     Dialog(onDismissRequest = onCancel, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        // Keyboard must NOT move the media: the dialog window ignores IME
+        // resize (ADJUST_NOTHING) so the photo/video stays fixed full-screen.
+        // Only the bottom controls row carries imePadding(), so just that
+        // row rises above the keyboard.
+        val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
+        SideEffect {
+            dialogWindow?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
+        }
         Surface(Modifier.fillMaxSize(), color = Color.Black) {
             // ---- Full-bleed overlay layout: media fills the screen; top bar + controls float above it ----
             Box(Modifier.fillMaxSize().blur(editorBlur)) {
@@ -4966,7 +5044,7 @@ private fun AudRadio(label: String, selected: Boolean, onClick: () -> Unit) {
 
 
 @Composable
-private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: String, dpCache: MutableMap<String, ImageBitmap?>, onDownload: (GatewayClient.StatusItem) -> Unit, onDeleteStatus: (String) -> Unit, onReply: (String, String) -> Unit, onSeen: (GatewayClient.StatusItem) -> Unit, onClose: () -> Unit) {
+private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: String, dpCache: MutableMap<String, ImageBitmap?>, onDownload: (GatewayClient.StatusItem) -> Unit, onDeleteStatus: (String) -> Unit, onReply: (String, String) -> Unit, onSeen: (GatewayClient.StatusItem) -> Unit, onForwardStatus: (String) -> Unit = {}, onClose: () -> Unit) {
     val groups = remember(statuses) {
         statuses.groupBy { it.sender }.entries
             .sortedWith(compareByDescending<Map.Entry<String, List<GatewayClient.StatusItem>>> { e -> e.value.any { it.mine } }.thenByDescending { e -> e.value.maxOf { it.ts } })
@@ -5046,7 +5124,11 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
         if (showViewers) runCatching { vv.pause() } else if (videoReady) runCatching { vv.start() }
     }
 
-    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    Dialog(
+        onDismissRequest = onClose,
+        // V5: draw behind system bars so no header from the underlying screen leaks above the viewer.
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+    ) {
         Surface(Modifier.fillMaxSize(), color = Color.Black) {
             Box(Modifier.fillMaxSize().blur(statusBlur).pointerInput(myMine) {
                 if (myMine) { var dyAcc = 0f; detectVerticalDragGestures(onDragEnd = { if (dyAcc < -80f) showViewers = true; dyAcc = 0f }) { _, dy -> dyAcc += dy } }
@@ -5100,9 +5182,6 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                             style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(28.dp))
                     }
                 }
-                if (st.text.isNotBlank() && st.mediaType != null) {
-                    Text(st.text, color = Color.White, modifier = Modifier.align(Alignment.BottomCenter).padding(28.dp))
-                }
                 Row(Modifier.fillMaxSize()) {
                     Box(Modifier.weight(1f).fillMaxHeight().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { goPrev() })
                     Box(Modifier.weight(1.6f).fillMaxHeight().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { goNext() })
@@ -5130,28 +5209,84 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                         Avatar(group.first, group.first.substringBefore("@"), dpCache, 36.dp)
                         Spacer(Modifier.width(10.dp))
                         Text(if (items.first().mine) "My Status" else (ContactStore.nameFor(group.first) ?: items.first().name.ifBlank { "Status" }), color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, modifier = Modifier.weight(1f))
-                        if (myMine && st.id != null) IconButton(onClick = { confirmDelete = st.id }) { Icon(Icons.Filled.Delete, "delete", tint = Color.White) }
-                        if (st.mediaName != null) IconButton(onClick = { onDownload(st) }) { Icon(Icons.Filled.Download, "download", tint = Color.White) }
-                        IconButton(onClick = onClose) { Icon(Icons.Filled.Close, "close", tint = Color.White) }
+                        // V1/V2: 3-dot menu replaces the X button and inline actions.
+                        var viewerMenu by remember { mutableStateOf(false) }
+                        val vctx = LocalContext.current
+                        Box {
+                            IconButton(onClick = { viewerMenu = true }) { Icon(Icons.Filled.MoreVert, "menu", tint = Color.White) }
+                            DropdownMenu(expanded = viewerMenu, onDismissRequest = { viewerMenu = false }) {
+                                if (myMine) {
+                                    // V1: My Status menu
+                                    if (st.id != null) DropdownMenuItem(
+                                        text = { Text("Forward status to anyone") },
+                                        onClick = { viewerMenu = false; onForwardStatus(st.id!!) }
+                                    )
+                                    if (st.mediaName != null) DropdownMenuItem(
+                                        text = { Text("Save") },
+                                        onClick = { viewerMenu = false; onDownload(st) }
+                                    )
+                                    if (st.id != null) DropdownMenuItem(
+                                        text = { Text("Delete") },
+                                        onClick = { viewerMenu = false; confirmDelete = st.id }
+                                    )
+                                } else {
+                                    // V2: other users' status menu
+                                    if (st.mediaName != null) DropdownMenuItem(
+                                        text = { Text("Download") },
+                                        onClick = { viewerMenu = false; onDownload(st) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(if (StatusFlags.isMuted(group.first)) "Unmute status" else "Mute status") },
+                                        onClick = {
+                                            viewerMenu = false
+                                            StatusFlags.toggleMuted(group.first)
+                                            Toast.makeText(vctx, if (StatusFlags.isMuted(group.first)) "Status muted" else "Status unmuted", Toast.LENGTH_SHORT).show()
+                                        }
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
-                if (myMine) {
-                    Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 18.dp)
-                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { showViewers = true },
-                        horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Filled.KeyboardArrowUp, null, tint = Color.White)
-                        Text("Viewed by", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                // V4: bottom stack — caption in a rounded blur box ABOVE the
+                // reply input (others) / "Viewed by" (mine). Both mine and others.
+                Column(
+                    Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                        .navigationBarsPadding().imePadding().padding(horizontal = 10.dp, vertical = 10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (st.text.isNotBlank() && st.mediaType != null) {
+                        Box(
+                            Modifier.fillMaxWidth().padding(horizontal = 6.dp)
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(Color.Black.copy(alpha = 0.48f))
+                                .padding(horizontal = 16.dp, vertical = 10.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(st.text, color = Color.White, textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 4, overflow = TextOverflow.Ellipsis)
+                        }
                     }
-                }
-                if (!myMine) {
-                    Row(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().imePadding().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(replyText, { replyText = it }, placeholder = { Text("Reply to status…", color = Color.White.copy(alpha = 0.6f)) }, singleLine = true, shape = uiShapeFor(26),
-                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.White.copy(alpha = 0.4f), unfocusedBorderColor = Color.White.copy(alpha = 0.25f),
-                                focusedContainerColor = Color.Black.copy(alpha = 0.4f), unfocusedContainerColor = Color.Black.copy(alpha = 0.4f),
-                                focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White),
-                            modifier = Modifier.weight(1f))
-                        Spacer(Modifier.width(8.dp))
-                        FilledIconButton(onClick = { if (replyText.isNotBlank()) { onReply(group.first, replyText.trim()); replyText = "" } }, enabled = replyText.isNotBlank()) { Icon(Icons.AutoMirrored.Filled.Send, "send") }
+                    if (myMine) {
+                        Column(
+                            Modifier.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { showViewers = true },
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(Icons.Filled.KeyboardArrowUp, null, tint = Color.White)
+                            Text("Viewed by", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                        }
+                    } else {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(replyText, { replyText = it }, placeholder = { Text("Reply to status…", color = Color.White.copy(alpha = 0.6f)) }, singleLine = true, shape = uiShapeFor(26),
+                                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.White.copy(alpha = 0.4f), unfocusedBorderColor = Color.White.copy(alpha = 0.25f),
+                                    focusedContainerColor = Color.Black.copy(alpha = 0.4f), unfocusedContainerColor = Color.Black.copy(alpha = 0.4f),
+                                    focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White),
+                                modifier = Modifier.weight(1f))
+                            Spacer(Modifier.width(8.dp))
+                            FilledIconButton(onClick = { if (replyText.isNotBlank()) { onReply(group.first, replyText.trim()); replyText = "" } }, enabled = replyText.isNotBlank()) { Icon(Icons.AutoMirrored.Filled.Send, "send") }
+                        }
                     }
                 }
                 confirmDelete?.let { id ->
@@ -5238,7 +5373,9 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
         for (sg in results.take(14)) {
             val key = sg.title + "|" + sg.artist
             if (!lyricsAvail.containsKey(key)) {
-                lyricsAvail[key] = runCatching { GatewayClient.getLyrics(sg.title, sg.artist).isNotEmpty() }.getOrDefault(false)
+                // LyricsCache first — no network for songs already fetched.
+                lyricsAvail[key] = LyricsCache.get(sg.title, sg.artist)?.isNotEmpty()
+                    ?: runCatching { GatewayClient.getLyrics(sg.title, sg.artist).isNotEmpty() }.getOrDefault(false)
                 delay(60)
             }
         }
@@ -5334,8 +5471,10 @@ private fun AudioTrimmer(song: GatewayClient.Song, onDone: (Long, Long, List<Pai
     }
     LaunchedEffect(lyricsAttempt) {
         lyricsLoaded = false
-        // Lyrics are romanized at fetch time: Devanagari (Hindi script) → Roman letters via the existing backend.
-        lyrics = romanizeLyricPairs(GatewayClient.getLyrics(song.title, song.artist))
+        // Cached lyrics: re-selecting an already-fetched song (e.g. tapping
+        // "replace" and picking the same song) loads instantly — no spinner,
+        // no refetch. A different song misses the cache and fetches normally.
+        lyrics = getCachedLyrics(song.title, song.artist)
         lyricsLoaded = true
     }
     LaunchedEffect(playing) {
@@ -5533,6 +5672,49 @@ private suspend fun romanizeLyricPairs(lines: List<Pair<Long, String>>): List<Pa
     val rom = romanizeStrings(texts)
     return if (rom === texts) lines else lines.mapIndexed { i, pr -> pr.first to rom[i] }
 }
+
+/**
+ * In-memory lyrics cache (item 6): fetched + romanized lyrics per song,
+ * keyed by normalized title|artist. Re-selecting an already-fetched song
+ * (e.g. tapping "replace" then picking the same song) reuses the cache —
+ * no spinner, no refetch. A genuinely different song misses the cache
+ * and fetches normally. Capped at 60 entries, never persisted.
+ */
+private object LyricsCache {
+    private val map = LinkedHashMap<String, List<Pair<Long, String>>>(64, 0.75f, true)
+    fun key(title: String, artist: String) =
+        title.trim().lowercase() + "|" + artist.trim().lowercase()
+    @Synchronized fun get(title: String, artist: String): List<Pair<Long, String>>? = map[key(title, artist)]
+    @Synchronized fun put(title: String, artist: String, lyrics: List<Pair<Long, String>>) {
+        map[key(title, artist)] = lyrics
+        while (map.size > 60) { val k = map.keys.firstOrNull() ?: break; map.remove(k) }
+    }
+}
+
+/** Cached lyrics fetch: returns the cached romanized lyrics, else fetches + romanizes + caches. */
+private suspend fun getCachedLyrics(title: String, artist: String): List<Pair<Long, String>> {
+    LyricsCache.get(title, artist)?.let { return it }
+    val lyrics = romanizeLyricPairs(GatewayClient.getLyrics(title, artist))
+    // Cache even empty results briefly? No — only cache non-empty so a
+    // transient failure doesn't poison the song; the caller shows "not found".
+    if (lyrics.isNotEmpty()) LyricsCache.put(title, artist, lyrics)
+    return lyrics
+}
+
+/**
+ * Item 8 helpers: stock WhatsApp is strict about status media formats.
+ * JPEG magic bytes (FF D8 FF); anything else (PNG/WebP) is re-encoded to
+ * JPEG so the photo never renders as broken on the official app.
+ */
+private fun isJpeg(bytes: ByteArray): Boolean =
+    bytes.size >= 3 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() && bytes[2] == 0xFF.toByte()
+
+private fun convertToJpeg(bytes: ByteArray): ByteArray? = runCatching {
+    val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+    val out = java.io.ByteArrayOutputStream()
+    bmp.compress(Bitmap.CompressFormat.JPEG, 92, out)
+    out.toByteArray()
+}.getOrNull()
 
 /**
  * Untimed (plain/manual) lyrics carry fabricated `i * 4000ms` timestamps anchored at song start (0).

@@ -10,7 +10,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
@@ -129,6 +131,34 @@ private fun ayxTransitionFor(style: AnimationStyle) =
             slideOutHorizontally(
                 animationSpec = tween(300, easing = FastOutSlowInEasing),
             ) { -it / 4 } + fadeOut(animationSpec = tween(250))
+            )
+        AnimationStyle.SLIDE_UP -> (
+            slideInVertically(
+                animationSpec = tween(320, easing = FastOutSlowInEasing),
+            ) { it / 3 } + fadeIn(animationSpec = tween(250))
+            ) togetherWith (
+            slideOutVertically(
+                animationSpec = tween(320, easing = FastOutSlowInEasing),
+            ) { it / 3 } + fadeOut(animationSpec = tween(250))
+            )
+        AnimationStyle.SCALE -> (
+            scaleIn(
+                animationSpec = tween(320, easing = FastOutSlowInEasing),
+                initialScale = 0.85f,
+            ) + fadeIn(animationSpec = tween(250))
+            ) togetherWith (
+            scaleOut(
+                animationSpec = tween(320, easing = FastOutSlowInEasing),
+                targetScale = 1.08f,
+            ) + fadeOut(animationSpec = tween(250))
+            )
+        AnimationStyle.FADE_SLIDE -> (
+            slideInVertically(
+                animationSpec = tween(300, easing = FastOutSlowInEasing),
+            ) { it / 5 } + fadeIn(animationSpec = tween(280))
+            ) togetherWith (
+            fadeOut(animationSpec = tween(280)) +
+                slideOutVertically(animationSpec = tween(300, easing = FastOutSlowInEasing)) { -it / 5 }
             )
         AnimationStyle.NONE -> EnterTransition.None togetherWith ExitTransition.None
     }

@@ -243,6 +243,10 @@ fun UserInterfaceSettingsScreen() {
         var draft by remember { mutableStateOf(animStyle) }
         AlertDialog(
             onDismissRequest = { showStyleDialog = false },
+            // Match the app theme (the default M3 dialog surface looked grey/off).
+            containerColor = dialogBg().copy(alpha = ayxDialogAlpha()),
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            textContentColor = MaterialTheme.colorScheme.onSurface,
             title = { Text("Animation Style") },
             text = {
                 Column {
