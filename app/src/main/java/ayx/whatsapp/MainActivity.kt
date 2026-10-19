@@ -4,6 +4,8 @@ import android.Manifest
 import ayx.whatsapp.ui.AyxAnimatedScreen
 import ayx.whatsapp.ui.AyxFadeInListItem
 import ayx.whatsapp.ui.BlurElement
+import ayx.whatsapp.ui.AnimationStyle
+import ayx.whatsapp.ui.UiAnimationSettings
 import ayx.whatsapp.ui.ayxDialogAlpha
 import ayx.whatsapp.ui.ayxGlassAlpha
 import ayx.whatsapp.ui.ayxMenuAlpha
@@ -127,6 +129,11 @@ import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.QuestionAnswer
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Wallpaper
+import androidx.compose.material.icons.filled.BlurOn
+import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.MotionPhotosOn
+import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.ViewCarousel
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.VideoFile
@@ -187,6 +194,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
@@ -3902,6 +3910,14 @@ private fun AppearanceSettings() {
     val modes = listOf(
         "system" to "System", "light" to "Light", "dark" to "Dark", "amoled" to "AMOLED"
     )
+    // Blur / animation settings (moved here from the removed "User Interface" screen).
+    val blurEnabled by UiAnimationSettings.materialBlurEnabled
+    val blurElements by UiAnimationSettings.blurElements
+    val animStyle by UiAnimationSettings.animationStyle
+    val motionBlur by UiAnimationSettings.motionBlurEnabled
+    val scrollAnim by UiAnimationSettings.scrollAnimationEnabled
+    var showElementsDialog by remember { mutableStateOf(false) }
+    var showStyleDialog by remember { mutableStateOf(false) }
     SettingsGroup("Theme") {
         Column(Modifier.padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             // 2x2 grid of theme options — cleaner than a cramped chip row.
@@ -3951,6 +3967,226 @@ private fun AppearanceSettings() {
     }
     Text("Theme and accent apply instantly across the whole app.", style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp, top = 2.dp))
+    SettingsGroup("Blur") {
+        UiToggleRow(
+            icon = Icons.Filled.BlurOn,
+            tint = Color(0xFF8B7CFF),
+            title = "Material Blur Effects",
+            desc = "Apply a background blur effect to navigation and menus",
+            checked = blurEnabled,
+            onChange = { UiAnimationSettings.setMaterialBlur(it) },
+        )
+        UiDivider()
+        UiNavRow(
+            icon = Icons.Filled.Layers,
+            tint = Color(0xFF6EC3E8),
+            title = "Elements to have blur effect",
+            desc = "Choose which UI elements use the blur effect",
+            value = if (blurElements.isEmpty()) "None"
+            else blurElements.sortedBy { it.ordinal }.joinToString(", ") { it.label },
+            onClick = { showElementsDialog = true },
+        )
+    }
+    SettingsGroup("Animation") {
+        UiNavRow(
+            icon = Icons.Filled.SwapHoriz,
+            tint = Color(0xFF4DD0C4),
+            title = "Animation Style",
+            desc = animStyle.subtitle,
+            value = animStyle.label,
+            onClick = { showStyleDialog = true },
+        )
+        UiDivider()
+        UiToggleRow(
+            icon = Icons.Filled.MotionPhotosOn,
+            tint = Color(0xFFE88BD0),
+            title = "Motion Blur in Animation",
+            desc = "Apply dynamic motion blur during zoom page transitions",
+            checked = motionBlur,
+            onChange = { UiAnimationSettings.setMotionBlur(it) },
+        )
+        UiDivider()
+        UiToggleRow(
+            icon = Icons.Filled.ViewCarousel,
+            tint = Color(0xFF6EA8FF),
+            title = "Scroll Animation",
+            desc = "Fade-in animation for list items as you scroll",
+            checked = scrollAnim,
+            onChange = { UiAnimationSettings.setScrollAnimation(it) },
+        )
+    }
+
+    if (showElementsDialog) {
+        var draft by remember { mutableStateOf(blurElements) }
+        AlertDialog(
+            onDismissRequest = { showElementsDialog = false },
+            containerColor = dialogBg().copy(alpha = ayxDialogAlpha()),
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            textContentColor = MaterialTheme.colorScheme.onSurface,
+            title = { Text("Elements to have blur effect") },
+            text = {
+                Column {
+                    BlurElement.entries.forEach { element ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable {
+                                    draft = if (draft.contains(element)) draft - element
+                                    else draft + element
+                                }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(
+                                checked = draft.contains(element),
+                                onCheckedChange = {
+                                    draft = if (it) draft + element else draft - element
+                                },
+                            )
+                            Text(element.label, style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    BlurElement.entries.forEach { element ->
+                        val want = draft.contains(element)
+                        val has = UiAnimationSettings.blurElements.value.contains(element)
+                        if (want != has) UiAnimationSettings.toggleBlurElement(element)
+                    }
+                    showElementsDialog = false
+                }) { Text("Done") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showElementsDialog = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (showStyleDialog) {
+        var draft by remember { mutableStateOf(animStyle) }
+        AlertDialog(
+            onDismissRequest = { showStyleDialog = false },
+            containerColor = dialogBg().copy(alpha = ayxDialogAlpha()),
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            textContentColor = MaterialTheme.colorScheme.onSurface,
+            title = { Text("Animation Style") },
+            text = {
+                Column {
+                    AnimationStyle.entries.forEach { style ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable { draft = style }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(
+                                selected = draft == style,
+                                onClick = { draft = style },
+                            )
+                            Column {
+                                Text(style.label, style = MaterialTheme.typography.bodyLarge)
+                                Text(
+                                    style.subtitle,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    UiAnimationSettings.setAnimationStyle(draft)
+                    showStyleDialog = false
+                }) { Text("Done") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showStyleDialog = false }) { Text("Cancel") }
+            },
+        )
+    }
+}
+
+@Composable
+private fun UiToggleRow(
+    icon: ImageVector,
+    tint: Color,
+    title: String,
+    desc: String,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier.size(40.dp).clip(uiShapeFor(12))
+                .background(tint.copy(alpha = 0.16f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, null, tint = tint, modifier = Modifier.size(21.dp))
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(desc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+@Composable
+private fun UiNavRow(
+    icon: ImageVector,
+    tint: Color,
+    title: String,
+    desc: String,
+    value: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().clip(uiShapeFor(12)).clickable(onClick = onClick)
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier.size(40.dp).clip(uiShapeFor(12))
+                .background(tint.copy(alpha = 0.16f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, null, tint = tint, modifier = Modifier.size(21.dp))
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "$desc · $value",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Icon(
+            Icons.AutoMirrored.Filled.KeyboardArrowRight, null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun UiDivider() {
+    Spacer(Modifier.height(2.dp))
+    Box(
+        Modifier.fillMaxWidth().height(1.dp)
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)),
+    )
+    Spacer(Modifier.height(2.dp))
 }
 
 private fun openUrl(ctx: Context, url: String) {
