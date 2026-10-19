@@ -28,8 +28,6 @@ import android.media.MediaPlayer
 import java.io.FileOutputStream
 import java.io.File
 import android.app.KeyguardManager
-import android.widget.MediaController
-import android.widget.VideoView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -1266,15 +1264,13 @@ fun GatewayApp() {
     viewVideoUrl?.let { (url, msg) ->
         Dialog(onDismissRequest = { viewVideoUrl = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
             Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
-                AndroidView(factory = { c ->
-                    VideoView(c).apply {
-                        val _vh = HashMap<String, String>()
-                        GatewayAuth.token()?.let { _vh["X-Api-Token"] = it }
-                        setVideoURI(Uri.parse(url), _vh)
-                        val mc = MediaController(c); mc.setAnchorView(this); setMediaController(mc)
-                        setOnPreparedListener { it.start() }
-                    }
-                }, modifier = Modifier.fillMaxWidth())
+                ExoVideoPlayer(
+                    uri = Uri.parse(url),
+                    headers = buildMap { GatewayAuth.token()?.let { put("X-Api-Token", it) } },
+                    modifier = Modifier.fillMaxWidth(),
+                    autoPlay = true,
+                    showController = true,
+                )
                 Row(Modifier.align(Alignment.TopCenter).fillMaxWidth().statusBarsPadding().padding(horizontal = 4.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { viewVideoUrl = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "back", tint = Color.White) }
                     Text(chatTitleOf(messages, msg.chat), color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.weight(1f))
@@ -2480,12 +2476,12 @@ private fun ChatDetail(
                     contentAlignment = Alignment.Center) {
                     if (bigPlay) {
                         // inline video playback right inside the type box (tap again to stop)
-                        AndroidView(factory = { c ->
-                            VideoView(c).apply {
-                                setVideoURI(puri)
-                                setOnPreparedListener { mp -> mp.isLooping = true; mp.start() }
-                            }
-                        }, modifier = Modifier.fillMaxSize())
+                        ExoVideoPlayer(
+                            uri = puri,
+                            modifier = Modifier.fillMaxSize(),
+                            autoPlay = true,
+                            looping = true,
+                        )
                     } else if (pmtype == "image" || pmtype == "video") {
                         // thumbnail only is decoded (down-sampled); the ORIGINAL bytes are what get sent → full quality
                         val pbmp = remember(puri) {
@@ -4795,9 +4791,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     var vTrimEnd by remember { mutableStateOf(0L) }
     var videoPos by remember { mutableStateOf(0L) }
     var videoPlaying by remember { mutableStateOf(false) }
-    var videoView by remember { mutableStateOf<VideoView?>(null) }
-    // E4: hold the underlying MediaPlayer so the mute toggle is instant.
-    var videoPlayer by remember { mutableStateOf<android.media.MediaPlayer?>(null) }
+    var exoPlayer by remember { mutableStateOf<androidx.media3.exoplayer.ExoPlayer?>(null) }
     var videoTrimOpen by remember { mutableStateOf(false) }   // V3: trimmer panel toggled from the ✂ Trim button in the video header
     // ---- Song tap toggles the AI Lyrics Translate button below the song row ----
     var showTranslateRow by remember { mutableStateOf(false) }
@@ -4825,8 +4819,8 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     // Video preview loop: play inside the trim window, then stop at its end.
     LaunchedEffect(videoPlaying) {
         while (videoPlaying) {
-            videoPos = runCatching { videoView?.currentPosition?.toLong() ?: 0L }.getOrDefault(videoPos)
-            if (vTrimEnd > 0L && videoPos >= vTrimEnd) { runCatching { videoView?.pause(); videoView?.seekTo(vTrimStart.toInt()) }; videoPlaying = false; videoPos = vTrimStart }
+            videoPos = runCatching { exoPlayer?.currentPosition ?: 0L }.getOrDefault(videoPos)
+            if (vTrimEnd > 0L && videoPos >= vTrimEnd) { runCatching { exoPlayer?.pause(); exoPlayer?.seekTo(vTrimStart) }; videoPlaying = false; videoPos = vTrimStart }
             delay(90)
         }
     }
@@ -4834,7 +4828,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     val editorBlur by animateDpAsState(if (musicOpen) 18.dp else 0.dp, label = "editorblur")   // blur editor behind the music sheet
     val player = remember { MediaPlayer() }
     var playing by remember { mutableStateOf(false) }
-    DisposableEffect(Unit) { onDispose { runCatching { player.release() }; runCatching { videoView?.stopPlayback() } } }
+    DisposableEffect(Unit) { onDispose { runCatching { player.release() }; runCatching { exoPlayer?.release() } } }
     // Pause the song preview when the app goes to background (user leaves WhatsAyX mid-preview).
     PauseOnBackground(player) { playing = false }
     LaunchedEffect(playing) { while (playing) { previewPos = runCatching { player.currentPosition.toLong() }.getOrDefault(previewPos); if (trimEnd > 0 && previewPos >= trimEnd) { runCatching { player.seekTo(trimStart.toInt()) }; previewPos = trimStart }; delay(90) } }
@@ -4921,43 +4915,36 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                             }
                         }
                         else {
-                            // Video preview (plays inside the trim window).
+                            // Video preview (plays inside the trim window) — ExoPlayer.
                             key(curUri) {
-                                AndroidView(factory = { c ->
-                                    VideoView(c).also { vv ->
-                                        videoView = vv
-                                        vv.setVideoURI(curUri)
-                                        vv.seekTo(vTrimStart.toInt())
-                                        // V1: surface preview errors instead of showing a grey/blank view silently.
-                                        vv.setOnErrorListener { _, what, extra ->
-                                            videoPlaying = false
-                                            runCatching { Toast.makeText(c, "Video preview failed (code $what/$extra) — try re-selecting the video", Toast.LENGTH_LONG).show() }
-                                            true
-                                        }
-                                        // E1: on natural completion, reset to trim start
-                                        // so replay always works (no stuck end screen).
-                                        vv.setOnCompletionListener {
-                                            runCatching { vv.seekTo(vTrimStart.toInt()) }
-                                            videoPlaying = false
-                                            videoPos = vTrimStart
-                                        }
-                                        // E4: capture the player to apply mute instantly.
-                                        vv.setOnPreparedListener { mp ->
-                                            videoPlayer = mp
-                                            val v = if (videoMuted) 0f else 1f
-                                            runCatching { mp.setVolume(v, v) }
-                                        }
-                                    }
-                                }, modifier = Modifier.fillMaxSize())
+                                ExoVideoPlayer(
+                                    uri = curUri,
+                                    modifier = Modifier.fillMaxSize(),
+                                    autoPlay = false,
+                                    muted = videoMuted,
+                                    onPlayer = { exoPlayer = it; runCatching { it.seekTo(vTrimStart) } },
+                                    // V1: surface preview errors instead of showing a grey/blank view silently.
+                                    onError = { msg ->
+                                        videoPlaying = false
+                                        runCatching { Toast.makeText(ctx, "Video preview failed — try re-selecting the video", Toast.LENGTH_LONG).show() }
+                                    },
+                                    // E1: on natural completion, reset to trim start
+                                    // so replay always works (no stuck end screen).
+                                    onCompletion = {
+                                        runCatching { exoPlayer?.seekTo(vTrimStart) }
+                                        videoPlaying = false
+                                        videoPos = vTrimStart
+                                    },
+                                )
                             }
                             IconButton(onClick = {
-                                val vv = videoView
-                                if (vv != null) {
-                                    if (videoPlaying) { runCatching { vv.pause() }; videoPlaying = false }
+                                val pl = exoPlayer
+                                if (pl != null) {
+                                    if (videoPlaying) { runCatching { pl.pause() }; videoPlaying = false }
                                     else {
                                         runCatching {
-                                            if (vv.currentPosition < vTrimStart.toInt() || (vTrimEnd > 0L && vv.currentPosition >= vTrimEnd.toInt())) vv.seekTo(vTrimStart.toInt())
-                                            vv.start()
+                                            if (pl.currentPosition < vTrimStart || (vTrimEnd > 0L && pl.currentPosition >= vTrimEnd)) pl.seekTo(vTrimStart)
+                                            pl.play()
                                         }
                                         videoPlaying = true
                                     }
@@ -4977,7 +4964,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                     modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), uiShapeFor(8)).padding(horizontal = 8.dp, vertical = 4.dp))
                             }
                             // LEFT-side X: remove the video (below the overlaid top bar).
-                            IconButton(onClick = { runCatching { videoView?.stopPlayback() }; videoPlaying = false; mediaUri = null }, modifier = Modifier.align(Alignment.TopStart).padding(top = overlayTopPad, start = 8.dp)) {
+                            IconButton(onClick = { runCatching { exoPlayer?.stop() }; videoPlaying = false; mediaUri = null }, modifier = Modifier.align(Alignment.TopStart).padding(top = overlayTopPad, start = 8.dp)) {
                                 Icon(Icons.Filled.Close, "remove video", tint = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(4.dp))
                             }
                         }
@@ -5087,7 +5074,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                         // E4: instant mute/unmute on the live preview — no dialog, no delay.
                                         videoMuted = !videoMuted
                                         val v = if (videoMuted) 0f else 1f
-                                        runCatching { videoPlayer?.setVolume(v, v) }
+                                        runCatching { exoPlayer?.volume = v }
                                     }) { Text(if (videoMuted) "🔇 Muted" else "🔊 Sound", color = Color.White) }
                                     Text(if (videoMuted) "Video audio will be off in the posted status" else "Video audio will be kept", color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall)
                                 }
@@ -5538,7 +5525,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
     var replyText by remember { mutableStateOf("") }
     var progress by remember(si, ii) { mutableStateOf(0f) }
     var videoReady by remember(st.mediaName, si, ii) { mutableStateOf(false) }   // video prepared → drive bar from real position
-    var videoView by remember(st.mediaName, si, ii) { mutableStateOf<VideoView?>(null) }
+    var exoPlayer by remember(st.mediaName, si, ii) { mutableStateOf<androidx.media3.exoplayer.ExoPlayer?>(null) }
     var confirmDelete by remember { mutableStateOf<String?>(null) }
     var showViewers by remember { mutableStateOf(false) }
     val myMine = items.first().mine
@@ -5583,19 +5570,19 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
         goNext()
     }
     // video: drive the top bar from REAL playback position so it never looks stuck
-    LaunchedEffect(videoView, videoReady, si, ii) {
-        val vv = videoView ?: return@LaunchedEffect
+    LaunchedEffect(exoPlayer, videoReady, si, ii) {
+        val pl = exoPlayer ?: return@LaunchedEffect
         while (true) {
-            val d = runCatching { vv.duration }.getOrDefault(0)
-            if (d > 0) progress = (runCatching { vv.currentPosition }.getOrDefault(0).toFloat() / d).coerceIn(0f, 1f)
+            val d = runCatching { pl.duration }.getOrDefault(0L)
+            if (d > 0) progress = (runCatching { pl.currentPosition }.getOrDefault(0L).toFloat() / d).coerceIn(0f, 1f)
             delay(80)
         }
     }
 
     // video: pause while the viewers sheet is open, resume when it closes
-    LaunchedEffect(showViewers, videoView, videoReady) {
-        val vv = videoView ?: return@LaunchedEffect
-        if (showViewers) runCatching { vv.pause() } else if (videoReady) runCatching { vv.start() }
+    LaunchedEffect(showViewers, exoPlayer, videoReady) {
+        val pl = exoPlayer ?: return@LaunchedEffect
+        if (showViewers) runCatching { pl.pause() } else if (videoReady) runCatching { pl.play() }
     }
 
     Dialog(
@@ -5631,13 +5618,15 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                     }
                 } else if (st.mediaType == "video" && st.mediaName != null) {
                     key(si, ii, st.mediaName) {
-                        AndroidView(factory = { c -> VideoView(c).apply {
-                            setVideoURI(Uri.parse(GatewayClient.mediaUrl(st.mediaName!!)))
-                            setOnPreparedListener { it.start(); videoReady = true }
-                            setOnCompletionListener { goNext() }
-                            setOnErrorListener { _, _, _ -> goNext(); true }   // failed video -> skip instead of black screen
-                            videoView = this
-                        } }, modifier = Modifier.fillMaxSize())
+                        ExoVideoPlayer(
+                            uri = Uri.parse(GatewayClient.mediaUrl(st.mediaName!!)),
+                            modifier = Modifier.fillMaxSize(),
+                            autoPlay = true,
+                            onPlayer = { exoPlayer = it },
+                            onReady = { videoReady = true },
+                            onCompletion = { goNext() },
+                            onError = { goNext() },   // failed video -> skip instead of black screen
+                        )
                         // C4: show a spinner while the video buffers — previously
                         // it was a black screen with no feedback (felt like "lag").
                         if (!videoReady) {
