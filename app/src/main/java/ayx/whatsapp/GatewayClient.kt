@@ -175,12 +175,17 @@ object GatewayClient {
                     } else {
                         post("/sendraw", JSONObject().put("jid", jid).put("text", text).put("clientMsgId", clientMsgId))
                     }
+                    // M1: check `queued` BEFORE `ok` — a gateway may return
+                    // {ok:true, queued:true} ("not sent, will retry"); treating
+                    // that as Sent silently DROPS the message (it was never
+                    // sent and never entered the local queue). Queued must
+                    // always win so the message lands in SendQueue.
+                    if (o.optBoolean("queued", false)) {
+                        return@withContext SendOutcome.Queued(o.optString("error", "queued"))
+                    }
                     if (o.optBoolean("ok", false)) return@withContext SendOutcome.Sent
                     if (o.optBoolean("needRelogin", false) || isLoggedOutError(o.optString("error", ""))) {
                         return@withContext SendOutcome.NeedRelogin
-                    }
-                    if (o.optBoolean("queued", false)) {
-                        return@withContext SendOutcome.Queued(o.optString("error", "queued"))
                     }
                     // Plain failure (e.g. "not connected" without queue flag):
                     // retry once or twice, then hand to the local queue.

@@ -14,6 +14,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -51,8 +52,15 @@ fun ExoVideoPlayer(
         val httpFactory = DefaultHttpDataSource.Factory().apply {
             if (!headers.isNullOrEmpty()) setDefaultRequestProperties(headers)
         }
+        // V1 fix: DefaultHttpDataSource only understands http(s):// — the
+        // status editor and composer pass content:// picker URIs, which threw
+        // UnsupportedSchemeException -> black preview + "preview failed" toast.
+        // DefaultDataSource routes content://, file://, asset:// etc. to the
+        // right reader and still falls back to httpFactory (with X-Api-Token
+        // headers) for http(s):// server URLs.
+        val dataSourceFactory = DefaultDataSource.Factory(context, httpFactory)
         val mediaSourceFactory = DefaultMediaSourceFactory(context)
-            .setDataSourceFactory(httpFactory)
+            .setDataSourceFactory(dataSourceFactory)
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
             .build()

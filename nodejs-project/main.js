@@ -2439,7 +2439,7 @@ app.post('/sendreply', async (req, res) => {
       // queue immediately. The app shows "sending…" and the background flush
       // delivers when the socket is back. Connected sends stay <2s.
       try { scheduleReconnect(0) } catch (_) {}
-      return res.json({ ok: true, queued: true, error: 'reconnecting — queued, will send automatically' })
+      return res.json({ ok: false, queued: true, error: 'reconnecting — queued, will send automatically' })
     }
     const quoted = rawStore.get(quotedId)
     let sentId = null
@@ -2599,7 +2599,7 @@ app.post('/sendraw', async (req, res) => {
       // queue immediately. The app shows "sending…" and the background flush
       // delivers when the socket is back. Connected sends stay <2s.
       try { scheduleReconnect(0) } catch (_) {}
-      return res.json({ ok: true, queued: true, error: 'reconnecting — queued, will send automatically' })
+      return res.json({ ok: false, queued: true, error: 'reconnecting — queued, will send automatically' })
     }
     const r = await sock.sendMessage(jid, { text })
     markSendId(String(req.body?.clientMsgId || ''))
