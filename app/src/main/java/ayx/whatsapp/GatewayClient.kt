@@ -255,7 +255,9 @@ object GatewayClient {
 
     suspend fun sendMedia(jid: String, dataB64: String, type: String, filename: String, caption: String): Boolean = withContext(Dispatchers.IO) {
         val body = JSONObject().put("jid", jid).put("type", type).put("data", dataB64).put("filename", filename).put("caption", caption)
-        val o = post("/sendmedia", body)
+        // B2: video uploads to WhatsApp servers can take minutes — the old 20s default timed out
+        // on real videos ("send failed" while Node kept uploading, or the video never arriving).
+        val o = post("/sendmedia", body, readTimeoutMs = 180000)
         if (o.optBoolean("ok", false)) true else throw RuntimeException(o.optString("error", "send failed"))
     }
 

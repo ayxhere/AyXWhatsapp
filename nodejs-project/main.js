@@ -1911,7 +1911,7 @@ async function startSocket() {
 }
 
 const app = express()
-app.use(express.json({ limit: '64mb' }))
+app.use(express.json({ limit: '256mb' }))
 
 app.get('/health', (req, res) => res.json({ ok: true, node: process.version }))
 
@@ -2127,7 +2127,12 @@ app.post('/sendmedia', async (req, res) => {
     const buf = Buffer.from(b64, 'base64')
     let content
     if (type === 'image') content = { image: buf, caption }
-    else if (type === 'video') content = { video: buf, caption }
+    else if (type === 'video') {
+      // B2: give Baileys the filename + mimetype — some containers fail to send/detect without them.
+      const ext = (filename.split('.').pop() || '').toLowerCase()
+      const mime = ext === 'mp4' ? 'video/mp4' : ext === 'mov' ? 'video/quicktime' : ext === 'webm' ? 'video/webm' : ext === 'mkv' ? 'video/x-matroska' : 'video/mp4'
+      content = { video: buf, caption, mimetype: mime, fileName: filename }
+    }
     else if (type === 'audio') content = { audio: buf, mimetype: 'audio/mp4' }
     else content = { document: buf, fileName: filename, mimetype: 'application/octet-stream', caption }
     const r = await sock.sendMessage(jid, content)
@@ -2316,6 +2321,9 @@ app.post('/status/post', async (req, res) => {
     const r = await sock.sendMessage('status@broadcast', content, { statusJidList: jids, broadcast: true, backgroundColor: '#000000', font: 3 })
     const id = (r && r.key && r.key.id) || null
     diag.push('id=' + id)
+    // B3: keep the raw message so "Forward status to anyone" works for my own media statuses
+    // (text statuses already did this; media/voice did not → forward failed with "no content").
+    if (id) { try { rawStore.set(id, { key: r.key, message: r.message }); if (rawStore.size > 500) { const rk = rawStore.keys().next().value; rawStore.delete(rk) } } catch (_) {} }
     try {
       fs.mkdirSync(MEDIA_DIR, { recursive: true })
       const ext = type === 'video' ? '.mp4' : '.jpg'
@@ -2416,10 +2424,28 @@ app.post('/forward', async (req, res) => {
     if (!id || jids.length === 0) return res.json({ ok: false, error: 'id,jids required' })
     const raw = rawStore.get(id)          // full { key, message } preserves media/type
     const e = msgStore.get(id)
+    // B3 fallback: statuses posted before the rawStore fix (or evicted from it) still have
+    // their media cached on disk — rebuild fresh content from the file instead of failing.
+    let fallback = null
+    if (!raw || !raw.message) {
+      try {
+        const st = statuses.find(x => x.id === id)
+        if (st && st.mediaName) {
+          const fp = path.join(MEDIA_DIR, st.mediaName)
+          if (fs.existsSync(fp)) {
+            const buf = fs.readFileSync(fp)
+            if (st.mediaType === 'video') fallback = { video: buf, caption: st.text || '' }
+            else if (st.mediaType === 'audio') fallback = { audio: buf, mimetype: 'audio/mp4', ptt: true }
+            else fallback = { image: buf, caption: st.text || '' }
+          }
+        } else if (st && st.text) fallback = { text: st.text }
+      } catch (_) {}
+    }
     let sent = 0; const errs = []
     for (const jid of jids) {
       try {
         if (raw && raw.message) await sock.sendMessage(jid, { forward: { key: raw.key, message: raw.message }, force: true })
+        else if (fallback) await sock.sendMessage(jid, fallback)
         else if (e && e.text) await sock.sendMessage(jid, { text: e.text })
         else throw new Error('no content to forward')
         sent++
@@ -2783,6 +2809,8 @@ app.post('/status/voice', async (req, res) => {
     const content = { audio: v.buf, mimetype: v.mime, ptt: v.ptt !== false, seconds: estSeconds(text) }
     const r = await sock.sendMessage('status@broadcast', content, { statusJidList: jids, broadcast: true })
     const id = (r && r.key && r.key.id) || null
+    // B3: keep raw so voice statuses can be forwarded too.
+    if (id) { try { rawStore.set(id, { key: r.key, message: r.message }); if (rawStore.size > 500) { const rk = rawStore.keys().next().value; rawStore.delete(rk) } } catch (_) {} }
     try {
       fs.mkdirSync(MEDIA_DIR, { recursive: true })
       const ext = (v.mime && v.mime.includes('ogg')) ? '.ogg' : (v.mime && v.mime.includes('mpeg') ? '.mp3' : '.wav')

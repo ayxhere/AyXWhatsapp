@@ -769,8 +769,8 @@ fun GatewayApp() {
     var showSetName by remember { mutableStateOf(false) }
     var forwardMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
     var forwardStatusId by remember { mutableStateOf<String?>(null) }   // V1: status ID being forwarded via the viewer menu
-    var viewImg by remember { mutableStateOf<ImageBitmap?>(null) }
-    var viewVideoUrl by remember { mutableStateOf<String?>(null) }
+    var viewImg by remember { mutableStateOf<Pair<ImageBitmap, GatewayClient.Msg>?>(null) }
+    var viewVideoUrl by remember { mutableStateOf<Pair<String, GatewayClient.Msg>?>(null) }
     var dpView by remember { mutableStateOf<String?>(null) }   // jid whose profile photo is previewed full-screen
     var toast by remember { mutableStateOf<String?>(null) }
     val optimistic = remember { mutableStateListOf<OptMsg>() }
@@ -781,13 +781,13 @@ fun GatewayApp() {
     fun notify(s: String) { toast = s }
     fun openMedia(m: GatewayClient.Msg) {
         if (m.mediaType == "video") {
-            if (m.mediaName != null) viewVideoUrl = GatewayClient.mediaUrl(m.mediaName!!) else notify("turn on Save media to play video")
+            if (m.mediaName != null) viewVideoUrl = GatewayClient.mediaUrl(m.mediaName!!) to m else notify("turn on Save media to play video")
             return
         }
         scope.launch {
             val full = m.mediaName?.let { GatewayClient.mediaBytes(it) }
             val bmp = if (full != null) BitmapFactory.decodeByteArray(full, 0, full.size)?.asImageBitmap() else decodeThumb(m.thumb)
-            if (bmp != null) viewImg = bmp else notify("turn on Save media to view full image")
+            if (bmp != null) viewImg = bmp to m else notify("turn on Save media to view full image")
         }
     }
 
@@ -1219,16 +1219,22 @@ fun GatewayApp() {
     }
 
 
-    // image viewer (full screen)
-    viewImg?.let { img ->
+    // image viewer (full screen) — B7: proper header (back + title + download/share), not just the bare image.
+    viewImg?.let { (img, msg) ->
         Dialog(onDismissRequest = { viewImg = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-            Box(Modifier.fillMaxSize().background(Color.Black).clickable { viewImg = null }, contentAlignment = Alignment.Center) {
-                Image(img, "image", Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+            Box(Modifier.fillMaxSize().background(Color.Black)) {
+                Image(img, "image", Modifier.fillMaxSize().clickable { viewImg = null }, contentScale = ContentScale.Fit)
+                Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 4.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { viewImg = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "back", tint = Color.White) }
+                    Text(chatTitleOf(messages, msg.chat), color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.weight(1f))
+                    IconButton(onClick = { downloadMedia(scope, ctx, msg) { s -> notify(s) } }) { Icon(Icons.Filled.Download, "download", tint = Color.White) }
+                    IconButton(onClick = { shareMedia(scope, ctx, msg) { s -> notify(s) } }) { Icon(Icons.Filled.Share, "share", tint = Color.White) }
+                }
             }
         }
     }
-    // video viewer (full screen, in-app player)
-    viewVideoUrl?.let { url ->
+    // video viewer (full screen, in-app player) — B7: proper header instead of just a "Close" text button.
+    viewVideoUrl?.let { (url, msg) ->
         Dialog(onDismissRequest = { viewVideoUrl = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
             Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
                 AndroidView(factory = { c ->
@@ -1240,8 +1246,11 @@ fun GatewayApp() {
                         setOnPreparedListener { it.start() }
                     }
                 }, modifier = Modifier.fillMaxWidth())
-                TextButton(onClick = { viewVideoUrl = null }, modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding()) {
-                    Text("Close", color = Color.White)
+                Row(Modifier.align(Alignment.TopCenter).fillMaxWidth().statusBarsPadding().padding(horizontal = 4.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { viewVideoUrl = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "back", tint = Color.White) }
+                    Text(chatTitleOf(messages, msg.chat), color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.weight(1f))
+                    IconButton(onClick = { downloadMedia(scope, ctx, msg) { s -> notify(s) } }) { Icon(Icons.Filled.Download, "download", tint = Color.White) }
+                    IconButton(onClick = { shareMedia(scope, ctx, msg) { s -> notify(s) } }) { Icon(Icons.Filled.Share, "share", tint = Color.White) }
                 }
             }
         }
@@ -5128,6 +5137,19 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
         // V5: draw behind system bars so no header from the underlying screen leaks above the viewer.
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
     ) {
+        // B1: make the window itself opaque black + edge-to-edge. The dialog window
+        // background is transparent by default, so during the AyxAnimatedScreen
+        // enter transition (or if insets aren't consumed) the underlying screen's
+        // header could peek through at the top. An opaque window kills that leak.
+        val viewerWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
+        SideEffect {
+            viewerWindow?.let {
+                WindowCompat.setDecorFitsSystemWindows(it, false)
+                it.statusBarColor = android.graphics.Color.TRANSPARENT
+                it.navigationBarColor = android.graphics.Color.TRANSPARENT
+                it.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.BLACK))
+            }
+        }
         Surface(Modifier.fillMaxSize(), color = Color.Black) {
             Box(Modifier.fillMaxSize().blur(statusBlur).pointerInput(myMine) {
                 if (myMine) { var dyAcc = 0f; detectVerticalDragGestures(onDragEnd = { if (dyAcc < -80f) showViewers = true; dyAcc = 0f }) { _, dy -> dyAcc += dy } }
@@ -5192,14 +5214,26 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                         "video" -> !videoReady                 // buffering the clip
                         else -> imgLoading && bmp == null      // image still downloading (no thumb yet)
                     }
+                    // B6: clean custom segments — plain track + fill boxes, no M3 indicator (no dot/thumb artifacts).
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                         items.indices.forEach { idx ->
-                            val segMod = Modifier.weight(1f).height(3.dp).clip(uiShapeFor(2))
-                            when {
-                                idx < ii -> LinearProgressIndicator(progress = { 1f }, modifier = segMod, color = Color.White, trackColor = Color.White.copy(alpha = 0.35f))
-                                idx == ii && activeLoading -> LinearProgressIndicator(modifier = segMod, color = Color.White, trackColor = Color.White.copy(alpha = 0.35f))   // material snake (indeterminate)
-                                idx == ii -> LinearProgressIndicator(progress = { progress }, modifier = segMod, color = Color.White, trackColor = Color.White.copy(alpha = 0.35f))
-                                else -> LinearProgressIndicator(progress = { 0f }, modifier = segMod, color = Color.White, trackColor = Color.White.copy(alpha = 0.35f))
+                            val fillFrac: Float = when {
+                                idx < ii -> 1f
+                                idx == ii && !activeLoading -> progress.coerceIn(0f, 1f)
+                                else -> 0f
+                            }
+                            Box(Modifier.weight(1f).height(3.dp).clip(RoundedCornerShape(2.dp)).background(Color.White.copy(alpha = 0.35f))) {
+                                if (idx == ii && activeLoading) {
+                                    // loading shimmer: a white bar sweeping across the segment
+                                    val sweep by rememberInfiniteTransition(label = "segsweep").animateFloat(
+                                        initialValue = -0.6f, targetValue = 1.2f,
+                                        animationSpec = infiniteRepeatable(tween(1100, easing = LinearEasing), RepeatMode.Restart),
+                                        label = "segsweep"
+                                    )
+                                    Box(Modifier.fillMaxHeight().fillMaxWidth(0.45f).offset(x = (sweep * 120).dp).background(Color.White))
+                                } else if (fillFrac > 0f) {
+                                    Box(Modifier.fillMaxHeight().fillMaxWidth(fillFrac).background(Color.White))
+                                }
                             }
                         }
                     }
