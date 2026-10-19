@@ -1351,6 +1351,18 @@ async function synthVoice(text, voice, langOverride) {
   return null
 }
 
+// I: delivery/read receipts can arrive BEFORE the entry exists in msgStore (media echo is stored only
+// after its download finishes) and a late echo merge used to reset status back to the clock icon.
+// Keep early receipts here and never let a merge LOWER a sent message's status.
+const _pendingStatus = new Map()   // msgId -> highest receipt status seen before the entry existed
+function adoptPendingStatus(e) {
+  try {
+    if (!e || !e.id || !e.fromMe) return
+    const ps = _pendingStatus.get(e.id)
+    if (ps && ps > (e.status | 0)) e.status = ps
+    if (ps && ps >= 4) _pendingStatus.delete(e.id)
+  } catch (_) {}
+}
 function remember(id, entry) {
   // Group entries stored by other paths (echoes, edits): fill chatName from
   // the cached subject so group rows always have a group name to show.
@@ -1358,12 +1370,22 @@ function remember(id, entry) {
     entry.chatName = cachedGroupSubject(entry.chat)
   }
   if (id && msgStore.has(id) && msgLog.some(m => m && m.id === id)) {   // same message delivered twice → update, never double
-    const old = msgStore.get(id); Object.assign(old, entry, { id }); saveMessagesDebounced()
+    const old = msgStore.get(id)
+    const prevStatus = old.status | 0, prevMedia = old.media, prevMediaType = old.mediaType
+    Object.assign(old, entry, { id })
+    if (old.fromMe) {   // I: a late echo/merge must never downgrade ticks or drop already-known media info
+      if (prevStatus > (old.status | 0)) old.status = prevStatus
+      if (!old.media && prevMedia) old.media = prevMedia
+      if (!old.mediaType && prevMediaType) old.mediaType = prevMediaType
+      adoptPendingStatus(old)
+    }
+    saveMessagesDebounced()
     touchChat(entry.chat, { lastTs: entry.ts || 0, lastText: entry.text || '', lastFromMe: !!entry.fromMe, lastMediaType: (entry.media && entry.media.type) || '', ...(entry.chatName ? { chatName: entry.chatName } : {}) })
     return
   }
   if (id) {
     entry.id = id
+    adoptPendingStatus(entry)   // I: receipt that beat the entry
     msgStore.set(id, entry)
     if (msgStore.size > 1500) { const k = msgStore.keys().next().value; msgStore.delete(k) }
   }
@@ -1883,6 +1905,11 @@ function handleUpdates(updates) {
         if (e && e.fromMe) {
           const s = upd.status | 0
           if (s > (e.status | 0)) { e.status = s; saveMessagesDebounced() }
+        } else if (!e && u.key.fromMe) {
+          // I: entry not stored yet (media echo still downloading) — keep the receipt for when it is
+          const s = upd.status | 0
+          if (s > (_pendingStatus.get(u.key.id) | 0)) _pendingStatus.set(u.key.id, s)
+          if (_pendingStatus.size > 500) { const k = _pendingStatus.keys().next().value; _pendingStatus.delete(k) }
         }
       }
     } catch (_) {}
@@ -2095,7 +2122,7 @@ app.post('/send', async (req, res) => {
     if (sentId) {
       storeRawSent(sentId, r.key, r.message)  // A+: decrypt-retry + quotes/forwards + disk backup
       const entry = { chat: canon(jid), fromMe: true, text, ts: Date.now(), id: sentId, status: 2 }
-      if (!msgStore.has(sentId)) { msgStore.set(sentId, entry); msgLog.unshift(entry); saveMessagesDebounced() }
+      if (!msgStore.has(sentId)) { adoptPendingStatus(entry); msgStore.set(sentId, entry); msgLog.unshift(entry); saveMessagesDebounced() }
     }
     res.json({ ok: true, id: sentId })
   } catch (e) {
@@ -2288,7 +2315,7 @@ app.post('/sendmedia', async (req, res) => {
         // S2: add to msgStore immediately with status=2 so receipts update the tick.
         if (id && !msgStore.has(id)) {
           const entry = { chat: canon(jid), fromMe: true, text: caption || '', ts: Date.now(), id, status: 2, mediaType: type }
-          msgStore.set(id, entry); msgLog.unshift(entry); saveMessagesDebounced()
+          adoptPendingStatus(entry); msgStore.set(id, entry); msgLog.unshift(entry); saveMessagesDebounced()
         }
         mediaUploads.set(uploadId, { state: 'done', jid, type, id })
         log('sendmedia done', uploadId, 'id=' + id)
@@ -2548,8 +2575,8 @@ app.post('/status/post', async (req, res) => {
   const diag = []
   try {
     if (!sock) return res.status(409).json({ ok: false, error: 'not connected' })
-    if (status.connection !== 'open') {
-      const ok = await waitForOpen()
+    {
+      const ok = await ensureLive()   // G: zombie-safe (probes + reconnects if socket is dead-but-"open")
       diag.push('reconnedwait=' + ok)
       if (!ok) return res.status(409).json({ ok: false, error: 'connection reconnecting — try again in a moment', diag: diag.join(' ') })
     }
@@ -2604,7 +2631,7 @@ app.post('/status/post', async (req, res) => {
 app.post('/status/text', async (req, res) => {
   try {
     if (!sock) return res.status(409).json({ ok: false, error: 'not connected' })
-    if (status.connection !== 'open') { const ok = await waitForOpen(); if (!ok) return res.status(409).json({ ok: false, error: 'connection reconnecting — try again in a moment' }) }
+    { const ok = await ensureLive(); if (!ok) return res.status(409).json({ ok: false, error: 'connection reconnecting — try again in a moment' }) }   // G: zombie-safe
     const text = String(req.body?.text || '').trim()
     if (!text) return res.status(400).json({ ok: false, error: 'no text' })
     const bg = String(req.body?.bg || '#128C7E')
@@ -2664,7 +2691,7 @@ app.post('/sendreply', async (req, res) => {
     // receipts can find it even if the messages.upsert echo is delayed.
     if (sentId) {
       const entry = { chat: canon(jid), fromMe: true, text, ts: Date.now(), id: sentId, status: 2 }
-      if (!msgStore.has(sentId)) { msgStore.set(sentId, entry); msgLog.unshift(entry); saveMessagesDebounced() }
+      if (!msgStore.has(sentId)) { adoptPendingStatus(entry); msgStore.set(sentId, entry); msgLog.unshift(entry); saveMessagesDebounced() }
     }
     res.json({ ok: true, id: sentId })
   } catch (e) {
@@ -2675,7 +2702,7 @@ app.post('/sendreply', async (req, res) => {
 
 app.post('/editmessage', async (req, res) => {
   try {
-    if (!sock || status.connection !== 'open') return res.json({ ok: false, error: 'not connected' })
+    if (!sock || !(await ensureLive())) return res.json({ ok: false, error: 'not connected' })   // G: zombie-safe
     const jid = String(req.body?.jid || '')
     const id = String(req.body?.id || '')
     const text = String(req.body?.text || '')
@@ -2692,7 +2719,7 @@ app.post('/editmessage', async (req, res) => {
 
 app.post('/forward', async (req, res) => {
   try {
-    if (!sock || status.connection !== 'open') return res.json({ ok: false, error: 'not connected' })
+    if (!sock || !(await ensureLive())) return res.json({ ok: false, error: 'not connected' })   // G: zombie-safe
     const id = String(req.body?.id || '')
     const jids = Array.isArray(req.body?.jids) ? req.body.jids.map(String).filter(Boolean) : []
     if (!id || jids.length === 0) return res.json({ ok: false, error: 'id,jids required' })
@@ -2819,7 +2846,7 @@ app.post('/sendraw', async (req, res) => {
     if (sentId) {
       storeRawSent(sentId, r.key, r.message)  // A+: decrypt-retry + quotes/forwards + disk backup
       const entry = { chat: canon(jid), fromMe: true, text, ts: Date.now(), id: sentId, status: 2 }
-      if (!msgStore.has(sentId)) { msgStore.set(sentId, entry); msgLog.unshift(entry); saveMessagesDebounced() }
+      if (!msgStore.has(sentId)) { adoptPendingStatus(entry); msgStore.set(sentId, entry); msgLog.unshift(entry); saveMessagesDebounced() }
     }
     res.json({ ok: true, id: sentId })
   } catch (e) {
@@ -3114,7 +3141,7 @@ app.post('/onwhatsapp', async (req, res) => {
 // AI voice status: type text → synthesize speech → post as a voice note status
 app.post('/status/voice', async (req, res) => {
   try {
-    if (!sock || status.connection !== 'open') return res.json({ ok: false, error: 'not connected' })
+    if (!sock || !(await ensureLive())) return res.json({ ok: false, error: 'not connected' })   // G: zombie-safe
     const text = String((req.body && req.body.text) || '').trim()
     if (!text) return res.json({ ok: false, error: 'no text' })
     const v = await synthVoice(text, settings.aiTtsVoice, ttsLangCode(text))

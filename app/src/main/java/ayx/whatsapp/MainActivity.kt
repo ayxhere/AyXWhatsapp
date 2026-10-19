@@ -1298,21 +1298,25 @@ fun GatewayApp() {
 
     // image viewer (full screen) — B7: proper header (back + title + download/share), not just the bare image.
     viewImg?.let { (img, msg) ->
-        Dialog(onDismissRequest = { viewImg = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Dialog(onDismissRequest = { viewImg = null }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+            EdgeToEdgeBlackDialogWindow()
             Box(Modifier.fillMaxSize().background(Color.Black)) {
                 Image(img, "image", Modifier.fillMaxSize().clickable { viewImg = null }, contentScale = ContentScale.Fit)
-                Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 4.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { viewImg = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "back", tint = Color.White) }
-                    Text(chatTitleOf(messages, msg.chat), color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.weight(1f))
-                    IconButton(onClick = { downloadMedia(scope, ctx, msg) { s -> notify(s) } }) { Icon(Icons.Filled.Download, "download", tint = Color.White) }
-                    IconButton(onClick = { shareMedia(scope, ctx, msg) { s -> notify(s) } }) { Icon(Icons.Filled.Share, "share", tint = Color.White) }
-                }
+                ViewerTopBar(
+                    title = chatTitleOf(messages, msg.chat), caption = msg.text,
+                    onBack = { viewImg = null },
+                    onDownload = { downloadMedia(scope, ctx, msg) { s -> notify(s) } },
+                    onShare = { shareMedia(scope, ctx, msg) { s -> notify(s) } },
+                    onForward = { if (msg.id == null) notify("can't forward this") else { viewImg = null; forwardMsg = msg } },
+                    modifier = Modifier.align(Alignment.TopCenter),
+                )
             }
         }
     }
     // video viewer (full screen, in-app player) — B7: proper header instead of just a "Close" text button.
     viewVideoUrl?.let { (url, msg) ->
-        Dialog(onDismissRequest = { viewVideoUrl = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Dialog(onDismissRequest = { viewVideoUrl = null }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+            EdgeToEdgeBlackDialogWindow()
             Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
                 ExoVideoPlayer(
                     uri = Uri.parse(url),
@@ -1321,12 +1325,14 @@ fun GatewayApp() {
                     autoPlay = true,
                     showController = true,
                 )
-                Row(Modifier.align(Alignment.TopCenter).fillMaxWidth().statusBarsPadding().padding(horizontal = 4.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { viewVideoUrl = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "back", tint = Color.White) }
-                    Text(chatTitleOf(messages, msg.chat), color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.weight(1f))
-                    IconButton(onClick = { downloadMedia(scope, ctx, msg) { s -> notify(s) } }) { Icon(Icons.Filled.Download, "download", tint = Color.White) }
-                    IconButton(onClick = { shareMedia(scope, ctx, msg) { s -> notify(s) } }) { Icon(Icons.Filled.Share, "share", tint = Color.White) }
-                }
+                ViewerTopBar(
+                    title = chatTitleOf(messages, msg.chat), caption = msg.text,
+                    onBack = { viewVideoUrl = null },
+                    onDownload = { downloadMedia(scope, ctx, msg) { s -> notify(s) } },
+                    onShare = { shareMedia(scope, ctx, msg) { s -> notify(s) } },
+                    onForward = { if (msg.id == null) notify("can't forward this") else { viewVideoUrl = null; forwardMsg = msg } },
+                    modifier = Modifier.align(Alignment.TopCenter),
+                )
             }
         }
     }
@@ -2957,6 +2963,86 @@ private fun AudioPlayer(url: String, tint: Color) {
             else Icon(if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "play", tint = tint, modifier = Modifier.size(24.dp))
         }
         LinearProgressIndicator(progress = { progress }, modifier = Modifier.weight(1f).height(4.dp), color = tint, trackColor = tint.copy(alpha = 0.3f))
+    }
+}
+
+// J: edge-to-edge, fully opaque black dialog window. Used by the full-screen viewers so nothing from the
+// screen underneath (e.g. the status list row) can show through the status-bar area at the top.
+@Composable
+private fun EdgeToEdgeBlackDialogWindow() {
+    val w = (LocalView.current.parent as? DialogWindowProvider)?.window
+    SideEffect {
+        w?.let {
+            WindowCompat.setDecorFitsSystemWindows(it, false)
+            it.statusBarColor = android.graphics.Color.TRANSPARENT
+            it.navigationBarColor = android.graphics.Color.TRANSPARENT
+            it.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.BLACK))
+            it.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            it.setDimAmount(0f)
+            it.addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS)
+            it.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val a = it.attributes
+                a.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                it.attributes = a
+            }
+        }
+    }
+}
+
+@Composable
+private fun ViewerRoundBtn(onClick: () -> Unit, content: @Composable () -> Unit) {
+    Box(Modifier.size(40.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.14f)).clickable(onClick = onClick), contentAlignment = Alignment.Center) { content() }
+}
+
+// J: header of the full-screen photo/video viewer — one rounded frosted box that starts at the very top of the
+// screen (behind the notification bar) and holds round back / download / share / 3-dot buttons + the chat name.
+@Composable
+private fun ViewerTopBar(
+    title: String,
+    caption: String,
+    onBack: () -> Unit,
+    onDownload: () -> Unit,
+    onShare: () -> Unit,
+    onForward: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val ctx = LocalContext.current
+    var menu by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp)
+    Box(
+        modifier.fillMaxWidth()
+            .clip(shape)
+            .background(Color.Black.copy(alpha = 0.58f))
+            .border(0.5.dp, Color.White.copy(alpha = 0.10f), shape)
+            .statusBarsPadding()
+            .padding(horizontal = 10.dp, vertical = 8.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ViewerRoundBtn(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "back", tint = Color.White) }
+            Spacer(Modifier.width(10.dp))
+            Text(title, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            ViewerRoundBtn(onDownload) { Icon(Icons.Filled.Download, "download", tint = Color.White) }
+            Spacer(Modifier.width(8.dp))
+            ViewerRoundBtn(onShare) { Icon(Icons.Filled.Share, "share", tint = Color.White) }
+            Spacer(Modifier.width(8.dp))
+            Box {
+                ViewerRoundBtn({ menu = true }) { Icon(Icons.Filled.MoreVert, "menu", tint = Color.White) }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(text = { Text("Forward") }, onClick = { menu = false; onForward() })
+                    if (caption.isNotBlank()) DropdownMenuItem(text = { Text("Copy caption") }, onClick = {
+                        menu = false
+                        runCatching {
+                            val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                            cm.setPrimaryClip(android.content.ClipData.newPlainText("caption", caption))
+                            Toast.makeText(ctx, "Copied", Toast.LENGTH_SHORT).show()
+                        }
+                    })
+                    DropdownMenuItem(text = { Text("Download") }, onClick = { menu = false; onDownload() })
+                    DropdownMenuItem(text = { Text("Share") }, onClick = { menu = false; onShare() })
+                }
+            }
+        }
     }
 }
 
@@ -4931,7 +5017,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
         while (!playing) { delay(140); previewPos += 240; if (previewPos > to) previewPos = from }
     }
     val audLabel = when (audience) { "except" -> "Except " + selected.size; "only" -> "Only " + selected.size; else -> "My contacts" }
-    Dialog(onDismissRequest = onCancel, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    Dialog(onDismissRequest = onCancel, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         // Keyboard must NOT move the media: the dialog window ignores IME
         // resize (ADJUST_NOTHING) so the photo/video stays fixed full-screen.
         // E2: ADJUST_NOTHING stops IME inset dispatch, so imePadding() alone
@@ -4939,8 +5025,17 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
         // GlobalLayoutListener and pad ONLY the bottom controls row.
         val dialogView = LocalView.current
         val dialogWindow = (dialogView.parent as? DialogWindowProvider)?.window
+        // H: ADJUST_NOTHING never dispatched IME insets on newer Android, so the caption box
+        // stayed hidden behind the keyboard. With an edge-to-edge dialog + ADJUST_RESIZE the
+        // IME arrives as WindowInsets.ime (window is NOT resized, so the media stays fixed)
+        // and only the bottom controls row is lifted. The manual detector below stays as a fallback.
         SideEffect {
-            dialogWindow?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
+            dialogWindow?.let { w ->
+                WindowCompat.setDecorFitsSystemWindows(w, false)
+                w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+                w.statusBarColor = android.graphics.Color.TRANSPARENT
+                w.navigationBarColor = android.graphics.Color.TRANSPARENT
+            }
         }
         var keyboardPx by remember { mutableStateOf(0) }
         val focusManager = LocalFocusManager.current
@@ -4956,7 +5051,11 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
             root.viewTreeObserver.addOnGlobalLayoutListener(listener)
             onDispose { runCatching { root.viewTreeObserver.removeOnGlobalLayoutListener(listener) } }
         }
-        val keyboardDp = with(LocalDensity.current) { keyboardPx.toDp() }
+        val density = LocalDensity.current
+        val imeBottomPx = WindowInsets.ime.getBottom(density)
+        val navBottomPx = WindowInsets.navigationBars.getBottom(density)
+        // H: single bottom padding (IME inset already includes the nav bar area, so no double counting)
+        val controlsBottomDp = with(density) { maxOf(imeBottomPx, keyboardPx, navBottomPx).toDp() }
         Surface(Modifier.fillMaxSize(), color = Color.Black) {
             // ---- Full-bleed overlay layout: media fills the screen; top bar + controls float above it ----
             Box(Modifier.fillMaxSize().blur(editorBlur)) {
@@ -5105,7 +5204,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                     .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.78f))))
                     // E2: manual keyboard padding (imePadding doesn't work with
                     // ADJUST_NOTHING) — only this row rises, media stays fixed.
-                    .navigationBarsPadding().padding(bottom = keyboardDp)) {
+                    .padding(bottom = controlsBottomDp)) {
                     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 10.dp)) {
                             // ---- Video trimmer panel (V3): toggled from the ✂ Trim button in the video header.
                             // Draggable left/right edges set the range; the selection itself IS the length (no Length slider).
@@ -5684,15 +5783,8 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
         // background is transparent by default, so during the AyxAnimatedScreen
         // enter transition (or if insets aren't consumed) the underlying screen's
         // header could peek through at the top. An opaque window kills that leak.
-        val viewerWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
-        SideEffect {
-            viewerWindow?.let {
-                WindowCompat.setDecorFitsSystemWindows(it, false)
-                it.statusBarColor = android.graphics.Color.TRANSPARENT
-                it.navigationBarColor = android.graphics.Color.TRANSPARENT
-                it.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.BLACK))
-            }
-        }
+        // J: no dim layer, window really covers the status-bar area → the status list row behind can't leak.
+        EdgeToEdgeBlackDialogWindow()
         Surface(Modifier.fillMaxSize(), color = Color.Black) {
             Box(Modifier.fillMaxSize().blur(statusBlur).pointerInput(myMine) {
                 if (myMine) { var dyAcc = 0f; detectVerticalDragGestures(onDragEnd = { if (dyAcc < -80f) showViewers = true; dyAcc = 0f }) { _, dy -> dyAcc += dy } }
@@ -5759,7 +5851,8 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                     Box(Modifier.weight(1f).fillMaxHeight().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { goPrev() })
                     Box(Modifier.weight(1.6f).fillMaxHeight().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { goNext() })
                 }
-                Column(Modifier.fillMaxWidth().statusBarsPadding().padding(8.dp)) {
+                // J: header block = solid black from the very top (notification bar) down to the user row.
+                Column(Modifier.fillMaxWidth().background(Color.Black).statusBarsPadding().padding(8.dp)) {
                     // active segment is "loading" (→ material snake) while media is still coming in or a voice note plays
                     val activeLoading = when (st.mediaType) {
                         "audio" -> true                       // voice status → indeterminate snake while it plays

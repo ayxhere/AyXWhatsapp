@@ -155,3 +155,15 @@ delivery is polling + local notifications — see "Deliberate deviations").
   `MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)` + the
   `create(fileName, masterKeyAlias, context, …)` overload. Same AES-256
   security properties, no behavior change.
+
+## G: send-path hardening (follow-up)
+- forward, editmessage, status/post, status/text, status/voice now use ensureLive() (zombie-safe) instead of a passive connection check.
+- Baileys pinned as an npm alias (npm:baileys@7.0.0-rc14) so the pin resolves even if the scoped package lags the unscoped one; imports of '@whiskeysockets/baileys' unchanged.
+
+## H: status composer keyboard fix
+- Status photo/video composer: dialog is now edge-to-edge with ADJUST_RESIZE; the caption row is lifted by WindowInsets.ime (manual detector kept as fallback). Media stays fixed, only the controls row rises.
+
+## I/J: media tick + viewer headers
+- Node remember()/handleUpdates: a late echo merge can no longer reset a sent message's status to the clock icon; receipts that arrive before the entry exists are kept and applied (fixes "photo read but still shows clock").
+- Chat photo/video viewer: new ViewerTopBar — frosted rounded box starting behind the notification bar with round back/download/share/3-dot buttons (3-dot: Forward, Copy caption, Download, Share). Viewer dialogs are edge-to-edge.
+- Status viewer: window forced edge-to-edge, opaque black, no dim; header block has a solid black background from the notification bar down (no status-list row leaking through the top).
