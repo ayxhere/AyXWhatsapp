@@ -371,6 +371,7 @@ class MainActivity : ComponentActivity() {
         SetName.init(applicationContext)
         GroupNameStore.init(applicationContext)
         ThemeStore.init(applicationContext)
+        Lang.init(applicationContext)
         UiStyleStore.init(applicationContext)
         ayx.whatsapp.ui.UiAnimationSettings.init(applicationContext)
         ChatStyle.init(applicationContext)
@@ -673,8 +674,8 @@ fun PrivacyGate(onAgree: () -> Unit) {
             Icon(Icons.Filled.Shield, null, tint = AYX_GREEN, modifier = Modifier.size(34.dp))
         }
         Spacer(Modifier.height(12.dp))
-        Text("Privacy Policy", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Text("Your data never leaves your device", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(Lang.s("privacy_policy"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text(Lang.s("your_data_device"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(16.dp))
         StyledSurface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f), modifier = Modifier.fillMaxWidth().weight(1f)) {
             Column(Modifier.verticalScroll(rememberScrollState()).padding(18.dp)) {
@@ -683,7 +684,7 @@ fun PrivacyGate(onAgree: () -> Unit) {
         }
         Spacer(Modifier.height(16.dp))
         Button(onClick = onAgree, modifier = Modifier.fillMaxWidth().height(52.dp), shape = uiShapeFor(14)) {
-            Icon(Icons.Filled.CheckCircle, null, modifier = Modifier.size(19.dp)); Spacer(Modifier.width(8.dp)); Text("I Agree & Continue", fontWeight = FontWeight.SemiBold)
+            Icon(Icons.Filled.CheckCircle, null, modifier = Modifier.size(19.dp)); Spacer(Modifier.width(8.dp)); Text(Lang.s("i_agree_continue"), fontWeight = FontWeight.SemiBold)
         }
         Spacer(Modifier.height(18.dp))
     }
@@ -1191,7 +1192,7 @@ fun GatewayApp() {
             containerColor = dialogBg().copy(alpha = ayxDialogAlpha()),
             shape = uiShapeFor(24),
             icon = { Icon(Icons.Filled.TextFields, null, tint = AYX_GREEN) },
-            title = { Text("Text status") },
+            title = { Text(Lang.s("text_status")) },
             text = {
                 Column {
                     // live preview on the chosen background colour
@@ -1200,7 +1201,7 @@ fun GatewayApp() {
                             style = MaterialTheme.typography.titleMedium, maxLines = 6, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(18.dp))
                     }
                     Spacer(Modifier.height(12.dp))
-                    OutlinedTextField(vtext, { vtext = it }, placeholder = { Text("Type your status…") }, modifier = Modifier.fillMaxWidth(), shape = uiShapeFor(14), maxLines = 4)
+                    OutlinedTextField(vtext, { vtext = it }, placeholder = { Text(Lang.s("type_your_status")) }, modifier = Modifier.fillMaxWidth(), shape = uiShapeFor(14), maxLines = 4)
                     Spacer(Modifier.height(10.dp))
                     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         bgColors.forEachIndexed { i, c ->
@@ -1220,9 +1221,9 @@ fun GatewayApp() {
                         notify((if (res.first) "✅ " else "❌ ") + res.second)
                         if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) }
                     }
-                }) { Text("Post", color = AYX_GREEN) }
+                }) { Text(Lang.s("post"), color = AYX_GREEN) }
             },
-            dismissButton = { TextButton(onClick = { textStatusDlg = false }) { Text("Cancel") } }
+            dismissButton = { TextButton(onClick = { textStatusDlg = false }) { Text(Lang.s("cancel")) } }
         )
     }
 
@@ -1339,11 +1340,11 @@ fun GatewayApp() {
         }
     }
     val title = when {
-        !status.registered -> "Link device"
-        openChat != null -> chatName ?: "Chat"
-        screen == "settings" -> if (settingsPage == "home") "Settings" else settingsTitle(settingsPage)
-        screen == "newchat" -> "New chat"
-        screen == "profile" -> "Profile"
+        !status.registered -> Lang.s("link_device")
+        openChat != null -> chatName ?: Lang.s("chat")
+        screen == "settings" -> if (settingsPage == "home") Lang.s("settings_title") else settingsTitle(settingsPage)
+        screen == "newchat" -> Lang.s("new_chat")
+        screen == "profile" -> Lang.s("profile")
         else -> APP_NAME
     }
 
@@ -1355,15 +1356,15 @@ fun GatewayApp() {
         Dialog(onDismissRequest = { showNewChat = false }) {
             StyledSurface(shape = uiShapeFor(16), color = dialogBg()) {
                 Column(Modifier.padding(16.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("New chat", style = MaterialTheme.typography.titleLarge)
-                    OutlinedTextField(num, { num = it.filter(Char::isDigit) }, label = { Text("Number with country code") },
+                    Text(Lang.s("new_chat"), style = MaterialTheme.typography.titleLarge)
+                    OutlinedTextField(num, { num = it.filter(Char::isDigit) }, label = { Text(Lang.s("number_country_code")) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone), modifier = Modifier.fillMaxWidth())
                     Button(onClick = { if (num.length in 8..15) { openChat = num + "@s.whatsapp.net"; showNewChat = false } },
-                        enabled = num.length in 8..15, modifier = Modifier.fillMaxWidth()) { Text("Start with number") }
+                        enabled = num.length in 8..15, modifier = Modifier.fillMaxWidth()) { Text(Lang.s("start_with_number")) }
                     HorizontalDivider()
-                    OutlinedTextField(csearch, { csearch = it }, label = { Text("Search contacts") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(csearch, { csearch = it }, label = { Text(Lang.s("search_contacts")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     val filtered = cts.filter { it.name.contains(csearch, true) || it.number.contains(csearch) }
-                    if (cts.isEmpty()) Text("No contacts synced yet (they sync from WhatsApp over time).", style = MaterialTheme.typography.bodySmall)
+                    if (cts.isEmpty()) Text(Lang.s("no_contacts_synced"), style = MaterialTheme.typography.bodySmall)
                     Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
                         filtered.take(80).forEach { c ->
                             Row(Modifier.fillMaxWidth().clickable { openChat = c.jid; showNewChat = false }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1374,7 +1375,7 @@ fun GatewayApp() {
                             }
                         }
                     }
-                    TextButton(onClick = { showNewChat = false }, modifier = Modifier.align(Alignment.End)) { Text("Cancel") }
+                    TextButton(onClick = { showNewChat = false }, modifier = Modifier.align(Alignment.End)) { Text(Lang.s("cancel")) }
                 }
             }
         }
@@ -1386,9 +1387,9 @@ fun GatewayApp() {
                 if (chatsPage == 1) Box {
                     FloatingActionButton(onClick = { statusFabMenu = true }) { Icon(Icons.Filled.PhotoCamera, "add status") }
                     DropdownMenu(expanded = statusFabMenu, onDismissRequest = { statusFabMenu = false }) {
-                        DropdownMenuItem(text = { Text("Photo / Video") }, leadingIcon = { Icon(Icons.Filled.PhotoCamera, null) },
+                        DropdownMenuItem(text = { Text(Lang.s("photo_video")) }, leadingIcon = { Icon(Icons.Filled.PhotoCamera, null) },
                             onClick = { statusFabMenu = false; ensureContacts(); statusPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) })
-                        DropdownMenuItem(text = { Text("Text status") }, leadingIcon = { Icon(Icons.Filled.TextFields, null) },
+                        DropdownMenuItem(text = { Text(Lang.s("text_status")) }, leadingIcon = { Icon(Icons.Filled.TextFields, null) },
                             onClick = { statusFabMenu = false; ensureContacts(); textStatusDlg = true })
                     }
                 }
@@ -1405,7 +1406,7 @@ fun GatewayApp() {
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
                 title = {
                     if (searchMode && openChat == null && screen == "chats") {
-                        OutlinedTextField(searchQuery, { searchQuery = it }, placeholder = { Text("Search chats") },
+                        OutlinedTextField(searchQuery, { searchQuery = it }, placeholder = { Text(Lang.s("search_chats")) },
                             leadingIcon = { Icon(Icons.Filled.Search, null, tint = IOS_BLUE) }, singleLine = true, shape = uiShapeFor(24),
                             colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent,
                                 focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant, unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -1471,13 +1472,13 @@ fun GatewayApp() {
                             IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "menu") }
                         }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, containerColor = MaterialTheme.colorScheme.surface.copy(alpha = ayxMenuAlpha())) {
-                            DropdownMenuItem(text = { Text("Change wallpaper") }, onClick = { menu = false; chatWallpaperPicker.launch("image/*") })
-                            if (!isBlocked) DropdownMenuItem(text = { Text("Block contact") }, onClick = {
+                            DropdownMenuItem(text = { Text(Lang.s("change_wallpaper")) }, onClick = { menu = false; chatWallpaperPicker.launch("image/*") })
+                            if (!isBlocked) DropdownMenuItem(text = { Text(Lang.s("block_contact")) }, onClick = {
                                 menu = false
                                 val c = openChat
                                 if (c != null) scope.launch { runCatching { GatewayClient.blockChat(c, true) }.onSuccess { notify("blocked"); blockedJids = blockedJids + c; blkPrefs.edit().putStringSet("blocked", blockedJids).apply() }.onFailure { notify("failed: ${it.message}") } }
                             })
-                            if (isBlocked) DropdownMenuItem(text = { Text("Unblock contact") }, onClick = {
+                            if (isBlocked) DropdownMenuItem(text = { Text(Lang.s("unblock_contact")) }, onClick = {
                                 menu = false
                                 val c = openChat
                                 if (c != null) scope.launch { runCatching { GatewayClient.blockChat(c, false) }.onSuccess { notify("unblocked"); blockedJids = blockedJids - c; blkPrefs.edit().putStringSet("blocked", blockedJids).apply() }.onFailure { notify("failed: ${it.message}") } }
@@ -1724,11 +1725,11 @@ fun GatewayApp() {
                     Row(Modifier.padding(horizontal = 6.dp).height(60.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.width(104.dp).fillMaxHeight().clip(uiShapeFor(24)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { chatsPage = 0 }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                             Icon(Icons.Filled.Home, "Home", tint = if (chatsPage == 0) selC else dimC, modifier = Modifier.size(22.dp))
-                            Spacer(Modifier.height(2.dp)); Text("Home", color = if (chatsPage == 0) selC else dimC, style = MaterialTheme.typography.labelSmall, fontWeight = if (chatsPage == 0) FontWeight.SemiBold else FontWeight.Normal)
+                            Spacer(Modifier.height(2.dp)); Text(Lang.s("home"), color = if (chatsPage == 0) selC else dimC, style = MaterialTheme.typography.labelSmall, fontWeight = if (chatsPage == 0) FontWeight.SemiBold else FontWeight.Normal)
                         }
                         Column(Modifier.width(104.dp).fillMaxHeight().clip(uiShapeFor(24)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { chatsPage = 1 }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                             Icon(Icons.Filled.DonutLarge, "Status", tint = if (chatsPage == 1) selC else dimC, modifier = Modifier.size(22.dp))
-                            Spacer(Modifier.height(2.dp)); Text("Status", color = if (chatsPage == 1) selC else dimC, style = MaterialTheme.typography.labelSmall, fontWeight = if (chatsPage == 1) FontWeight.SemiBold else FontWeight.Normal)
+                            Spacer(Modifier.height(2.dp)); Text(Lang.s("status"), color = if (chatsPage == 1) selC else dimC, style = MaterialTheme.typography.labelSmall, fontWeight = if (chatsPage == 1) FontWeight.SemiBold else FontWeight.Normal)
                         }
                     }
                 }
@@ -1751,23 +1752,23 @@ fun GatewayApp() {
                     containerColor = dialogBg().copy(alpha = ayxDialogAlpha()),
                     shape = uiShapeFor(24),
                     icon = { Icon(Icons.Filled.Edit, null, tint = AYX_GREEN) },
-                    title = { Text("Set name") },
+                    title = { Text(Lang.s("set_name")) },
                     text = {
                         Column {
-                            Text("Shows only in AyX (chats, status, groups). Real WhatsApp contact name stays unchanged.",
+                            Text(Lang.s("shows_only_ayx"),
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(Modifier.height(12.dp))
                             OutlinedTextField(nameInput, { nameInput = it }, singleLine = true,
-                                placeholder = { Text("Custom name") }, shape = uiShapeFor(14),
+                                placeholder = { Text(Lang.s("custom_name")) }, shape = uiShapeFor(14),
                                 trailingIcon = { if (nameInput.isNotEmpty()) IconButton(onClick = { nameInput = "" }) { Icon(Icons.Filled.Clear, "clear") } },
                                 modifier = Modifier.fillMaxWidth())
                         }
                     },
-                    confirmButton = { TextButton(onClick = { if (isGroupName) GroupNameStore.setAlias(jidForName, nameInput) else SetName.set(jidForName, nameInput); showSetName = false; notify("name saved") }, enabled = nameInput.isNotBlank() && nameInput != saved) { Text("Save", color = AYX_GREEN) } },
+                    confirmButton = { TextButton(onClick = { if (isGroupName) GroupNameStore.setAlias(jidForName, nameInput) else SetName.set(jidForName, nameInput); showSetName = false; notify("name saved") }, enabled = nameInput.isNotBlank() && nameInput != saved) { Text(Lang.s("save"), color = AYX_GREEN) } },
                     dismissButton = {
                         Row {
-                            if (saved.isNotEmpty()) TextButton(onClick = { if (isGroupName) GroupNameStore.clearAlias(jidForName) else SetName.clear(jidForName); showSetName = false; notify("name removed") }) { Text("Remove", color = AYX_RED) }
-                            TextButton(onClick = { showSetName = false }) { Text("Cancel") }
+                            if (saved.isNotEmpty()) TextButton(onClick = { if (isGroupName) GroupNameStore.clearAlias(jidForName) else SetName.clear(jidForName); showSetName = false; notify("name removed") }) { Text(Lang.s("remove"), color = AYX_RED) }
+                            TextButton(onClick = { showSetName = false }) { Text(Lang.s("cancel")) }
                         }
                     }
                 )
@@ -1849,7 +1850,7 @@ private fun ForwardPicker(messages: List<GatewayClient.Msg>, dpCache: MutableMap
                     IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, "close") }
                 }
                 Spacer(Modifier.height(10.dp))
-                OutlinedTextField(query, { query = it }, placeholder = { Text("Search chats") }, singleLine = true,
+                OutlinedTextField(query, { query = it }, placeholder = { Text(Lang.s("search_chats")) }, singleLine = true,
                     leadingIcon = { Icon(Icons.Filled.Search, null) }, shape = uiShapeFor(24), modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(8.dp))
                 LazyColumn(Modifier.weight(1f)) {
@@ -1926,7 +1927,7 @@ private fun ProfilePhotoViewer(jid: String, name: String, onDownload: () -> Unit
                     loading -> CircularProgressIndicator(color = Color.White)
                     else -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Filled.Person, null, tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(72.dp))
-                        Spacer(Modifier.height(10.dp)); Text("No profile photo", color = Color.White.copy(alpha = 0.7f))
+                        Spacer(Modifier.height(10.dp)); Text(Lang.s("no_profile_photo"), color = Color.White.copy(alpha = 0.7f))
                     }
                 }
             }
@@ -2036,7 +2037,7 @@ private fun ChatList(messages: List<GatewayClient.Msg>, chats: List<GatewayClien
         if (groups.isEmpty() && hiddenCount == 0) {
             item {
                 Box(Modifier.fillMaxWidth().padding(top = 48.dp), contentAlignment = Alignment.Center) {
-                    Text("No chats yet.\nIncoming messages will appear here.", style = MaterialTheme.typography.bodyMedium)
+                    Text(Lang.s("no_chats_yet"), style = MaterialTheme.typography.bodyMedium)
                 }
             }
         } else {
@@ -2175,7 +2176,7 @@ private fun MuteTimerDialog(onDismiss: () -> Unit, onPick: (Long) -> Unit) {
             tonalElevation = 6.dp, shadowElevation = 12.dp,
             modifier = Modifier.fillMaxWidth().border(1.dp, onSurf.copy(alpha = 0.10f), uiShapeFor(24))) {
             Column(Modifier.padding(vertical = 8.dp)) {
-                Text("Mute for…", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+                Text(Lang.s("mute_for"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
                 HorizontalDivider(color = onSurf.copy(alpha = 0.08f))
                 opts.forEach { (label, ms) ->
@@ -2247,7 +2248,7 @@ private fun ChatDetail(
             val romanize = TranslateStore.lang.contains("roman", true)
             val t = GatewayClient.translate(m.text, TranslateStore.lang, romanize)
             if (t != null) TranslateStore.cache[id] = t
-            else Toast.makeText(ctx, "Translate failed — check your Groq key", Toast.LENGTH_SHORT).show()
+            else Toast.makeText(ctx, Lang.s("toast_translate_failed"), Toast.LENGTH_SHORT).show()
         }
     }
     fun onTranslateMsg(m: GatewayClient.Msg) {
@@ -2411,10 +2412,10 @@ private fun ChatDetail(
             Box {
                 IconButton(onClick = { attachMenu = true }) { Icon(Icons.Filled.Add, "add") }
                 DropdownMenu(expanded = attachMenu, onDismissRequest = { attachMenu = false }, containerColor = MaterialTheme.colorScheme.surface.copy(alpha = ayxMenuAlpha())) {
-                    DropdownMenuItem(text = { Text("Camera") }, leadingIcon = { Icon(Icons.Filled.PhotoCamera, null) }, onClick = { attachMenu = false; onCamera() })
-                    DropdownMenuItem(text = { Text("Photos") }, leadingIcon = { Icon(Icons.Filled.Image, null) }, onClick = { attachMenu = false; onPickChatPhoto() })
-                    DropdownMenuItem(text = { Text("Videos") }, leadingIcon = { Icon(Icons.Filled.VideoFile, null) }, onClick = { attachMenu = false; onPickChatVideo() })
-                    DropdownMenuItem(text = { Text("Files") }, leadingIcon = { Icon(Icons.Filled.AttachFile, null) }, onClick = { attachMenu = false; onAttach() })
+                    DropdownMenuItem(text = { Text(Lang.s("camera")) }, leadingIcon = { Icon(Icons.Filled.PhotoCamera, null) }, onClick = { attachMenu = false; onCamera() })
+                    DropdownMenuItem(text = { Text(Lang.s("photos")) }, leadingIcon = { Icon(Icons.Filled.Image, null) }, onClick = { attachMenu = false; onPickChatPhoto() })
+                    DropdownMenuItem(text = { Text(Lang.s("videos")) }, leadingIcon = { Icon(Icons.Filled.VideoFile, null) }, onClick = { attachMenu = false; onPickChatVideo() })
+                    DropdownMenuItem(text = { Text(Lang.s("files")) }, leadingIcon = { Icon(Icons.Filled.AttachFile, null) }, onClick = { attachMenu = false; onAttach() })
                 }
             }
         }
@@ -2430,7 +2431,7 @@ private fun ChatDetail(
             }, enabled = (input.isNotBlank() || pendingMedia != null) && canSend) { Icon(Icons.AutoMirrored.Filled.Send, "send") }
         }
         val textField: @Composable (Modifier) -> Unit = { mod ->
-            OutlinedTextField(input, { input = it }, placeholder = { Text("Message") }, maxLines = if (expanded) 8 else 4,
+            OutlinedTextField(input, { input = it }, placeholder = { Text(Lang.s("message")) }, maxLines = if (expanded) 8 else 4,
                 colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent,
                     focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent),
                 modifier = mod.focusRequester(fieldFocus).onFocusChanged { fieldHadFocus = it.isFocused })
@@ -2444,7 +2445,7 @@ private fun ChatDetail(
                 verticalAlignment = Alignment.CenterVertically) {
                 Text("⏳ $queuedCount message(s) queued — will send when reconnected", style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.weight(1f))
-                TextButton(onClick = onRetryQueued) { Text("Retry now") }
+                TextButton(onClick = onRetryQueued) { Text(Lang.s("retry_now")) }
             }
         }
         Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp).animateContentSize()
@@ -2534,8 +2535,8 @@ private fun TranslateLangDialog(onDismiss: () -> Unit, onPick: (String) -> Unit)
         StyledSurface(shape = uiShapeFor(24), color = dialogBg(), tonalElevation = 6.dp, shadowElevation = 12.dp,
             modifier = Modifier.fillMaxWidth().fillMaxHeight(0.82f)) {
             Column(Modifier.padding(vertical = 8.dp)) {
-                Text("Translate messages to…", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 10.dp))
-                Text("Saved as your default — change it later in Settings → General.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 8.dp))
+                Text(Lang.s("translate_messages_to"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 10.dp))
+                Text(Lang.s("saved_as_default"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 8.dp))
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                 LazyColumn(Modifier.weight(1f)) {
                     items(langs) { l ->
@@ -2548,9 +2549,9 @@ private fun TranslateLangDialog(onDismiss: () -> Unit, onPick: (String) -> Unit)
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                 Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(custom, { custom = it }, label = { Text("Other language") }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.weight(1f))
+                    OutlinedTextField(custom, { custom = it }, label = { Text(Lang.s("other_language")) }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.weight(1f))
                     Spacer(Modifier.width(8.dp))
-                    FilledTonalButton(onClick = { if (custom.isNotBlank()) onPick(custom.trim()) }, enabled = custom.isNotBlank()) { Text("Use") }
+                    FilledTonalButton(onClick = { if (custom.isNotBlank()) onPick(custom.trim()) }, enabled = custom.isNotBlank()) { Text(Lang.s("use")) }
                 }
             }
         }
@@ -2564,7 +2565,7 @@ private fun FontPickerDialog(ctx: Context, current: String, onDismiss: () -> Uni
         StyledSurface(shape = uiShapeFor(24), color = dialogBg(), tonalElevation = 6.dp, shadowElevation = 12.dp,
             modifier = Modifier.fillMaxWidth().fillMaxHeight(0.8f)) {
             Column(Modifier.padding(vertical = 8.dp)) {
-                Text("App font", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
+                Text(Lang.s("app_font"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                 LazyColumn(Modifier.weight(1f)) {
                     items(FontStore.fonts.keys.toList()) { name ->
@@ -2665,20 +2666,20 @@ private fun EditMessageDialog(m: GatewayClient.Msg, onDismiss: () -> Unit, onSav
         containerColor = dialogBg(),
         shape = uiShapeFor(24),
         icon = { Icon(Icons.Filled.Edit, null, tint = AYX_GREEN) },
-        title = { Text("Edit message") },
+        title = { Text(Lang.s("edit_message")) },
         text = {
             Column {
                 OutlinedTextField(
                     newText, { newText = it }, modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("Message") }, shape = uiShapeFor(14), maxLines = 6,
+                    placeholder = { Text(Lang.s("message")) }, shape = uiShapeFor(14), maxLines = 6,
                     trailingIcon = { if (newText.isNotEmpty()) IconButton(onClick = { newText = "" }) { Icon(Icons.Filled.Clear, "clear") } }
                 )
                 Text("${newText.length} chars", style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.align(Alignment.End).padding(top = 4.dp, end = 4.dp))
             }
         },
-        confirmButton = { TextButton(onClick = { onSave(newText.trim()) }, enabled = newText.isNotBlank() && newText.trim() != m.text) { Text("Save changes", color = AYX_GREEN) } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        confirmButton = { TextButton(onClick = { onSave(newText.trim()) }, enabled = newText.isNotBlank() && newText.trim() != m.text) { Text(Lang.s("save_changes"), color = AYX_GREEN) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(Lang.s("cancel")) } }
     )
 }
 
@@ -2697,7 +2698,7 @@ private fun MessageInfoDialog(m: GatewayClient.Msg, onDismiss: () -> Unit) {
         containerColor = dialogBg(),
         shape = uiShapeFor(24),
         icon = { Icon(Icons.Filled.Info, null, tint = AYX_GREEN) },
-        title = { Text("Message info") },
+        title = { Text(Lang.s("message_info")) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 InfoRow("Direction", if (m.fromMe) "Sent by you" else "Received")
@@ -2708,7 +2709,7 @@ private fun MessageInfoDialog(m: GatewayClient.Msg, onDismiss: () -> Unit) {
                 m.mediaType?.let { InfoRow("Type", it) }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+        confirmButton = { TextButton(onClick = onDismiss) { Text(Lang.s("close")) } }
     )
 }
 
@@ -2764,10 +2765,10 @@ private fun ChatGlassHeader(
                 Box {
                     IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "menu", tint = onPill) }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(text = { Text("Set name") }, leadingIcon = { Icon(Icons.Filled.Edit, null) }, onClick = { menu = false; onEdit() })
-                        DropdownMenuItem(text = { Text("Change wallpaper") }, onClick = { menu = false; onWallpaper() })
-                        if (!isBlocked) DropdownMenuItem(text = { Text("Block contact") }, onClick = { menu = false; onBlock() })
-                        else DropdownMenuItem(text = { Text("Unblock contact") }, onClick = { menu = false; onUnblock() })
+                        DropdownMenuItem(text = { Text(Lang.s("set_name")) }, leadingIcon = { Icon(Icons.Filled.Edit, null) }, onClick = { menu = false; onEdit() })
+                        DropdownMenuItem(text = { Text(Lang.s("change_wallpaper")) }, onClick = { menu = false; onWallpaper() })
+                        if (!isBlocked) DropdownMenuItem(text = { Text(Lang.s("block_contact")) }, onClick = { menu = false; onBlock() })
+                        else DropdownMenuItem(text = { Text(Lang.s("unblock_contact")) }, onClick = { menu = false; onUnblock() })
                     }
                 }
             }
@@ -2925,7 +2926,7 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                         Icon(Icons.AutoMirrored.Filled.ArrowForward, null, modifier = Modifier.size(13.dp),
                             tint = if (m.fromMe) Color.White.copy(alpha = 0.7f) else textColor.copy(alpha = 0.55f))
                         Spacer(Modifier.width(4.dp))
-                        Text("Forwarded", style = MaterialTheme.typography.labelSmall, fontStyle = FontStyle.Italic,
+                        Text(Lang.s("forwarded"), style = MaterialTheme.typography.labelSmall, fontStyle = FontStyle.Italic,
                             color = if (m.fromMe) Color.White.copy(alpha = 0.7f) else textColor.copy(alpha = 0.55f))
                     }
                 }
@@ -2955,7 +2956,7 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                         contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(Icons.Filled.EmojiEmotions, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(44.dp))
-                            Text("Sticker", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(Lang.s("sticker"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 } else if (hasMedia && preview != null) {
@@ -2969,7 +2970,7 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                 Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     if (m.mediaType == "audio") {
                         if (m.mediaName != null) AudioPlayer(GatewayClient.mediaUrl(m.mediaName!!), textColor)
-                        else Text("Voice message (enable Save media)", color = textColor, style = MaterialTheme.typography.bodySmall)
+                        else Text(Lang.s("voice_message_save_media"), color = textColor, style = MaterialTheme.typography.bodySmall)
                     }
                     // WhatsApp style: time + ticks inline at the bottom-right of the message text.
                     if (m.text.isNotBlank()) {
@@ -3002,9 +3003,9 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                     // Footer: edited/deleted markers + media actions (time+ticks now live inline, WhatsApp style).
                     val showFooter = (m.edited && !m.deleted) || m.deleted || m.mediaName != null
                     if (showFooter) Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        if (m.edited && !m.deleted) Text("edited", style = MaterialTheme.typography.labelSmall, fontStyle = FontStyle.Italic,
+                        if (m.edited && !m.deleted) Text(Lang.s("edited"), style = MaterialTheme.typography.labelSmall, fontStyle = FontStyle.Italic,
                             color = if (m.fromMe) Color.White.copy(alpha = 0.6f) else textColor.copy(alpha = 0.55f))
-                        if (m.deleted) Text("deleted", color = Color(0xFFFF4D4D), style = MaterialTheme.typography.labelSmall, fontStyle = FontStyle.Italic)
+                        if (m.deleted) Text(Lang.s("deleted"), color = Color(0xFFFF4D4D), style = MaterialTheme.typography.labelSmall, fontStyle = FontStyle.Italic)
                         if (m.mediaName != null) {
                             IconButton(onClick = { onDownload(m) }, modifier = Modifier.size(22.dp)) {
                                 Icon(Icons.Filled.Download, "download", modifier = Modifier.size(15.dp), tint = if (m.fromMe) Color.White else textColor)
@@ -3024,7 +3025,7 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
 private fun settingsTitle(page: String): String = when (page) {
     "general" -> "General"; "autoreply" -> "Auto-reply"; "ai" -> "AI Assistant"; "chat" -> "Chat Settings"
     "imageai" -> "Image AI"; "aimemory" -> "AI Memory"; "voice" -> "AI Voice"; "font" -> "App Font"; "emoji" -> "Emoji"
-    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "about" -> "About"; "support" -> "Support Development"; else -> "Settings"
+    "wallpaper" -> "Chat Wallpaper"; "appearance" -> Lang.s("appearance_title"); "applanguage" -> Lang.s("app_language"); "about" -> "About"; "support" -> "Support Development"; else -> Lang.s("settings_title")
 }
 // parent page for nested back (Wallpaper under Chat Settings; Image AI / AI Memory / Voice under AI Assistant; Font under General)
 private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "general"; "emoji" -> "general"; else -> "home" }
@@ -3049,6 +3050,7 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
             "chat" -> SettingsSubPage { ChatSettings(onOpenWallpaper = { onPage("wallpaper") }) }
             "wallpaper" -> SettingsSubPage { WallpaperSettings(ctx, wallpaperVersion, onPickWallpaper, onRemoveWallpaper) }
             "appearance" -> SettingsSubPage { AppearanceSettings() }
+            "applanguage" -> SettingsSubPage { AppLanguageScreen() }
             "about" -> SettingsSubPage { AboutSettings(ctx, onLogout) }
             "support" -> SettingsSubPage { SupportSettings(ctx) }
             else -> SettingsHome(status) { onPage(it) }
@@ -3079,7 +3081,8 @@ private fun SettingsHome(status: GatewayClient.Status, onOpen: (String) -> Unit)
         CategoryCard(Icons.Filled.AutoAwesome, CAT_AI, "AI Assistant", "AI replies, groups and language") { onOpen("ai") }
         CategoryCard(Icons.Filled.GraphicEq, Color(0xFF4DD0C4), "AI Voice", "Voice reply, voice notes & voice artists") { onOpen("voice") }
         CategoryCard(Icons.Filled.Chat, CAT_WALLPAPER, "Chat", "Wallpaper, bubble style and header") { onOpen("chat") }
-        CategoryCard(Icons.Filled.Palette, CAT_APPEARANCE, "Appearance", "Theme and accent color") { onOpen("appearance") }
+        CategoryCard(Icons.Filled.Palette, CAT_APPEARANCE, Lang.s("appearance_title"), Lang.s("appearance_desc")) { onOpen("appearance") }
+        CategoryCard(Icons.Filled.Language, CAT_GENERAL, Lang.s("app_language"), Lang.s("app_language_desc")) { onOpen("applanguage") }
         CategoryCard(Icons.Filled.Info, CAT_ABOUT, "About", "App information and reset") { onOpen("about") }
         CategoryCard(Icons.Filled.Favorite, CAT_SUPPORT, "Support Development", "Donate via UPI or crypto to support AyX") { onOpen("support") }
         Spacer(Modifier.height(16.dp))
@@ -3177,14 +3180,14 @@ private fun FontSettings(ctx: Context) {
         if (uri != null) {
             val name = FontStore.addCustomFont(ctx, uri)
             if (name != null) { FontStore.chooseFont(name); current = name; Toast.makeText(ctx, "Font added: $name", Toast.LENGTH_SHORT).show() }
-            else Toast.makeText(ctx, "Couldn't load that font", Toast.LENGTH_SHORT).show()
+            else Toast.makeText(ctx, Lang.s("toast_font_failed"), Toast.LENGTH_SHORT).show()
         }
     }
     SettingsGroup("Preview") {
         Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
             Text("The quick brown fox 123 😀🎉❤️", fontFamily = FontStore.family(ctx, current), style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(4.dp))
-            Text("Tap any font below — it applies across the whole app instantly.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(Lang.s("tap_font_applies"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
     SettingsGroup("App font") {
@@ -3197,7 +3200,7 @@ private fun FontSettings(ctx: Context) {
         }
         Spacer(Modifier.height(6.dp))
         OutlinedButton(onClick = { fontPicker.launch("*/*") }, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Filled.Add, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Upload custom font (.ttf / .otf)")
+            Icon(Icons.Filled.Add, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(Lang.s("upload_custom_font"))
         }
     }
 }
@@ -3210,7 +3213,7 @@ private fun EmojiSettings(ctx: Context) {
         Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
             Text("😀 😂 ❤️ 👍 🙏 🎉 🔥 ✨ 😎 🥳", style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(4.dp))
-            Text("Pick a style — it downloads once, then applies across the whole app.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(Lang.s("pick_style_downloads"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
     SettingsGroup("Emoji style") {
@@ -3225,7 +3228,7 @@ private fun EmojiStylePicker(ctx: Context, scope: CoroutineScope) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         EmojiStyleRow("System default", "Your phone's built-in emoji", selected == EmojiStore.SYSTEM, true, false) {
             EmojiStore.choose(EmojiStore.SYSTEM); selected = EmojiStore.SYSTEM
-            Toast.makeText(ctx, "System emoji restored", Toast.LENGTH_SHORT).show()
+            Toast.makeText(ctx, Lang.s("toast_emoji_restored"), Toast.LENGTH_SHORT).show()
         }
         EmojiStore.styles.forEach { st ->
             val have = EmojiStore.isDownloaded(ctx, st.key)
@@ -3233,7 +3236,7 @@ private fun EmojiStylePicker(ctx: Context, scope: CoroutineScope) {
                 if (downloading != null) return@EmojiStyleRow
                 if (have) {
                     EmojiStore.choose(st.name); selected = st.name
-                    if (EmojiStore.activeFont(ctx) == null) Toast.makeText(ctx, "Couldn't load this emoji font — re-download it", Toast.LENGTH_LONG).show() else
+                    if (EmojiStore.activeFont(ctx) == null) Toast.makeText(ctx, Lang.s("toast_emoji_failed"), Toast.LENGTH_LONG).show() else
                     Toast.makeText(ctx, "${st.name} emoji applied", Toast.LENGTH_SHORT).show()
                 } else {
                     downloading = st.name
@@ -3246,7 +3249,7 @@ private fun EmojiStylePicker(ctx: Context, scope: CoroutineScope) {
                 }
             }
         }
-        Text("Saved to Download/WhatsAyX/fonts/emoji · applies instantly (Android 10+).", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp, start = 2.dp))
+        Text(Lang.s("saved_fonts_emoji"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp, start = 2.dp))
     }
 }
 
@@ -3293,7 +3296,7 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
     }
 
     SettingsGroup("Message translation") {
-        Text("Double-tap any message in a chat to translate it. Pick how it works:",
+        Text(Lang.s("double_tap_translate"),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 4.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("off" to "Off", "manual" to "Double-tap", "auto" to "Auto (all)").forEach { (k, lbl) ->
@@ -3302,10 +3305,10 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
         }
         var tlang by remember { mutableStateOf(TranslateStore.lang) }
         Spacer(Modifier.height(8.dp))
-        OutlinedTextField(tlang, { tlang = it }, label = { Text("Translate to") }, singleLine = true,
+        OutlinedTextField(tlang, { tlang = it }, label = { Text(Lang.s("translate_to")) }, singleLine = true,
             placeholder = { Text("e.g. English, Hindi, Roman Hindi, Bangla") }, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            FilledTonalButton(onClick = { TranslateStore.chooseLang(tlang.trim().ifBlank { "English" }); Toast.makeText(ctx, "Translate language saved", Toast.LENGTH_SHORT).show() }) { Text("Save") }
+            FilledTonalButton(onClick = { TranslateStore.chooseLang(tlang.trim().ifBlank { "English" }); Toast.makeText(ctx, Lang.s("toast_lang_saved"), Toast.LENGTH_SHORT).show() }) { Text(Lang.s("save")) }
         }
     }
 
@@ -3353,9 +3356,9 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
             containerColor = dialogBg(),
             shape = uiShapeFor(24),
             icon = { Icon(Icons.Filled.Delete, null, tint = ERR_RED) },
-            title = { Text("Clear app data?") },
+            title = { Text(Lang.s("clear_app_data_q")) },
             text = {
-                Text("This removes WhatsAyX local data — chats, statuses, cached media, names, wallpaper, settings and the login/session. Your account is not deleted, but you'll need to link this device again with QR or pairing code. The app will restart.",
+                Text(Lang.s("removes_local_data"),
                     style = MaterialTheme.typography.bodyMedium)
             },
             confirmButton = {
@@ -3371,9 +3374,9 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
                         if (i != null) ctx.startActivity(i)
                         Runtime.getRuntime().exit(0)
                     }
-                }) { Text("Clear Data", color = ERR_RED) }
+                }) { Text(Lang.s("clear_data"), color = ERR_RED) }
             },
-            dismissButton = { TextButton(onClick = { confirmClearData = false }) { Text("Cancel") } }
+            dismissButton = { TextButton(onClick = { confirmClearData = false }) { Text(Lang.s("cancel")) } }
         )
     }
 }
@@ -3423,7 +3426,7 @@ private fun AutoReplySection(settings: GatewayClient.Settings, onToggle: (JSONOb
     SettingsGroup("Automatic replies") {
         SettingRow(Icons.Filled.QuestionAnswer, CAT_AUTOREPLY, "Auto-reply enabled", "Reply automatically to incoming messages", settings.autoReplyEnabled) { onToggle(JSONObject().put("autoReplyEnabled", it)) }
     }
-    Text("RULES", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
+    Text(Lang.s("rules"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
     if (settings.rules.isEmpty()) {
         EmptyState(Icons.Filled.QuestionAnswer, "No auto-reply rules", "Create a keyword rule to automatically respond to messages.")
     } else {
@@ -3447,16 +3450,16 @@ private fun AutoReplySection(settings: GatewayClient.Settings, onToggle: (JSONOb
     }
     StyledSurface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("New rule", style = MaterialTheme.typography.titleSmall)
-            OutlinedTextField(match, { match = it }, label = { Text("If message contains…") }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(reply, { reply = it }, label = { Text("Reply with…") }, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
+            Text(Lang.s("new_rule"), style = MaterialTheme.typography.titleSmall)
+            OutlinedTextField(match, { match = it }, label = { Text(Lang.s("if_message_contains")) }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(reply, { reply = it }, label = { Text(Lang.s("reply_with")) }, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("contains", "exact", "starts").forEach { md ->
                     FilterChip(selected = mode == md, onClick = { mode = md }, label = { Text(md) })
                 }
             }
             Button(onClick = { if (match.isNotBlank() && reply.isNotBlank()) { onRules(settings.rules + GatewayClient.Rule(match.trim(), reply.trim(), mode)); match = ""; reply = "" } },
-                enabled = match.isNotBlank() && reply.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("Add rule") }
+                enabled = match.isNotBlank() && reply.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text(Lang.s("add_rule")) }
         }
     }
 }
@@ -3506,7 +3509,7 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
             OutlinedTextField(lang, { lang = it }, placeholder = { Text("e.g. Reply only in Roman Bangla, English letters") },
                 shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                FilledTonalButton(onClick = { onToggle(JSONObject().put("aiReplyLang", lang.trim())); Toast.makeText(ctx, "Language saved", Toast.LENGTH_SHORT).show() }) { Text("Save") }
+                FilledTonalButton(onClick = { onToggle(JSONObject().put("aiReplyLang", lang.trim())); Toast.makeText(ctx, "Language saved", Toast.LENGTH_SHORT).show() }) { Text(Lang.s("save")) }
             }
         }
     }
@@ -3514,7 +3517,7 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
     // Exclude list — chats where NO auto-reply / AI reply is sent ("reply nothing to this person")
     SettingsGroup("Don't reply to these chats") {
         if (settings.aiExcludeJids.isEmpty()) {
-            Text("Add chats here to stop AI (and keyword auto-reply) from replying to them.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 8.dp))
+            Text(Lang.s("add_chats_stop_ai"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 8.dp))
         } else {
             settings.aiExcludeJids.forEach { jid ->
                 Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -3542,14 +3545,14 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
     fun saveApi() {
         onToggle(JSONObject().put("aiApiUrl", url.trim()).put("aiApiKey", key.trim()).put("aiModel", model.trim())
             .put("aiSystemPrompt", sys))
-        Toast.makeText(ctx, "AI settings saved", Toast.LENGTH_SHORT).show()
+        Toast.makeText(ctx, Lang.s("toast_ai_saved"), Toast.LENGTH_SHORT).show()
     }
     StyledSurface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             // header row: title left, Save button on the right
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("API configuration (text/voice)", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                FilledTonalButton(onClick = { saveApi() }) { Text("Save") }
+                FilledTonalButton(onClick = { saveApi() }) { Text(Lang.s("save")) }
             }
             LinkRow(Icons.Filled.Language, Color(0xFF4DD07A), "Get Groq key", "console.groq.com → tap to create key") { openUrl(ctx, "https://console.groq.com/keys") }
             OutlinedTextField(url, { url = it }, label = { Text("API URL (text/voice)") }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
@@ -3677,12 +3680,12 @@ private fun AiLyricApiDialog(prefill: GatewayClient.LyricApi, onDismiss: () -> U
                 DarkField("Model", model, { model = it })
                 if (err != null) Text(err!!, color = Color(0xFFFF8A80), style = MaterialTheme.typography.bodySmall)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = onDismiss) { Text("Cancel", color = Color.White.copy(alpha = 0.7f)) }
+                    TextButton(onClick = onDismiss) { Text(Lang.s("cancel"), color = Color.White.copy(alpha = 0.7f)) }
                     Spacer(Modifier.size(8.dp))
                     Button(onClick = {
                         if (url.isBlank() || key.isBlank()) { err = "URL and API key are required."; return@Button }
                         onSave(GatewayClient.LyricApi(name.trim().ifBlank { "API" }, url.trim(), key.trim(), model.trim()))
-                    }) { Text("Save") }
+                    }) { Text(Lang.s("save")) }
                 }
             }
         }
@@ -3732,8 +3735,8 @@ private fun ImageAiSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
     StyledSurface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Image AI", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                FilledTonalButton(onClick = { saveVision() }) { Text("Save") }
+                Text(Lang.s("image_ai"), style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                FilledTonalButton(onClick = { saveVision() }) { Text(Lang.s("save")) }
             }
             Text("Images now work without any API key (free). Add your Gemini/OpenRouter key below to use it first; otherwise the free one is used automatically.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -3780,7 +3783,7 @@ private fun ImageAiSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
             HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
             SettingRow(Icons.Filled.TextFields, Color(0xFF80DEEA), "Read image text on phone", "Offline & unlimited. Screenshot/text image ka reply tab bhi jab vision API down ho.", settings.aiImageOcr) { onToggle(JSONObject().put("aiImageOcr", it)) }
 
-            FilledTonalButton(onClick = { saveVision() }, modifier = Modifier.align(Alignment.End)) { Text("Save") }
+            FilledTonalButton(onClick = { saveVision() }, modifier = Modifier.align(Alignment.End)) { Text(Lang.s("save")) }
         }
     }
 
@@ -3790,7 +3793,7 @@ private fun ImageAiSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
             containerColor = dialogBg(),
             title = { Text("Image AI test") },
             text = { Text(testResult ?: "", style = MaterialTheme.typography.bodySmall) },
-            confirmButton = { TextButton(onClick = { testResult = null }) { Text("OK") } }
+            confirmButton = { TextButton(onClick = { testResult = null }) { Text(Lang.s("ok")) } }
         )
     }
 }
@@ -3799,23 +3802,23 @@ private fun ImageAiSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
 private fun WallpaperSettings(ctx: Context, version: Int, onPickWallpaper: () -> Unit, onRemoveWallpaper: () -> Unit) {
     // decode keyed on `version` so the preview refreshes instantly after set/remove (no leave & reopen)
     val wp = remember(version) { runCatching { val f = File(ctx.filesDir, "wallpaper.jpg"); if (f.exists()) BitmapFactory.decodeFile(f.absolutePath)?.asImageBitmap() else null }.getOrNull() }
-    Text("PREVIEW", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
+    Text(Lang.s("preview"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
     Box(Modifier.fillMaxWidth().height(200.dp).clip(uiShapeFor(20)).background(if (wp == null) Color(0xFF0E1621) else Color.Black)) {
         if (wp != null) Image(wp, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         Column(Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Surface(shape = uiShapeFor(14), color = Color(0xFF2C2C2E)) {
-                Text("Hey! 👋", color = Color.White, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+                Text(Lang.s("hey"), color = Color.White, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 Surface(shape = uiShapeFor(14), color = IOS_BLUE) {
-                    Text("This is your wallpaper", color = Color.White, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+                    Text(Lang.s("this_is_wallpaper"), color = Color.White, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
                 }
             }
         }
     }
-    Button(onClick = onPickWallpaper, modifier = Modifier.fillMaxWidth()) { Text("Set wallpaper from gallery") }
-    OutlinedButton(onClick = onRemoveWallpaper, modifier = Modifier.fillMaxWidth()) { Text("Remove wallpaper") }
-    Text("Wallpaper shows behind all chats and applies immediately.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Button(onClick = onPickWallpaper, modifier = Modifier.fillMaxWidth()) { Text(Lang.s("set_wallpaper_gallery")) }
+    OutlinedButton(onClick = onRemoveWallpaper, modifier = Modifier.fillMaxWidth()) { Text(Lang.s("remove_wallpaper")) }
+    Text(Lang.s("wallpaper_behind_chats"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 @Composable
@@ -3827,8 +3830,8 @@ private fun ChatSettings(onOpenWallpaper: () -> Unit) {
             IconChip(Icons.Filled.Wallpaper, CAT_WALLPAPER)
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                Text("Chat Wallpaper", style = MaterialTheme.typography.bodyLarge)
-                Text("Set or remove chat background", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(Lang.s("chat_wallpaper"), style = MaterialTheme.typography.bodyLarge)
+                Text(Lang.s("set_or_remove_wallpaper"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -3840,10 +3843,10 @@ private fun ChatSettings(onOpenWallpaper: () -> Unit) {
             val inSpec = bubbleSpec(false, dark)
             val outSpec = bubbleSpec(true, dark)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
-                Surface(color = inSpec.first, shape = inSpec.third) { Text("Hey! 👋", color = inSpec.second, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)) }
+                Surface(color = inSpec.first, shape = inSpec.third) { Text(Lang.s("hey"), color = inSpec.second, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)) }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                Surface(color = outSpec.first, shape = outSpec.third) { Text("Looks great 🎉", color = outSpec.second, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)) }
+                Surface(color = outSpec.first, shape = outSpec.third) { Text(Lang.s("looks_great"), color = outSpec.second, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)) }
             }
         }
         Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -3859,9 +3862,9 @@ private fun ChatSettings(onOpenWallpaper: () -> Unit) {
     }
 
     SettingsGroup("Bubble color") {
-        Text("Sent (right side)", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 10.dp, start = 2.dp))
+        Text(Lang.s("sent_right"), style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 10.dp, start = 2.dp))
         BubbleColorRow(ChatStyle.sentColor.value) { ChatStyle.setSentColor(it) }
-        Text("Received (left side)", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 6.dp, start = 2.dp))
+        Text(Lang.s("received_left"), style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 6.dp, start = 2.dp))
         BubbleColorRow(ChatStyle.recvColor.value) { ChatStyle.setRecvColor(it) }
         Spacer(Modifier.height(4.dp))
     }
@@ -3902,6 +3905,45 @@ private fun BubbleColorRow(selected: Int, onPick: (Int) -> Unit) {
             }
         }
     }
+}
+
+@Composable
+private fun AppLanguageScreen() {
+    val current = Lang.current.value
+    SettingsGroup(Lang.s("app_language")) {
+        Column(Modifier.padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Lang.options.forEach { (code, label) ->
+                val sel = current == code
+                StyledSurface(
+                    onClick = { Lang.setLang(code) },
+                    shape = uiShapeFor(16),
+                    color = if (sel) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier.size(10.dp).clip(CircleShape)
+                                .background(if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal,
+                            color = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+        }
+    }
+    Text(
+        Lang.s("app_language_desc"),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 6.dp, top = 2.dp)
+    )
 }
 
 @Composable
@@ -3966,7 +4008,7 @@ private fun AppearanceSettings() {
             }
         }
     }
-    Text("Theme and accent apply instantly across the whole app.", style = MaterialTheme.typography.bodySmall,
+    Text(Lang.s("theme_accent_instant"), style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp, top = 2.dp))
     SettingsGroup("Blur") {
         UiToggleRow(
@@ -4024,7 +4066,7 @@ private fun AppearanceSettings() {
             containerColor = dialogBg().copy(alpha = ayxDialogAlpha()),
             titleContentColor = MaterialTheme.colorScheme.onSurface,
             textContentColor = MaterialTheme.colorScheme.onSurface,
-            title = { Text("Elements to have blur effect") },
+            title = { Text(Lang.s("elements_blur_effect")) },
             text = {
                 Column {
                     BlurElement.entries.forEach { element ->
@@ -4058,10 +4100,10 @@ private fun AppearanceSettings() {
                         if (want != has) UiAnimationSettings.toggleBlurElement(element)
                     }
                     showElementsDialog = false
-                }) { Text("Done") }
+                }) { Text(Lang.s("done")) }
             },
             dismissButton = {
-                TextButton(onClick = { showElementsDialog = false }) { Text("Cancel") }
+                TextButton(onClick = { showElementsDialog = false }) { Text(Lang.s("cancel")) }
             },
         )
     }
@@ -4073,7 +4115,7 @@ private fun AppearanceSettings() {
             containerColor = dialogBg().copy(alpha = ayxDialogAlpha()),
             titleContentColor = MaterialTheme.colorScheme.onSurface,
             textContentColor = MaterialTheme.colorScheme.onSurface,
-            title = { Text("Animation Style") },
+            title = { Text(Lang.s("animation_style")) },
             text = {
                 Column {
                     AnimationStyle.entries.forEach { style ->
@@ -4105,10 +4147,10 @@ private fun AppearanceSettings() {
                 TextButton(onClick = {
                     UiAnimationSettings.setAnimationStyle(draft)
                     showStyleDialog = false
-                }) { Text("Done") }
+                }) { Text(Lang.s("done")) }
             },
             dismissButton = {
-                TextButton(onClick = { showStyleDialog = false }) { Text("Cancel") }
+                TextButton(onClick = { showStyleDialog = false }) { Text(Lang.s("cancel")) }
             },
         )
     }
@@ -4209,7 +4251,7 @@ private fun SupportSettings(ctx: Context) {
     val erc20  = AyxHere.erc20
     val binUrl = AyxHere.binanceUrl
 
-    Text("Your support keeps AyX free and updated ❤️", style = MaterialTheme.typography.bodySmall,
+    Text(Lang.s("support_keeps_free"), style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp))
 
     Text("SUPPORT · INDIA (UPI)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
@@ -4223,11 +4265,11 @@ private fun SupportSettings(ctx: Context) {
                 Text("UPI", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.width(8.dp))
                 Surface(shape = uiShapeFor(8), color = WARN_AMBER.copy(alpha = 0.20f)) {
-                    Text("Temporarily unavailable", style = MaterialTheme.typography.labelSmall, color = WARN_AMBER,
+                    Text(Lang.s("temporarily_unavailable"), style = MaterialTheme.typography.labelSmall, color = WARN_AMBER,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
                 }
             }
-            Text("Tap for details", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(Lang.s("tap_for_details"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 
@@ -4366,7 +4408,7 @@ private fun AboutSettings(ctx: Context, onLogout: () -> Unit) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(APP_NAME, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text("Version " + ver, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("Runs locally on your device. No data is collected. AI reply (if enabled) sends message text only to the API you configure.",
+            Text(Lang.s("runs_locally"),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
@@ -4376,9 +4418,9 @@ private fun AboutSettings(ctx: Context, onLogout: () -> Unit) {
     StyledSurface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(AyxHere.aboutHey, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-            Text("If you love my project, please give me a ⭐ on my GitHub project.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(Lang.s("love_project_star"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Button(onClick = { openUrl(ctx, AyxHere.githubRepo) }, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Filled.Star, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Star on GitHub")
+                Icon(Icons.Filled.Star, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(Lang.s("star_github"))
             }
         }
     }
@@ -4387,35 +4429,35 @@ private fun AboutSettings(ctx: Context, onLogout: () -> Unit) {
     LinkRowSlot({ InstagramGlyph(21.dp) }, AyxHere.igLabel, "Instagram") { openUrl(ctx, AyxHere.igUrl) }
     LinkRowSlot({ TelegramGlyph(21.dp) }, AyxHere.tgLabel, "Telegram") { openUrl(ctx, AyxHere.tgUrl) }
 
-    Text("If I'm unavailable everywhere, kindly contact me here.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp, top = 2.dp))
+    Text(Lang.s("if_unavailable_contact"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp, top = 2.dp))
     LinkRow(Icons.Filled.Language, CAT_WALLPAPER, "Website", "Personal site") { openUrl(ctx, AyxHere.webUrl) }
 
-    Text("LEGAL", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
+    Text(Lang.s("legal"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
     LinkRow(Icons.Filled.Shield, AYX_GREEN, "Privacy Policy", "How your data is handled") { showPrivacy = true }
 
-    Text("ACCOUNT", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
+    Text(Lang.s("account"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
     OutlinedButton(onClick = { confirm = true }, modifier = Modifier.fillMaxWidth(),
         colors = ButtonDefaults.outlinedButtonColors(contentColor = ERR_RED),
         border = androidx.compose.foundation.BorderStroke(1.dp, ERR_RED.copy(alpha = 0.6f))) {
-        Icon(Icons.AutoMirrored.Filled.Logout, null); Spacer(Modifier.width(8.dp)); Text("Unlink / reset")
+        Icon(Icons.AutoMirrored.Filled.Logout, null); Spacer(Modifier.width(8.dp)); Text(Lang.s("unlink_reset"))
     }
     if (showPrivacy) {
         AlertDialog(onDismissRequest = { showPrivacy = false },
             containerColor = dialogBg(),
             shape = uiShapeFor(22),
             icon = { Icon(Icons.Filled.Shield, null, tint = AYX_GREEN) },
-            title = { Text("Privacy Policy") },
+            title = { Text(Lang.s("privacy_policy")) },
             text = { Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) { Text(PRIVACY_TEXT, style = MaterialTheme.typography.bodySmall) } },
-            confirmButton = { TextButton(onClick = { showPrivacy = false }) { Text("Close", color = AYX_GREEN) } })
+            confirmButton = { TextButton(onClick = { showPrivacy = false }) { Text(Lang.s("close"), color = AYX_GREEN) } })
     }
     if (confirm) {
         AlertDialog(onDismissRequest = { confirm = false },
             containerColor = dialogBg(),
             icon = { Icon(Icons.AutoMirrored.Filled.Logout, null, tint = ERR_RED) },
-            title = { Text("Unlink this device?") },
-            text = { Text("This logs out the WhatsApp session and clears local data (chats, statuses, media cache). You'll need to link again with QR or pairing code.") },
-            confirmButton = { TextButton(onClick = { confirm = false; onLogout() }) { Text("Unlink", color = ERR_RED) } },
-            dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancel") } })
+            title = { Text(Lang.s("unlink_device_q")) },
+            text = { Text(Lang.s("logout_clears")) },
+            confirmButton = { TextButton(onClick = { confirm = false; onLogout() }) { Text(Lang.s("unlink"), color = ERR_RED) } },
+            dismissButton = { TextButton(onClick = { confirm = false }) { Text(Lang.s("cancel")) } })
     }
 }
 
@@ -4436,7 +4478,7 @@ private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) 
         }
         Spacer(Modifier.height(16.dp))
         Text(APP_NAME, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Text("Link your WhatsApp to get started", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(Lang.s("link_whatsapp_start"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(24.dp))
         // QR card (scan this from WhatsApp on your phone)
         StyledSurface(shape = uiShapeFor(26), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.40f), modifier = Modifier.fillMaxWidth()) {
@@ -4445,7 +4487,7 @@ private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) 
                     if (qr != null) Image(qr, "QR", Modifier.fillMaxSize().padding(16.dp), contentScale = ContentScale.Fit)
                     else Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         CircularProgressIndicator(color = AYX_GREEN, strokeWidth = 3.dp)
-                        Spacer(Modifier.height(12.dp)); Text("Generating QR…", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                        Spacer(Modifier.height(12.dp)); Text(Lang.s("generating_qr"), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
@@ -4459,7 +4501,7 @@ private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) 
             }
         }
         Spacer(Modifier.height(16.dp))
-        TextButton(onClick = onReset) { Text("QR not working? Get a fresh one") }
+        TextButton(onClick = onReset) { Text(Lang.s("qr_not_working")) }
         Spacer(Modifier.height(30.dp))
     }
 }
@@ -4484,7 +4526,7 @@ private fun NewChatScreen(contacts: List<DeviceContact>, loading: Boolean, dpCac
     }
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
         Spacer(Modifier.height(10.dp))
-        OutlinedTextField(q, { q = it }, placeholder = { Text("Search name or number") },
+        OutlinedTextField(q, { q = it }, placeholder = { Text(Lang.s("search_name_number")) },
             leadingIcon = { Icon(Icons.Filled.Search, null, tint = IOS_BLUE) },
             singleLine = true, shape = uiShapeFor(28),
             colors = OutlinedTextFieldDefaults.colors(
@@ -4498,11 +4540,11 @@ private fun NewChatScreen(contacts: List<DeviceContact>, loading: Boolean, dpCac
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator()
                     Spacer(Modifier.height(10.dp))
-                    Text("Finding your WhatsApp contacts…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(Lang.s("finding_contacts"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             contacts.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No WhatsApp contacts found", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(Lang.s("no_contacts_whatsapp"), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             else -> {
                 Text("${filtered.size} contacts on WhatsApp", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 4.dp, bottom = 4.dp))
@@ -4599,14 +4641,14 @@ private fun StatusScreen(statuses: List<GatewayClient.StatusItem>, contentPad: a
                 modifier = Modifier.combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null,
                     onClick = {}, onLongClick = onToggleReveal).padding(start = 14.dp, top = 12.dp, bottom = 2.dp))
             if (mine.isEmpty()) {
-                Text("Tap the camera button to add a status update", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 14.dp, top = 4.dp, bottom = 10.dp))
+                Text(Lang.s("tap_camera_status"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 14.dp, top = 4.dp, bottom = 10.dp))
             } else {
                 val st = mine.first()
                 Row(Modifier.fillMaxWidth().clickable { onOpen(st) }.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Avatar(st.sender, "Me", dpCache, 50.dp)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text("My Status", style = MaterialTheme.typography.bodyLarge, maxLines = 1)
+                        Text(Lang.s("my_status"), style = MaterialTheme.typography.bodyLarge, maxLines = 1)
                         Text(mine.size.toString() + " update(s) · " + fmt(st.ts), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
@@ -4630,7 +4672,7 @@ private fun StatusScreen(statuses: List<GatewayClient.StatusItem>, contentPad: a
                 StatusRow(entry.key, entry.value, seen = StatusData.groupSeen(entry.value), dpCache = dpCache, onOpen = onOpen)
             }
         }
-        if (unread.isEmpty() && read.isEmpty() && muted.isEmpty()) item { Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { Text("No recent updates", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
+        if (unread.isEmpty() && read.isEmpty() && muted.isEmpty()) item { Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { Text(Lang.s("no_recent_updates"), color = MaterialTheme.colorScheme.onSurfaceVariant) } }
     }
 }
 
@@ -4824,27 +4866,27 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                     if (curUri == null) {
                             // Empty state: add a photo or video again.
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("Add a photo or video", color = Color.White.copy(alpha = 0.7f))
+                                Text(Lang.s("add_photo_video"), color = Color.White.copy(alpha = 0.7f))
                                 Spacer(Modifier.height(10.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    TextButton(onClick = { pickPhoto.launch("image/*") }) { Text("Add photo", color = Color.White) }
-                                    TextButton(onClick = { pickVideo.launch("video/*") }) { Text("Add video", color = Color.White) }
+                                    TextButton(onClick = { pickPhoto.launch("image/*") }) { Text(Lang.s("add_photo"), color = Color.White) }
+                                    TextButton(onClick = { pickVideo.launch("video/*") }) { Text(Lang.s("add_video"), color = Color.White) }
                                 }
                             }
                         }
                         else if (mediaType == "image") {
                             val editedBmp = remember(editedBytes) { editedBytes?.let { runCatching { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }.getOrNull() } }
                             val bmp = editedBmp ?: remember(curUri) { runCatching { ctx.contentResolver.openInputStream(curUri)?.use { BitmapFactory.decodeStream(it)?.asImageBitmap() } }.getOrNull() }
-                            if (bmp != null) Image(bmp, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit) else Text("Preview unavailable", color = Color.White)
+                            if (bmp != null) Image(bmp, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit) else Text(Lang.s("preview_unavailable"), color = Color.White)
                             // LEFT-side X: remove the photo (below the overlaid top bar).
                             IconButton(onClick = { mediaUri = null; editedBytes = null }, modifier = Modifier.align(Alignment.TopStart).padding(top = overlayTopPad, start = 8.dp)) {
                                 Icon(Icons.Filled.Close, "remove photo", tint = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(4.dp))
                             }
-                            if (editedBytes != null) Text("Edited ✓", color = Color.White, style = MaterialTheme.typography.labelSmall,
+                            if (editedBytes != null) Text(Lang.s("edited_tick"), color = Color.White, style = MaterialTheme.typography.labelSmall,
                                 modifier = Modifier.align(Alignment.TopStart).padding(top = overlayTopPad + 54.dp, start = 12.dp).background(Color.Black.copy(alpha = 0.5f), uiShapeFor(8)).padding(horizontal = 8.dp, vertical = 4.dp))
                             // AI Edit lives on the IMAGE HEADER (top-right, below the top bar) — same real OpenRouter backend.
                             TextButton(onClick = { aiEditOpen = true }, modifier = Modifier.align(Alignment.TopEnd).padding(top = overlayTopPad, end = 8.dp)) {
-                                Text("✨ Edit image with AI", color = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), uiShapeFor(16)).padding(horizontal = 10.dp, vertical = 6.dp))
+                                Text(Lang.s("edit_image_ai"), color = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), uiShapeFor(16)).padding(horizontal = 10.dp, vertical = 6.dp))
                             }
                         }
                         else {
@@ -4928,7 +4970,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                     }
 
                             }
-                            Text("drag • pinch to resize lyrics", color = Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.labelSmall,
+                            Text(Lang.s("drag_pinch_lyrics"), color = Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.labelSmall,
                                 modifier = Modifier.align(Alignment.TopCenter).padding(top = 6.dp))
                         }
                     }
@@ -4939,7 +4981,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                     .statusBarsPadding()) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = onCancel) { Icon(Icons.Filled.Close, "close", tint = Color.White) }
-                        Text("New status", color = Color.White, fontWeight = FontWeight.Bold)
+                        Text(Lang.s("new_status"), color = Color.White, fontWeight = FontWeight.Bold)
                         TextButton(onClick = { pickAudience = true }) { Text(audLabel, color = IOS_BLUE) }
                     }
                 }
@@ -4957,7 +4999,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                 WaveformTrimmer(videoBars, videoDuration, vTrimStart, vTrimEnd, videoPos, edgeHandles = true) { ns, ne -> vTrimStart = ns; vTrimEnd = ne }
                                 val vSelSec = ((vTrimEnd - vTrimStart).coerceAtLeast(0L) / 1000L)
                                 Text(fmtMs(vTrimStart) + "  →  " + fmtMs(vTrimEnd) + "   •   (" + vSelSec + "s)", color = Color.White, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 4.dp))
-                                Text("drag the edges or swipe the waveform to move", color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall)
+                                Text(Lang.s("drag_edges_waveform"), color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall)
                                 Spacer(Modifier.height(6.dp))
                             }
                             // ---- SONG row: tap toggles the AI Lyrics Translate button below. Actions are ICONS (no text).
@@ -4965,7 +5007,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                             Row(Modifier.fillMaxWidth().clickable { if (song != null) showTranslateRow = !showTranslateRow }, verticalAlignment = Alignment.CenterVertically) {
                                 val sg = song
                                 if (sg == null) {
-                                    TextButton(onClick = { musicOpen = true }) { Text("♪  Add music", color = Color.White) }
+                                    TextButton(onClick = { musicOpen = true }) { Text(Lang.s("add_music_icon"), color = Color.White) }
                                 } else {
                                     IconButton(onClick = {
                                         if (playing) { runCatching { player.pause() }; playing = false }
@@ -4998,7 +5040,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                         else translateOpen = true
                                     }) { Text(if (translatedActive) "✓ AI Lyrics Translated" else "🌐 AI Lyrics Translate", color = Color.White) }
                                 }
-                                if (translatedActive) Text("Translated ✓ — translated lyrics will be posted", color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 8.dp))
+                                if (translatedActive) Text(Lang.s("translated_kept"), color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 8.dp))
                             }
                             // (AI Edit now lives on the image header; AI Lyrics Translate toggles under the song row.)
                             // ---- Video: mute (the trimmer now lives in its own toggleable panel above) ----
@@ -5013,13 +5055,13 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                     Text(if (videoMuted) "Video audio will be off in the posted status" else "Video audio will be kept", color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall)
                                 }
                             }
-                            if (mediaUri == null) Text("Add a photo or video to post", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
+                            if (mediaUri == null) Text(Lang.s("add_photo_video_post"), color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
                             // Caption + send — ONE row: text field + green send button attached at its right end.
                             // Explicit Row (not trailingIcon) so the button can never detach or misalign when the
                             // keyboard opens; the overlay's imePadding() keeps the whole row just above the keyboard.
                             Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Box(Modifier.weight(1f).clip(uiShapeFor(24)).background(Color.White.copy(alpha = 0.07f))) {
-                                    OutlinedTextField(caption, { caption = it }, placeholder = { Text("Add a caption…", color = Color.White.copy(alpha = 0.6f)) }, maxLines = 3, shape = uiShapeFor(24),
+                                    OutlinedTextField(caption, { caption = it }, placeholder = { Text(Lang.s("add_caption"), color = Color.White.copy(alpha = 0.6f)) }, maxLines = 3, shape = uiShapeFor(24),
                                         colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.White.copy(alpha = 0.22f), unfocusedBorderColor = Color.White.copy(alpha = 0.10f),
                                             focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
                                             focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White),
@@ -5101,25 +5143,25 @@ private fun AiLyricsTranslateSheet(songTitle: String, lyrics: List<Pair<Long, St
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF0E2A28), Color(0xFF101418), Color(0xFF08090B))))) {
             Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(16.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = onCancel) { Text("Cancel", color = Color.White) }
+                    TextButton(onClick = onCancel) { Text(Lang.s("cancel"), color = Color.White) }
                     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
-                        Text("AI Lyrics Translate", color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(Lang.s("ai_lyrics_translate"), color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         if (songTitle.isNotBlank()) Text(songTitle, color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     Spacer(Modifier.size(64.dp))
                 }
                 Spacer(Modifier.height(8.dp))
                 if (hasLyrics) {
-                    Text("Original lyrics:", color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.labelMedium)
+                    Text(Lang.s("original_lyrics"), color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.labelMedium)
                     Spacer(Modifier.height(4.dp))
                     Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())) {
                         shownOrig.forEach { line -> Text(line, color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(vertical = 2.dp)) }
                     }
                 } else {
-                    Text("No lyrics found for this song.", color = Color(0xFFFFB84D), style = MaterialTheme.typography.bodyMedium)
-                    Text("Paste or type the lyrics below, then translate them — nothing is invented.", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall)
+                    Text(Lang.s("no_lyrics_found"), color = Color(0xFFFFB84D), style = MaterialTheme.typography.bodyMedium)
+                    Text(Lang.s("paste_lyrics_translate"), color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall)
                     Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(manual, { manual = it; translated = null }, placeholder = { Text("Type or paste lyrics…", color = Color.White.copy(alpha = 0.45f)) },
+                    OutlinedTextField(manual, { manual = it; translated = null }, placeholder = { Text(Lang.s("type_or_paste_lyrics"), color = Color.White.copy(alpha = 0.45f)) },
                         minLines = 5, maxLines = 10,
                         colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White,
                             focusedBorderColor = Color.White.copy(alpha = 0.4f), unfocusedBorderColor = Color.White.copy(alpha = 0.2f)),
@@ -5155,7 +5197,7 @@ private fun AiLyricsTranslateSheet(songTitle: String, lyrics: List<Pair<Long, St
                 }
                 Spacer(Modifier.height(6.dp))
                 Button(onClick = { runTranslate() }, enabled = !translating, modifier = Modifier.fillMaxWidth()) {
-                    if (translating) { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White); Spacer(Modifier.size(8.dp)); Text("Translating…") }
+                    if (translating) { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White); Spacer(Modifier.size(8.dp)); Text(Lang.s("translating")) }
                     else Text("Translate to $lang")
                 }
                 if (needKey) {
@@ -5166,7 +5208,7 @@ private fun AiLyricsTranslateSheet(songTitle: String, lyrics: List<Pair<Long, St
                 if (error != null) {
                     Spacer(Modifier.height(6.dp))
                     Text(error!!, color = Color(0xFFFF8A80), style = MaterialTheme.typography.bodySmall)
-                    TextButton(onClick = { runTranslate() }, enabled = !translating) { Text("Retry", color = Color.White) }
+                    TextButton(onClick = { runTranslate() }, enabled = !translating) { Text(Lang.s("retry"), color = Color.White) }
                 }
                 val tr = translated
                 if (tr != null) {
@@ -5182,8 +5224,8 @@ private fun AiLyricsTranslateSheet(songTitle: String, lyrics: List<Pair<Long, St
                             val applied = if (hasLyrics) lyrics.mapIndexed { i, pr -> pr.first to tr[i] }
                             else tr.mapIndexed { i, s -> (i * 4000L) to s }
                             onApply(applied)
-                        }, modifier = Modifier.weight(1f)) { Text("Apply translation") }
-                        TextButton(onClick = { translated = null }) { Text("Discard", color = Color.White.copy(alpha = 0.7f)) }
+                        }, modifier = Modifier.weight(1f)) { Text(Lang.s("apply_translation")) }
+                        TextButton(onClick = { translated = null }) { Text(Lang.s("discard"), color = Color.White.copy(alpha = 0.7f)) }
                     }
                 }
             }
@@ -5226,7 +5268,7 @@ private fun GroqKeyDialog(ctx: Context, onClose: () -> Unit) {
                     modifier = Modifier.fillMaxWidth())
                 if (err != null) Text(err!!, color = Color(0xFFFF8A80), style = MaterialTheme.typography.bodySmall)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = onClose) { Text("Cancel", color = Color.White.copy(alpha = 0.7f)) }
+                    TextButton(onClick = onClose) { Text(Lang.s("cancel"), color = Color.White.copy(alpha = 0.7f)) }
                     Spacer(Modifier.size(8.dp))
                     Button(onClick = {
                         if (key.isBlank()) { err = "Paste your API key first."; return@Button }
@@ -5262,21 +5304,21 @@ private fun ManualLyricsDialog(onDone: (List<String>) -> Unit, onCancel: () -> U
     Dialog(onDismissRequest = onCancel) {
         Surface(shape = uiShapeFor(18), color = Color(0xFF161616)) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Enter lyrics manually", color = Color.White, style = MaterialTheme.typography.titleMedium)
-                Text("One line per row — they will be used for this status exactly as typed.",
+                Text(Lang.s("enter_lyrics_manually"), color = Color.White, style = MaterialTheme.typography.titleMedium)
+                Text(Lang.s("one_line_per_row"),
                     color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.bodySmall)
-                OutlinedTextField(text, { text = it }, placeholder = { Text("Type or paste lyrics…", color = Color.White.copy(alpha = 0.45f)) },
+                OutlinedTextField(text, { text = it }, placeholder = { Text(Lang.s("type_or_paste_lyrics"), color = Color.White.copy(alpha = 0.45f)) },
                     minLines = 6, maxLines = 12,
                     colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White,
                         focusedBorderColor = Color.White.copy(alpha = 0.4f), unfocusedBorderColor = Color.White.copy(alpha = 0.2f)),
                     modifier = Modifier.fillMaxWidth())
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = onCancel) { Text("Cancel", color = Color.White.copy(alpha = 0.7f)) }
+                    TextButton(onClick = onCancel) { Text(Lang.s("cancel"), color = Color.White.copy(alpha = 0.7f)) }
                     Spacer(Modifier.size(8.dp))
                     Button(onClick = {
                         val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
                         if (lines.isNotEmpty()) onDone(lines)
-                    }, enabled = text.isNotBlank()) { Text("Use these lyrics") }
+                    }, enabled = text.isNotBlank()) { Text(Lang.s("use_these_lyrics")) }
                 }
             }
         }
@@ -5292,13 +5334,13 @@ private fun AudienceSheet(contacts: List<DeviceContact>, audienceIn: String, sel
     Dialog(onDismissRequest = { onDone(aud, sel) }) {
         StyledSurface(shape = uiShapeFor(16), color = dialogBg()) {
             Column(Modifier.padding(14.dp).heightIn(max = 560.dp)) {
-                Text("Status privacy", fontWeight = FontWeight.Bold)
+                Text(Lang.s("status_privacy"), fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
                 AudRadio("My contacts", aud == "all") { aud = "all" }
                 AudRadio("My contacts except…", aud == "except") { aud = "except" }
                 AudRadio("Only share with…", aud == "only") { aud = "only" }
                 if (aud != "all") {
-                    OutlinedTextField(q, { q = it }, placeholder = { Text("Search") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp))
+                    OutlinedTextField(q, { q = it }, placeholder = { Text(Lang.s("search")) }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp))
                     LazyColumn(Modifier.heightIn(max = 340.dp)) {
                         itemsIndexed(filtered) { _, c ->
                             val jid = c.number + "@s.whatsapp.net"
@@ -5310,7 +5352,7 @@ private fun AudienceSheet(contacts: List<DeviceContact>, audienceIn: String, sel
                         }
                     }
                 }
-                Button(onClick = { onDone(aud, sel) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("Done") }
+                Button(onClick = { onDone(aud, sel) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text(Lang.s("done")) }
             }
         }
     }
@@ -5463,7 +5505,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                         Box(Modifier.align(Alignment.Center).clip(CircleShape).background(Color.Black.copy(alpha = 0.55f))
                             .clickable { reloadKey++ }.padding(horizontal = 18.dp, vertical = 12.dp), contentAlignment = Alignment.Center) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Filled.Download, null, tint = Color.White); Spacer(Modifier.width(8.dp)); Text("Tap to load", color = Color.White)
+                                Icon(Icons.Filled.Download, null, tint = Color.White); Spacer(Modifier.width(8.dp)); Text(Lang.s("tap_to_load"), color = Color.White)
                             }
                         }
                     }
@@ -5474,7 +5516,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                     Box(Modifier.fillMaxSize().clickable { reloadKey++ }, contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(Icons.Filled.Download, null, tint = Color.White, modifier = Modifier.size(44.dp))
-                            Spacer(Modifier.height(8.dp)); Text("Tap to download", color = Color.White)
+                            Spacer(Modifier.height(8.dp)); Text(Lang.s("tap_to_download"), color = Color.White)
                         }
                     }
                 } else {
@@ -5533,21 +5575,21 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                                 if (myMine) {
                                     // V1: My Status menu
                                     if (st.id != null) DropdownMenuItem(
-                                        text = { Text("Forward status to anyone") },
+                                        text = { Text(Lang.s("forward_status_anyone")) },
                                         onClick = { viewerMenu = false; onForwardStatus(st.id!!) }
                                     )
                                     if (st.mediaName != null) DropdownMenuItem(
-                                        text = { Text("Save") },
+                                        text = { Text(Lang.s("save")) },
                                         onClick = { viewerMenu = false; onDownload(st) }
                                     )
                                     if (st.id != null) DropdownMenuItem(
-                                        text = { Text("Delete") },
+                                        text = { Text(Lang.s("delete")) },
                                         onClick = { viewerMenu = false; confirmDelete = st.id }
                                     )
                                 } else {
                                     // V2: other users' status menu
                                     if (st.mediaName != null) DropdownMenuItem(
-                                        text = { Text("Download") },
+                                        text = { Text(Lang.s("download")) },
                                         onClick = { viewerMenu = false; onDownload(st) }
                                     )
                                     DropdownMenuItem(
@@ -5590,11 +5632,11 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Icon(Icons.Filled.KeyboardArrowUp, null, tint = Color.White)
-                            Text("Viewed by", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                            Text(Lang.s("viewed_by"), color = Color.White, style = MaterialTheme.typography.labelMedium)
                         }
                     } else {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            OutlinedTextField(replyText, { replyText = it }, placeholder = { Text("Reply to status…", color = Color.White.copy(alpha = 0.6f)) }, singleLine = true, shape = uiShapeFor(26),
+                            OutlinedTextField(replyText, { replyText = it }, placeholder = { Text(Lang.s("reply_to_status"), color = Color.White.copy(alpha = 0.6f)) }, singleLine = true, shape = uiShapeFor(26),
                                 colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.White.copy(alpha = 0.4f), unfocusedBorderColor = Color.White.copy(alpha = 0.25f),
                                     focusedContainerColor = Color.Black.copy(alpha = 0.4f), unfocusedContainerColor = Color.Black.copy(alpha = 0.4f),
                                     focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White),
@@ -5607,10 +5649,10 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                 confirmDelete?.let { id ->
                     AlertDialog(onDismissRequest = { confirmDelete = null },
                         containerColor = dialogBg(),
-                        title = { Text("Delete status?") },
-                        text = { Text("This will delete it from your WhatsApp and from this app.") },
-                        confirmButton = { TextButton(onClick = { confirmDelete = null; onDeleteStatus(id); onClose() }) { Text("Delete", color = Color(0xFFFF3B30)) } },
-                        dismissButton = { TextButton(onClick = { confirmDelete = null }) { Text("Cancel") } })
+                        title = { Text(Lang.s("delete_status_q")) },
+                        text = { Text(Lang.s("delete_from_whatsapp")) },
+                        confirmButton = { TextButton(onClick = { confirmDelete = null; onDeleteStatus(id); onClose() }) { Text(Lang.s("delete"), color = Color(0xFFFF3B30)) } },
+                        dismissButton = { TextButton(onClick = { confirmDelete = null }) { Text(Lang.s("cancel")) } })
                 }
                 if (showViewers) StatusViewersSheet(items.filter { it.mine }.mapNotNull { it.id }, dpCache, onClose = { showViewers = false })
             }
@@ -5645,16 +5687,16 @@ private fun ProfileScreen(myJid: String?, dpCache: MutableMap<String, ImageBitma
         Spacer(Modifier.height(26.dp))
         StyledSurface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f), modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
-                Text("DISPLAY NAME", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                Text(Lang.s("display_name"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.height(6.dp))
-                OutlinedTextField(name, { name = it }, placeholder = { Text("Your name") }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth(),
+                OutlinedTextField(name, { name = it }, placeholder = { Text(Lang.s("your_name")) }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = AYX_GREEN, unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)))
-                Text("Shows on your WhatsApp profile.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
+                Text(Lang.s("shows_whatsapp_profile"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
             }
         }
         Spacer(Modifier.height(18.dp))
         Button(onClick = { if (name.isNotBlank()) onSaveName(name.trim()) }, enabled = name.isNotBlank(), modifier = Modifier.fillMaxWidth().height(50.dp), shape = uiShapeFor(14)) {
-            Icon(Icons.Filled.CheckCircle, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Save name")
+            Icon(Icons.Filled.CheckCircle, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(Lang.s("save_name"))
         }
     }
 }
@@ -5712,18 +5754,18 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
                         }
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                Text("Add music", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                                Text("tap ▶ to preview, tap song to use", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(Lang.s("add_music"), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                                Text(Lang.s("tap_preview_song"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             IconButton(onClick = { runCatching { player.stop() }; onClose() }) { Icon(Icons.Filled.Close, "close") }
                         }
                         Spacer(Modifier.height(8.dp))
-                        OutlinedTextField(q, { q = it }, placeholder = { Text("Search songs…") }, leadingIcon = { Icon(Icons.Filled.Search, null) }, singleLine = true, shape = uiShapeFor(16), modifier = Modifier.fillMaxWidth().focusRequester(searchFocus))
+                        OutlinedTextField(q, { q = it }, placeholder = { Text(Lang.s("search_songs")) }, leadingIcon = { Icon(Icons.Filled.Search, null) }, singleLine = true, shape = uiShapeFor(16), modifier = Modifier.fillMaxWidth().focusRequester(searchFocus))
                         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
                         if (!loading && results.isEmpty() && q.trim().length >= 2) {
                             Text(if (error.isNotBlank()) "No songs (" + error.take(120) + ")" else "No results", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 8.dp))
                         }
-                        if (q.trim().length < 2) Text("Suggested", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp, start = 2.dp))
+                        if (q.trim().length < 2) Text(Lang.s("suggested"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp, start = 2.dp))
                     }
                     Spacer(Modifier.height(6.dp))
                     LazyColumn(Modifier.fillMaxSize()) {
@@ -5747,7 +5789,7 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
                                 null -> CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 else -> {}
                             }
-                            Text("Use", color = IOS_BLUE, modifier = Modifier.padding(horizontal = 6.dp))
+                            Text(Lang.s("use"), color = IOS_BLUE, modifier = Modifier.padding(horizontal = 6.dp))
                         }
                     }
                 }
@@ -5812,18 +5854,18 @@ private fun AudioTrimmer(song: GatewayClient.Song, onDone: (Long, Long, List<Pai
                         Text(song.title, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(song.artist, color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    TextButton(onClick = { runCatching { player.stop() }; onDone(startMs, endMs, reanchorUntimedLyrics(lyrics, startMs)) }, enabled = ready) { Text("Done", color = IOS_BLUE, fontWeight = FontWeight.Bold) }
+                    TextButton(onClick = { runCatching { player.stop() }; onDone(startMs, endMs, reanchorUntimedLyrics(lyrics, startMs)) }, enabled = ready) { Text(Lang.s("done"), color = IOS_BLUE, fontWeight = FontWeight.Bold) }
                 }
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     if (!lyricsLoaded) CircularProgressIndicator(color = Color.White)
                     else if (lyrics.isEmpty()) Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 16.dp)) {
-                        Text("Lyrics not found", color = Color.White.copy(alpha = 0.85f), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                        Text(Lang.s("lyrics_not_found"), color = Color.White.copy(alpha = 0.85f), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.height(4.dp))
-                        Text("The lyrics provider has no lyrics for this song.", color = Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
+                        Text(Lang.s("provider_no_lyrics"), color = Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
                         Spacer(Modifier.height(10.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextButton(onClick = { lyricsAttempt++ }) { Text("Retry", color = IOS_BLUE) }
-                            TextButton(onClick = { manualOpen = true }) { Text("Enter lyrics manually", color = IOS_BLUE) }
+                            TextButton(onClick = { lyricsAttempt++ }) { Text(Lang.s("retry"), color = IOS_BLUE) }
+                            TextButton(onClick = { manualOpen = true }) { Text(Lang.s("enter_lyrics_manually"), color = IOS_BLUE) }
                         }
                     }
                     else Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -5850,7 +5892,7 @@ private fun AudioTrimmer(song: GatewayClient.Song, onDone: (Long, Long, List<Pai
                     val selLen = (endMs - startMs).coerceIn(1000L, durationMs)
                     val maxLen = minOf(60000L, durationMs)
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text("Length", color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelMedium)
+                        Text(Lang.s("length"), color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelMedium)
                         Slider(value = selLen.toFloat().coerceIn(5000f, maxLen.toFloat()), onValueChange = { nl ->
                             val newLen = nl.toLong().coerceIn(5000L, maxLen)
                             endMs = (startMs + newLen).coerceAtMost(durationMs)

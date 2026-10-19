@@ -110,18 +110,18 @@ fun StatusViewersSheet(statusIds: List<String>, dpCache: MutableMap<String, Imag
             ) {
                 Column(Modifier.fillMaxSize().navigationBarsPadding()) {
                     Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 14.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("Viewed by " + viewers.size, color = Color.White, fontWeight = FontWeight.Medium, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                        Text(Lang.s("viewed_by") + " " + viewers.size, color = Color.White, fontWeight = FontWeight.Medium, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
                         Box {
                             IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "more", tint = Color.White) }
                             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                                DropdownMenuItem(text = { Text("Refresh") }, onClick = { menu = false; reload++ })
+                                DropdownMenuItem(text = { Text(Lang.s("refresh")) }, onClick = { menu = false; reload++ })
                             }
                         }
                     }
                     if (loading) {
                         Box(Modifier.fillMaxWidth().padding(36.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Color.White) }
                     } else if (viewers.isEmpty()) {
-                        Text("No views yet", color = Color.White.copy(alpha = 0.6f), modifier = Modifier.padding(24.dp))
+                        Text(Lang.s("no_views_yet"), color = Color.White.copy(alpha = 0.6f), modifier = Modifier.padding(24.dp))
                     } else {
                         LazyColumn(Modifier.fillMaxSize()) {
                             items(viewers, key = { it.jid }) { v ->

@@ -204,7 +204,7 @@ fun AiSettingsFields(ctx: Context, dark: Boolean = true, onSaved: () -> Unit) {
             Button(onClick = {
                 AiImgSettings.save(ctx, key, model)
                 savedTick = true
-                Toast.makeText(ctx, "AI settings saved", Toast.LENGTH_SHORT).show()
+                Toast.makeText(ctx, Lang.s("toast_ai_saved"), Toast.LENGTH_SHORT).show()
                 onSaved()
             }) { Text("Save") }
             if (savedTick) Text("Saved ✓", color = Color(0xFF7ED957), style = MaterialTheme.typography.labelMedium)
