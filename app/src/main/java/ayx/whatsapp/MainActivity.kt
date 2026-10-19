@@ -1133,10 +1133,8 @@ fun GatewayApp() {
                         if (t == "image") {
                             // AI-edited bytes win over the raw file — what you see is what posts.
                             val rawBytes = editedBytes ?: withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(u)?.use { it.readBytes() } }
-                            // Stock WhatsApp renders non-JPEG status photos as broken — re-encode,
-                            // unless F1 HQ mode is on (send original bytes as-is).
-                            val hq = ctx.getSharedPreferences("ayx_status", android.content.Context.MODE_PRIVATE).getBoolean("hq_upload", false)
-                            val bytes = if (!hq && rawBytes != null && !isJpeg(rawBytes)) {
+                            // Stock WhatsApp renders non-JPEG status photos as broken — re-encode.
+                            val bytes = if (rawBytes != null && !isJpeg(rawBytes)) {
                                 withContext(Dispatchers.IO) { convertToJpeg(rawBytes) } ?: rawBytes
                             } else rawBytes
                             if (bytes != null) { notify("Uploading status…"); val res = GatewayClient.postStatus(t, Base64.encodeToString(bytes, Base64.NO_WRAP), caption, audience, recipients); notify((if (res.first) "✅ " else "❌ ") + res.second); if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) } }
@@ -3522,9 +3520,6 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
         SettingRow(Icons.Filled.DoneAll, CAT_WALLPAPER, "Auto-read messages", "Mark incoming chats as read", settings.autoRead) { onToggle(JSONObject().put("autoRead", it)) }
         SettingRow(Icons.Filled.PermMedia, CAT_AUTOREPLY, "Save media", "Download incoming photos/videos (needed for view, deleted media)", settings.saveMedia) { onToggle(JSONObject().put("saveMedia", it)) }
         SettingRow(Icons.AutoMirrored.Filled.ArrowForward, CAT_AI, "Forwarded tag", "Show the \"Forwarded\" label on forwarded messages", ChatStyle.showForwardTag.value) { ChatStyle.setShowForwardTag(it) }
-        // F1: default for the status editor's HQ toggle (also changeable per-post in the editor).
-        val hqPref = ctx.getSharedPreferences("ayx_status", android.content.Context.MODE_PRIVATE)
-        SettingRow(Icons.Filled.HighQuality, CAT_WALLPAPER, "High-quality status", "Upload status photos in original quality (no JPEG recompression)", hqPref.getBoolean("hq_upload", false)) { hqPref.edit().putBoolean("hq_upload", it).apply() }
     }
     SettingsGroup("Appearance") {
         ActionRow(Icons.Filled.TextFields, CAT_GENERAL, "App font", "Current: ${FontStore.appFont}  ·  preview, pick or upload .ttf/.otf") { onOpenFont() }
@@ -3713,8 +3708,6 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
         SettingRow(Icons.Filled.AutoAwesome, CAT_AI, "AI reply (master)", "Master switch — OFF stops ALL AI replies (text, image, voice, groups). Keyword rules still work", settings.aiReplyEnabled) { onToggle(JSONObject().put("aiReplyEnabled", it)) }
         SettingRow(Icons.Filled.Image, Color(0xFFFFB26B), "Image reply", "AI looks at incoming images (vision) then swipe-replies", settings.aiReplyImage) { onToggle(JSONObject().put("aiReplyImage", it)) }
         SettingRow(Icons.Filled.QuestionAnswer, Color(0xFFB69DF8), "Group AI reply", "Answer greetings/questions in groups (max 10/day); /ai works anytime", settings.groupAiEnabled) { onToggle(JSONObject().put("groupAiEnabled", it)) }
-        // F2: AI replies as voice notes (Android on-device TTS, free, no API key).
-        SettingRow(Icons.Filled.RecordVoiceOver, Color(0xFF7BD88F), "Reply as voice note", "AI replies go as voice notes (Android TTS) instead of text", settings.aiReplyVoiceNote) { onToggle(JSONObject().put("aiReplyVoiceNote", it)) }
         Text("Image replies come as a swipe-left quote on the exact message. Voice note reply is now in \"AI Voice\" settings.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 2.dp, top = 2.dp, bottom = 6.dp))
     }
@@ -4976,10 +4969,6 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     var videoPlaying by remember { mutableStateOf(false) }
     var exoPlayer by remember { mutableStateOf<androidx.media3.exoplayer.ExoPlayer?>(null) }
     var videoTrimOpen by remember { mutableStateOf(false) }   // V3: trimmer panel toggled from the ✂ Trim button in the video header
-    // F1: High-quality status upload — skips JPEG recompression, sends original bytes.
-    // Persisted in prefs so the choice survives; Settings has the default toggle too.
-    var hqUpload by remember { mutableStateOf(ctx.getSharedPreferences("ayx_status", android.content.Context.MODE_PRIVATE).getBoolean("hq_upload", false)) }
-    fun setHq(v: Boolean) { hqUpload = v; ctx.getSharedPreferences("ayx_status", android.content.Context.MODE_PRIVATE).edit().putBoolean("hq_upload", v).apply() }
     // ---- Song tap toggles the AI Lyrics Translate button below the song row ----
     var showTranslateRow by remember { mutableStateOf(false) }
     var songQuery by remember { mutableStateOf("") }   // last song-search query (preserved across replace)
@@ -5205,15 +5194,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                     .statusBarsPadding()) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = onCancel) { Icon(Icons.Filled.Close, "close", tint = Color.White) }
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("New status", color = Color.White, fontWeight = FontWeight.Bold)
-                            // F1: HQ toggle — green badge when on, dim when off.
-                            TextButton(onClick = { setHq(!hqUpload) }, contentPadding = PaddingValues(0.dp)) {
-                                Text("HQ", color = if (hqUpload) Color.Black else Color.White.copy(alpha = 0.7f),
-                                    fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall,
-                                    modifier = Modifier.background(if (hqUpload) AYX_GREEN else Color.White.copy(alpha = 0.12f), uiShapeFor(8)).padding(horizontal = 10.dp, vertical = 5.dp))
-                            }
-                        }
+                        Text("New status", color = Color.White, fontWeight = FontWeight.Bold)
                         TextButton(onClick = { pickAudience = true }) { Text(audLabel, color = IOS_BLUE) }
                     }
                 }
