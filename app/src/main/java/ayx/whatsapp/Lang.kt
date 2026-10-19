@@ -64,6 +64,8 @@ object Lang {
     }
 
     private val en: Map<String, String> = mapOf(
+        "uploading_status" to "Uploading status…",
+        "uploading" to "Uploading…",
         "add_caption" to "Add a caption…",
         "add_chats_stop_ai" to "Add chats here to stop AI (and keyword auto-reply) from replying to them.",
         "add_music" to "Add music",
@@ -249,6 +251,8 @@ object Lang {
     )
 
     private val hi: Map<String, String> = mapOf(
+        "uploading_status" to "स्टेटस अपलोड हो रहा है…",
+        "uploading" to "अपलोड हो रहा है…",
         "add_caption" to "कैप्शन जोड़ें…",
         "add_chats_stop_ai" to "यहाँ चैट्स जोड़ें ताकि AI (और कीवर्ड ऑटो-रिप्लाई) उन्हें जवाब न दे।",
         "add_music" to "म्यूज़िक जोड़ें",
@@ -434,6 +438,8 @@ object Lang {
     )
 
     private val bn: Map<String, String> = mapOf(
+        "uploading_status" to "স্ট্যাটাস আপলোড হচ্ছে…",
+        "uploading" to "আপলোড হচ্ছে…",
         "add_caption" to "ক্যাপশন যোগ করুন…",
         "add_chats_stop_ai" to "AI (এবং কীওয়ার্ড অটো-রিপ্লাই) যাদের উত্তর দেবে না, তাদের এখানে যোগ করুন।",
         "add_music" to "গান যোগ করুন",
@@ -619,6 +625,8 @@ object Lang {
     )
 
     private val id: Map<String, String> = mapOf(
+        "uploading_status" to "Mengunggah status…",
+        "uploading" to "Mengunggah…",
         "add_caption" to "Tambahkan keterangan…",
         "add_chats_stop_ai" to "Tambahkan chat di sini agar AI (dan auto-reply kata kunci) tidak membalasnya.",
         "add_music" to "Tambah musik",
@@ -804,6 +812,8 @@ object Lang {
     )
 
     private val ms: Map<String, String> = mapOf(
+        "uploading_status" to "Memuat naik status…",
+        "uploading" to "Memuat naik…",
         "add_caption" to "Tambah kapsyen…",
         "add_chats_stop_ai" to "Tambah sembang di sini untuk menghentikan AI (dan auto-balas kata kunci) daripada membalasnya.",
         "add_music" to "Tambah muzik",
@@ -989,6 +999,8 @@ object Lang {
     )
 
     private val ru: Map<String, String> = mapOf(
+        "uploading_status" to "Загрузка статуса…",
+        "uploading" to "Загрузка…",
         "add_caption" to "Добавьте подпись…",
         "add_chats_stop_ai" to "Добавьте чаты сюда, чтобы ИИ (и автоответ по ключевым словам) не отвечал в них.",
         "add_music" to "Добавить музыку",

@@ -1794,6 +1794,9 @@ async function handleHistory({ messages, contacts: cts }) {
           const sTs2 = msg.messageTimestamp ? Number(msg.messageTimestamp) * 1000 : Date.now()
           const sE = { sender: sndr2, name: msg.key.fromMe ? 'My Status' : (msg.pushName || ''), mine: !!msg.key.fromMe, id: msg.key.id, text: extractText(msg.message), ts: sTs2 }
           try { await enrichMedia(msg, sE) } catch (_) {}
+          // S3: store the full key in rawStore so /status/delete can revoke it later,
+          // even for statuses posted from the primary device (original WhatsApp).
+          try { if (msg.key && msg.key.id) { rawStore.set(msg.key.id, { key: msg.key, message: msg.message }); if (rawStore.size > 500) { const rk = rawStore.keys().next().value; rawStore.delete(rk) } } } catch (_) {}
           if (!statuses.find(x => x.sender === sE.sender && x.ts === sE.ts)) { statuses.unshift(sE); if (statuses.length > 120) statuses.length = 120; saveStatusesDebounced() }
         }
         continue
@@ -1966,7 +1969,14 @@ app.post('/send', async (req, res) => {
     }
     const r = await sock.sendMessage(jid, { text })
     markSendId(String(req.body?.clientMsgId || ''))
-    res.json({ ok: true, id: r?.key?.id || null })
+    // S2: add to msgStore immediately with status=2 (sent) so delivery/read
+    // receipts can find it even if the messages.upsert echo is delayed.
+    const sentId = r?.key?.id || null
+    if (sentId) {
+      const entry = { chat: canon(jid), fromMe: true, text, ts: Date.now(), id: sentId, status: 2 }
+      if (!msgStore.has(sentId)) { msgStore.set(sentId, entry); msgLog.unshift(entry); saveMessagesDebounced() }
+    }
+    res.json({ ok: true, id: sentId })
   } catch (e) {
     log('send error', e?.message)
     if (isLoggedOutError(e)) { status.needRelogin = true; return res.json({ ok: false, needRelogin: true, error: 'session expired — scan QR again' }) }
@@ -2153,6 +2163,11 @@ app.post('/sendmedia', async (req, res) => {
         const r = await sock.sendMessage(jid, content)
         const id = r?.key?.id || null
         if (id) { try { rawStore.set(id, { key: r.key, message: r.message }); if (rawStore.size > 500) { const rk = rawStore.keys().next().value; rawStore.delete(rk) } } catch (_) {} }
+        // S2: add to msgStore immediately with status=2 so receipts update the tick.
+        if (id && !msgStore.has(id)) {
+          const entry = { chat: canon(jid), fromMe: true, text: caption || '', ts: Date.now(), id, status: 2, mediaType: type }
+          msgStore.set(id, entry); msgLog.unshift(entry); saveMessagesDebounced()
+        }
         mediaUploads.set(uploadId, { state: 'done', jid, type, id })
         log('sendmedia done', uploadId, 'id=' + id)
       } catch (e) {
@@ -2427,12 +2442,21 @@ app.post('/sendreply', async (req, res) => {
       return res.json({ ok: true, queued: true, error: 'reconnecting — queued, will send automatically' })
     }
     const quoted = rawStore.get(quotedId)
+    let sentId = null
     try {
-      if (quoted && quoted.message) await sock.sendMessage(jid, { text }, { quoted })
-      else await sock.sendMessage(jid, { text })
-    } catch (e) { await sock.sendMessage(jid, { text }) }
+      let r
+      if (quoted && quoted.message) r = await sock.sendMessage(jid, { text }, { quoted })
+      else r = await sock.sendMessage(jid, { text })
+      sentId = r?.key?.id || null
+    } catch (e) { const r2 = await sock.sendMessage(jid, { text }); sentId = r2?.key?.id || null }
     markSendId(String(req.body?.clientMsgId || ''))
-    res.json({ ok: true })
+    // S2: add to msgStore immediately with status=2 (sent) so delivery/read
+    // receipts can find it even if the messages.upsert echo is delayed.
+    if (sentId) {
+      const entry = { chat: canon(jid), fromMe: true, text, ts: Date.now(), id: sentId, status: 2 }
+      if (!msgStore.has(sentId)) { msgStore.set(sentId, entry); msgLog.unshift(entry); saveMessagesDebounced() }
+    }
+    res.json({ ok: true, id: sentId })
   } catch (e) {
     if (isLoggedOutError(e)) { status.needRelogin = true; return res.json({ ok: false, needRelogin: true, error: 'session expired — scan QR again' }) }
     res.json({ ok: false, queued: false, error: e?.message || 'send failed' })
@@ -2579,7 +2603,14 @@ app.post('/sendraw', async (req, res) => {
     }
     const r = await sock.sendMessage(jid, { text })
     markSendId(String(req.body?.clientMsgId || ''))
-    res.json({ ok: true, id: r?.key?.id || null })
+    // S2: add to msgStore immediately with status=2 (sent) so delivery/read
+    // receipts can find it even if the messages.upsert echo is delayed.
+    const sentId = r?.key?.id || null
+    if (sentId) {
+      const entry = { chat: canon(jid), fromMe: true, text, ts: Date.now(), id: sentId, status: 2 }
+      if (!msgStore.has(sentId)) { msgStore.set(sentId, entry); msgLog.unshift(entry); saveMessagesDebounced() }
+    }
+    res.json({ ok: true, id: sentId })
   } catch (e) {
     log('sendraw error', e?.message)
     if (isLoggedOutError(e)) { status.needRelogin = true; return res.json({ ok: false, needRelogin: true, error: 'session expired — scan QR again' }) }
@@ -2955,7 +2986,14 @@ app.post('/status/delete', async (req, res) => {
     // Prefer the EXACT key we stored when the status was posted/received — a reconstructed key often
     // doesn't match what WhatsApp has, so the revoke silently no-ops. Fall back to a minimal own key.
     const raw = rawStore.get(id)
-    const key = (raw && raw.key) ? raw.key : { remoteJid: 'status@broadcast', id, fromMe: true }
+    // S3: also look up the status to get the sender (needed for the participant field on others' statuses).
+    const st = statuses.find(x => x.id === id)
+    let key = (raw && raw.key) ? raw.key : null
+    if (!key) {
+      key = { remoteJid: 'status@broadcast', id, fromMe: true }
+      // If it's someone else's status, we need their JID as participant.
+      if (st && !st.mine && st.sender) { key.fromMe = false; key.participant = st.sender }
+    }
     let ok = false, err = ''
     try { await sock.sendMessage('status@broadcast', { delete: key }); ok = true; log('status delete sent → WhatsApp:', id, raw ? '(stored key)' : '(built key)') }
     catch (e) { err = (e && e.message) || 'delete failed'; log('status delete err:', err) }

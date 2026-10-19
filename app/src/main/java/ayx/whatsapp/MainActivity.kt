@@ -165,6 +165,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.PermMedia
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.GraphicEq
@@ -734,6 +735,17 @@ class OptMsg(
     val queued: Boolean = false,
 )
 
+/**
+ * S4: Media (video/photo) currently uploading — shown in chat with a progress
+ * indicator like WhatsApp, then replaced by the real message when done.
+ */
+class UploadingMedia(
+    val chat: String,
+    val uri: android.net.Uri,
+    val type: String, // "video", "image", etc.
+    val ts: Long = System.currentTimeMillis(),
+)
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun GatewayApp() {
@@ -781,6 +793,8 @@ fun GatewayApp() {
     var dpView by remember { mutableStateOf<String?>(null) }   // jid whose profile photo is previewed full-screen
     var toast by remember { mutableStateOf<String?>(null) }
     val optimistic = remember { mutableStateListOf<OptMsg>() }
+    // S4: media uploads in progress — shown with progress in the chat.
+    val uploading = remember { mutableStateListOf<UploadingMedia>() }
     val vvLocal = remember { mutableStateListOf<GatewayClient.Msg>().apply { addAll(VvLocal.load(ctx)) } }
     val dpCache = remember { mutableStateMapOf<String, ImageBitmap?>() }
     val previewCache = remember { mutableStateMapOf<String, ImageBitmap?>() }
@@ -825,6 +839,8 @@ fun GatewayApp() {
         pendingStatusOpen = null
     }
     var pendingStatus by remember { mutableStateOf<Pair<Uri, String>?>(null) }
+    // S5: status upload in progress — shows a progress overlay.
+    var statusUploading by remember { mutableStateOf(false) }
     var statusFabMenu by remember { mutableStateOf(false) }
     var textStatusDlg by remember { mutableStateOf(false) }
     val statusPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
@@ -1084,6 +1100,8 @@ fun GatewayApp() {
             val u = mediaUri
             val t = mediaType
             pendingStatus = null
+            // S5: show upload progress overlay (cleared in finally inside the coroutine).
+            statusUploading = true
             // 'all' audience: send to every WhatsApp contact on the device so distribution never depends on
             // the gateway's accumulated contact list (which can be empty after a fresh link / clear data).
             val recipients: List<String> = if (audience == "all") deviceContacts.map { c -> c.number + "@s.whatsapp.net" } else jids
@@ -1196,8 +1214,19 @@ fun GatewayApp() {
                         } else notify("video processing failed")
                     }
                 } catch (e: Exception) { notify("failed: " + e.message) }
+                finally { statusUploading = false }
             }
         }, onCancel = { pendingStatus = null })
+    }
+    // S5: status upload progress overlay.
+    if (statusUploading) {
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color = Color.White, modifier = Modifier.size(48.dp))
+                Spacer(Modifier.height(12.dp))
+                Text(Lang.s("uploading_status"), color = Color.White, style = MaterialTheme.typography.bodyLarge)
+            }
+        }
     }
 
     if (textStatusDlg) {
@@ -1519,6 +1548,7 @@ fun GatewayApp() {
                 chat = ocChat,
                 messages = messages.filter { it.chat == ocChat } + vvLocal.filter { it.chat == ocChat },
                 optimistic = optimistic.filter { it.chat == ocChat },
+                uploading = uploading.filter { it.chat == ocChat },
                 // Send stays enabled when disconnected — the message is
                 // queued (banner + retry) instead of being blocked or
                 // faked as sent. Only a logged-out session blocks sends
@@ -1536,10 +1566,16 @@ fun GatewayApp() {
                             try {
                                 val mbytes = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(muri)?.use { it.readBytes() } }
                                 if (mbytes == null) { notify("can't read file"); return@launch }
-                                notify("sending…")
-                                // images/videos go as real inline media (original bytes, no re-compression = high quality by default); other files as documents
-                                GatewayClient.sendMedia(mjid, Base64.encodeToString(mbytes, Base64.NO_WRAP), mtypeSend, queryName(ctx, muri) ?: "file", mcap)
-                                notify("sent")
+                                // S4: show uploading progress in chat (WhatsApp-style).
+                                val up = UploadingMedia(mjid, muri, mtypeSend)
+                                uploading.add(up)
+                                try {
+                                    // images/videos go as real inline media (original bytes, no re-compression = high quality by default); other files as documents
+                                    GatewayClient.sendMedia(mjid, Base64.encodeToString(mbytes, Base64.NO_WRAP), mtypeSend, queryName(ctx, muri) ?: "file", mcap)
+                                    notify("sent")
+                                } finally {
+                                    uploading.remove(up)
+                                }
                             } catch (e: Exception) { notify("send failed: " + e.message) }
                         }
                     } else if (SarvamTts.isVvCommand(text)) {
@@ -2213,6 +2249,7 @@ private fun ChatDetail(
     chat: String,
     messages: List<GatewayClient.Msg>,
     optimistic: List<OptMsg>,
+    uploading: List<UploadingMedia> = emptyList(),
     canSend: Boolean,
     onSend: (String) -> Unit,
     onMedia: (GatewayClient.Msg) -> Unit,
@@ -2385,6 +2422,29 @@ private fun ChatDetail(
             contentPadding = PaddingValues(top = topClear, bottom = 4.dp),
             verticalArrangement = Arrangement.spacedBy(3.dp)) {
             item { Spacer(Modifier.height(6.dp)) }
+            // S4: uploading media (video/photo) — WhatsApp-style progress bubble.
+            items(uploading, key = { it.ts }) { up ->
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+                    // Uploading bubble: thumbnail + circular progress overlay.
+                    Box(Modifier.width(200.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                        // Thumbnail (video: first frame via coil? use placeholder + icon for now)
+                        Box(Modifier.fillMaxWidth().height(140.dp).background(Color.Black.copy(alpha = 0.7f)), contentAlignment = Alignment.Center) {
+                            Icon(
+                                if (up.type == "video") Icons.Filled.Videocam else Icons.Filled.Image,
+                                "uploading", tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(40.dp)
+                            )
+                        }
+                        // Progress overlay.
+                        Box(Modifier.fillMaxWidth().height(140.dp).background(Color.Black.copy(alpha = 0.4f)), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                CircularProgressIndicator(color = Color.White, modifier = Modifier.size(36.dp), strokeWidth = 3.dp)
+                                Spacer(Modifier.height(8.dp))
+                                Text(Lang.s("uploading"), color = Color.White, style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                    }
+                }
+            }
             // STABLE keys (never the list index): index-based keys made
             // every poll insert shift all keys below it, so Compose
             // recycled the WRONG bubble compositions — text landing in
