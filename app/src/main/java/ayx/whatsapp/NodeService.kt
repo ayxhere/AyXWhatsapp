@@ -6,7 +6,9 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.PowerManager
 import android.util.Log
 import android.os.IBinder
 import android.graphics.BitmapFactory
@@ -27,6 +29,47 @@ private fun notifIcon(c: android.content.Context): Int {
 class NodeService : Service() {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     override fun onBind(intent: Intent?): IBinder? = null
+
+    // F2: keep CPU + WiFi alive while the Node socket runs. Without these,
+    // Doze/screen-off can pause Node's keepalive timers, leaving a zombie
+    // socket that still reports "open". WAKE_LOCK permission is in the manifest.
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        acquireLocks()
+    }
+
+    private fun acquireLocks() {
+        try {
+            if (wakeLock == null) {
+                val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+                wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AyXWhatsapp:NodeWakeLock")
+                    .apply { setReferenceCounted(false) }
+            }
+            if (wakeLock?.isHeld == false) wakeLock?.acquire()
+        } catch (e: Exception) {
+            Log.w(TAG, "wakeLock acquire failed: ${e.message}")
+        }
+        try {
+            if (wifiLock == null) {
+                val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "AyXWhatsapp:NodeWifiLock")
+                    .apply { setReferenceCounted(false) }
+            }
+            if (wifiLock?.isHeld == false) wifiLock?.acquire()
+        } catch (e: Exception) {
+            Log.w(TAG, "wifiLock acquire failed: ${e.message}")
+        }
+    }
+
+    private fun releaseLocks() {
+        try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (_: Exception) {}
+        wakeLock = null
+        try { if (wifiLock?.isHeld == true) wifiLock?.release() } catch (_: Exception) {}
+        wifiLock = null
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground(NOTIF_ID, buildNotification())
@@ -56,6 +99,7 @@ class NodeService : Service() {
 
     override fun onDestroy() {
         scope.cancel()
+        releaseLocks()  // F2: always release, even on system kill
         // If the system killed us (not a user stop()), come back.
         restartIfAllowed("onDestroy")
         if (allowRestart && runBackgroundOn()) NodeRestartReceiver.scheduleRestart(applicationContext)

@@ -88,6 +88,28 @@ let settings = {
 // stores for anti-delete + history (in-memory; reset on app restart)
 const msgStore = new Map()  // id -> { chat, fromMe, text, ts }
 const rawStore = new Map()  // id -> { key, message } for native quoted replies
+// F1: Baileys message-retry (decrypt retry) counter. Baileys keys this internally;
+// a simple Map with get/set/del/increment satisfies its CacheStore interface.
+const _msgRetryCounts = new Map()
+const msgRetryCounterCache = {
+  get: (k) => _msgRetryCounts.get(k),
+  set: (k, v) => { _msgRetryCounts.set(k, v) },
+  del: (k) => { _msgRetryCounts.delete(k) },
+  increment: (k) => { const v = (_msgRetryCounts.get(k) || 0) + 1; _msgRetryCounts.set(k, v); return v },
+}
+// F1: serve the original message back when a receiver's decrypt fails and it
+// sends a retry request. Without this Baileys can't answer, and the recipient
+// sees "Waiting for this message" until the real WhatsApp app syncs.
+async function baileysGetMessage(key) {
+  try {
+    if (!key || !key.id) return undefined
+    const raw = rawStore.get(key.id)
+    if (!raw || !raw.message) return undefined
+    // sanity: if we know both remoteJids and they differ, it's an id collision — don't serve the wrong chat's message
+    if (key.remoteJid && raw.key && raw.key.remoteJid && raw.key.remoteJid !== key.remoteJid) return undefined
+    return { key: raw.key, message: raw.message }
+  } catch (_) { return undefined }
+}
 let deletedList = []        // [{ chat, fromMe, text, ts }]
 let msgLog = []             // [{ chat, fromMe, text, ts }]
 const chatHistory = new Map()  // jid -> [{ role:'user'|'assistant', content }] for AI context
@@ -1303,6 +1325,7 @@ function handleConnUpdate(u) {
     status.me = sock?.user?.id || null
     status.lastError = null
     status.needRelogin = false
+    markSocketActive()  // F3: fresh connection = alive
     currentQr = null; pairingCode = null; pairingNumber = null
     log('CONNECTED as', status.me)
     _retry = 0
@@ -1514,6 +1537,7 @@ function isForwarded(message) {
 const _chatQ = new Map()
 const _handled = new Set()
 function handleMessages(ev) {
+  markSocketActive()  // F3: incoming traffic proves the socket is alive
   for (const msg of (ev && ev.messages) || []) {
     const key = (msg.key && msg.key.remoteJid) || '_'
     const prev = _chatQ.get(key) || Promise.resolve()
@@ -1845,6 +1869,8 @@ async function startSocket() {
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 60000,
     retryRequestDelayMs: 500,
+    getMessage: baileysGetMessage,   // F1: answer decrypt-retry requests from rawStore
+    msgRetryCounterCache,            // F1: retry backoff counter
   })
   sock.ev.on('creds.update', saveCreds)
   sock.ev.on('connection.update', handleConnUpdate)
@@ -1880,6 +1906,7 @@ async function startSocket() {
   try { sock.ev.on('chats.update', (cs) => { for (const c of cs || []) { if (c && c.id) { const jid = canon(typeof c.id === 'string' ? c.id : String(c.id)); if (jid && jid !== 'status@broadcast') touchChat(jid, { ...(c.archived != null ? { archived: !!c.archived } : {}), ...(c.mute != null || c.muted != null ? { muted: !!(c.mute ?? c.muted) } : {}), ...(c.unreadCount != null ? { unreadCount: Number(c.unreadCount) || 0 } : {}) }) } } }) } catch (_) {}
   try { sock.ev.on('chats.delete', (jids) => { for (const j of jids || []) { const jid = canon(typeof j === 'string' ? j : String(j)); if (jid) chatMap.delete(jid) } saveChatsDebounced() }) } catch (_) {}
   sock.ev.on('message-receipt.update', (updates) => {
+    if (updates && updates.length) markSocketActive()  // F3: receipts prove the socket is alive
     for (const u of updates || []) {
       try {
         const k = u.key || {}
@@ -1961,7 +1988,7 @@ app.post('/send', async (req, res) => {
     const jid = to + '@s.whatsapp.net'
     // Retry dedupe: same clientMsgId = same logical send, never send twice.
     if (hasSeenSendId(String(req.body?.clientMsgId || ''))) return res.json({ ok: true, duplicate: true })
-    if (!sock || status.connection !== 'open') {
+    if (!isSocketHealthy()) {  // F3: also catches zombie "open" sockets
       if (status.needRelogin) return res.json({ ok: false, needRelogin: true, error: 'session expired — scan QR again' })
       // NEVER queue here: the app's SendQueue owns the queue (see note
       // above). Return queued:false so the app queues it exactly once.
@@ -1969,6 +1996,7 @@ app.post('/send', async (req, res) => {
     }
     const r = await sock.sendMessage(jid, { text })
     markSendId(String(req.body?.clientMsgId || ''))
+    markSocketActive()  // F3: successful send proves the socket is alive
     // S2: add to msgStore immediately with status=2 (sent) so delivery/read
     // receipts can find it even if the messages.upsert echo is delayed.
     const sentId = r?.key?.id || null
@@ -2147,7 +2175,7 @@ app.post('/sendmedia', async (req, res) => {
     // videos can't time out. waitForOpen kicks a reconnect if needed.
     ;(async () => {
       try {
-        if (!sock || status.connection !== 'open') {
+        if (!isSocketHealthy()) {  // F3: also catches zombie "open" sockets (kicks reconnect)
           const ok = await waitForOpen(30000)
           if (!ok) throw new Error('not connected after 30s — will not retry automatically')
         }
@@ -2162,6 +2190,7 @@ app.post('/sendmedia', async (req, res) => {
         else content = { document: buf, fileName: filename, mimetype: 'application/octet-stream', caption }
         const r = await sock.sendMessage(jid, content)
         const id = r?.key?.id || null
+        markSocketActive()  // F3: successful send proves the socket is alive
         if (id) { try { rawStore.set(id, { key: r.key, message: r.message }); if (rawStore.size > 500) { const rk = rawStore.keys().next().value; rawStore.delete(rk) } } catch (_) {} }
         // S2: add to msgStore immediately with status=2 so receipts update the tick.
         if (id && !msgStore.has(id)) {
@@ -2324,6 +2353,27 @@ app.get('/music/lyrics', async (req, res) => {
   } catch (e) { res.json({ synced: '', plain: '' }) }
 })
 
+// F3: zombie-socket detection. status.connection only flips on 'close' events,
+// so a dead-but-not-closed socket still reads "open" and sends hang until the
+// 60s query timeout. Track last successful socket activity; if it's stale,
+// treat the socket as dead: force a reconnect now and report unhealthy so the
+// send routes queue instead of hanging on a zombie socket.
+// NOTE: 5min threshold — long enough that a healthy-but-idle connection isn't
+// flagged; the cost of a false positive is just one reconnect cycle.
+let _lastSocketActivity = Date.now()
+function markSocketActive() { _lastSocketActivity = Date.now() }
+const SOCKET_STALE_MS = 5 * 60 * 1000
+function isSocketHealthy() {
+  if (!sock || status.connection !== 'open') return false
+  const idleMs = Date.now() - _lastSocketActivity
+  if (idleMs > SOCKET_STALE_MS) {
+    log('F3: socket stale (no activity for ' + Math.round(idleMs / 1000) + 's) — forcing reconnect')
+    try { scheduleReconnect(0) } catch (_) {}
+    return false
+  }
+  return true
+}
+
 // wait for the socket to actually be open (mobile networks drop/reconnect; sending on a closed
 // socket throws Baileys' "reading 'attrs'" crash). Reconnect fires automatically on close.
 // C1: if the socket is down, kick a reconnect NOW instead of waiting passively — the
@@ -2433,7 +2483,7 @@ app.post('/sendreply', async (req, res) => {
     const quotedId = String(req.body?.quotedId || '')
     if (!jid || !text) return res.status(400).json({ error: 'jid,text required' })
     if (hasSeenSendId(String(req.body?.clientMsgId || ''))) return res.json({ ok: true, duplicate: true })
-    if (!sock || status.connection !== 'open') {
+    if (!isSocketHealthy()) {  // F3: also catches zombie "open" sockets
       if (status.needRelogin) return res.json({ ok: false, needRelogin: true, error: 'session expired — scan QR again' })
       // V3: NEVER block the user — kick a reconnect in the background and
       // queue immediately. The app shows "sending…" and the background flush
@@ -2450,6 +2500,7 @@ app.post('/sendreply', async (req, res) => {
       sentId = r?.key?.id || null
     } catch (e) { const r2 = await sock.sendMessage(jid, { text }); sentId = r2?.key?.id || null }
     markSendId(String(req.body?.clientMsgId || ''))
+    markSocketActive()  // F3: successful send proves the socket is alive
     // S2: add to msgStore immediately with status=2 (sent) so delivery/read
     // receipts can find it even if the messages.upsert echo is delayed.
     if (sentId) {
@@ -2593,7 +2644,7 @@ app.post('/sendraw', async (req, res) => {
     const text = String(req.body?.text || '')
     if (!jid || !text) return res.status(400).json({ error: 'jid and text required' })
     if (hasSeenSendId(String(req.body?.clientMsgId || ''))) return res.json({ ok: true, duplicate: true })
-    if (!sock || status.connection !== 'open') {
+    if (!isSocketHealthy()) {  // F3: also catches zombie "open" sockets
       if (status.needRelogin) return res.json({ ok: false, needRelogin: true, error: 'session expired — scan QR again' })
       // V3: NEVER block the user — kick a reconnect in the background and
       // queue immediately. The app shows "sending…" and the background flush
@@ -2603,6 +2654,7 @@ app.post('/sendraw', async (req, res) => {
     }
     const r = await sock.sendMessage(jid, { text })
     markSendId(String(req.body?.clientMsgId || ''))
+    markSocketActive()  // F3: successful send proves the socket is alive
     // S2: add to msgStore immediately with status=2 (sent) so delivery/read
     // receipts can find it even if the messages.upsert echo is delayed.
     const sentId = r?.key?.id || null
