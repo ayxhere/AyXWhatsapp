@@ -407,6 +407,7 @@ class MainActivity : ComponentActivity() {
         GroupNameStore.init(applicationContext)
         ThemeStore.init(applicationContext)
         TextAnimSettings.init(applicationContext)
+        MessageMotionSettings.init(applicationContext)
         UiStyleStore.init(applicationContext)
         ayx.whatsapp.ui.UiAnimationSettings.init(applicationContext)
         ChatStyle.init(applicationContext)
@@ -2504,6 +2505,9 @@ private fun ChatDetail(
     // Keyed by chat: an unkeyed list state let one chat's scroll position
     // leak into the next chat opened in the same composition.
     val listState = remember(chat) { LazyListState() }
+    // Message Motion: stamp this chat as freshly opened BEFORE the rows
+    // below compose, so the open-cascade can stagger them bottom-up.
+    remember(chat) { MessageMotionTracker.chatOpened(chat) }
     // Load older history when the user scrolls near the OLD end (highest
     // index — reverseLayout puts the oldest messages there). Older pages
     // are APPENDED at the end, so visible indices never shift and the
@@ -2524,6 +2528,13 @@ private fun ChatDetail(
                     loadingOlder = false
                 }
             }
+    }
+    // Message Motion: mirror the list's scroll state into the tracker so
+    // rows first composed mid-scroll use the Scroll style (Settings →
+    // Appearance → Message Motion). Plain writes — no recomposition.
+    LaunchedEffect(listState, chat) {
+        snapshotFlow { listState.isScrollInProgress }
+            .collect { MessageMotionTracker.setScrolling(chat, it) }
     }
     // clear the floating header: status bar + header card height, so the top message is never hidden
     val topClear = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 78.dp
@@ -2680,17 +2691,27 @@ private fun ChatDetail(
             // NO animateItem(): placement animation on every 3s poll
             // reorder made the whole list slide/jump constantly.
             itemsIndexed(rows, key = { _, m -> m.id ?: "opt-${m.ts}-${m.text.hashCode()}" }) { itemIndex, m ->
-                AyxFadeInListItem(key = m.id ?: "opt-${m.ts}-${m.text.hashCode()}", index = itemIndex) {
-                Box(Modifier.fillMaxWidth()) {
-                    MessageBubble(m, previewCache, dpCache, onMedia, onShare, onDownload,
-                        onReply = { replyTo = it }, onAvatarClick = onAvatarClick,
-                        highlighted = highlightId != null && m.id == highlightId,
-                        onQuoteTap = { onQuoteTap(it) },
-                        selMode = selMode, selected = m.id != null && m.id in selIds,
-                        onToggleSelect = { mm -> mm.id?.let { if (it in selIds) selIds.remove(it) else selIds.add(it); if (selIds.isEmpty()) onExitSel() } },
-                        onTranslate = { onTranslateMsg(it) },
-                        onLongClick = { reactMsg = it })
+                val motionKey = m.id ?: "opt-${m.ts}-${m.text.hashCode()}"
+                val bubble: @Composable () -> Unit = {
+                    Box(Modifier.fillMaxWidth()) {
+                        MessageBubble(m, previewCache, dpCache, onMedia, onShare, onDownload,
+                            onReply = { replyTo = it }, onAvatarClick = onAvatarClick,
+                            highlighted = highlightId != null && m.id == highlightId,
+                            onQuoteTap = { onQuoteTap(it) },
+                            selMode = selMode, selected = m.id != null && m.id in selIds,
+                            onToggleSelect = { mm -> mm.id?.let { if (it in selIds) selIds.remove(it) else selIds.add(it); if (selIds.isEmpty()) onExitSel() } },
+                            onTranslate = { onTranslateMsg(it) },
+                            onLongClick = { reactMsg = it })
+                    }
                 }
+                // Message Motion ON → the bubble enters with the motion
+                // effect (Settings → Appearance → Message Motion) INSTEAD
+                // of the generic scroll fade-in; OFF → stock fade-in,
+                // exactly as before.
+                if (MessageMotionSettings.enabled.value) {
+                    MessageMotionItem(chatKey = chat, motionKey = motionKey, fromMe = m.fromMe, isAudio = m.mediaType == "audio", text = m.text) { bubble() }
+                } else {
+                    AyxFadeInListItem(key = motionKey, index = itemIndex) { bubble() }
                 }
             }
         }
@@ -3451,10 +3472,10 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
 private fun settingsTitle(page: String): String = when (page) {
     "general" -> "General"; "autoreply" -> "Auto-reply"; "ai" -> "AI Assistant"; "chat" -> "Chat Settings"
     "imageai" -> "Image AI"; "aimemory" -> "AI Memory"; "voice" -> "AI Voice"; "font" -> "App font"; "emoji" -> "Emoji"
-    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "textanim" -> "Text Animation"; "about" -> "About"; "support" -> "Support Development"; else -> "Settings"
+    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "textanim" -> "Text Animation"; "msgmotion" -> "Message Motion"; "about" -> "About"; "support" -> "Support Development"; else -> "Settings"
 }
 // parent page for nested back (Wallpaper under Chat Settings; Image AI / AI Memory / Voice under AI Assistant; Font under General)
-private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "general"; "emoji" -> "general"; "textanim" -> "appearance"; else -> "home" }
+private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "general"; "emoji" -> "general"; "textanim" -> "appearance"; "msgmotion" -> "appearance"; else -> "home" }
 
 @Composable
 private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient.Settings, page: String, onPage: (String) -> Unit, wallpaperVersion: Int,
@@ -3475,8 +3496,9 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
             "voice" -> VoicePickerScreen(settings, onToggle, ctx)
             "chat" -> SettingsSubPage { ChatSettings(onOpenWallpaper = { onPage("wallpaper") }) }
             "wallpaper" -> SettingsSubPage { WallpaperSettings(ctx, wallpaperVersion, onPickWallpaper, onRemoveWallpaper) }
-            "appearance" -> SettingsSubPage { AppearanceSettings(onOpenTextAnim = { onPage("textanim") }) }
+            "appearance" -> SettingsSubPage { AppearanceSettings(onOpenTextAnim = { onPage("textanim") }, onOpenMsgMotion = { onPage("msgmotion") }) }
             "textanim" -> SettingsSubPage { TextAnimationSettings() }
+            "msgmotion" -> SettingsSubPage { MessageMotionSettingsPage() }
             "about" -> SettingsSubPage { AboutSettings(ctx, onLogout) }
             "support" -> SettingsSubPage { SupportSettings(ctx) }
             else -> SettingsHome(status) { onPage(it) }
@@ -4333,7 +4355,7 @@ private fun BubbleColorRow(selected: Int, onPick: (Int) -> Unit) {
 }
 
 @Composable
-private fun AppearanceSettings(onOpenTextAnim: () -> Unit) {
+private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -> Unit) {
     val mode = ThemeStore.mode.value
     val accent = ThemeStore.accent.value
     val modes = listOf(
@@ -4453,6 +4475,15 @@ private fun AppearanceSettings(onOpenTextAnim: () -> Unit) {
             desc = "Typing, delete and cursor effects",
             value = if (TextAnimSettings.enabled.value) "On" else "Off",
             onClick = onOpenTextAnim,
+        )
+        UiDivider()
+        UiNavRow(
+            icon = Icons.Filled.MotionPhotosOn,
+            tint = Color(0xFFE88BD0),
+            title = "Message Motion",
+            desc = "Entrance animation for chat messages",
+            value = if (MessageMotionSettings.enabled.value) "On" else "Off",
+            onClick = onOpenMsgMotion,
         )
     }
 
@@ -4735,6 +4766,136 @@ private fun TextAnimationSettings() {
         "pace" -> TextAnimSelSpec("Cursor speed", cfg.PACE_LABELS, pace) { cfg.setCursorPace(it) }
         "shape" -> TextAnimSelSpec("Cursor shape", cfg.SHAPE_LABELS, shape) { cfg.setCursorShape(it) }
         "ccolor" -> TextAnimSelSpec("Cursor color", cfg.COLOR_LABELS, ccolor) { cfg.setCursorColor(it) }
+        else -> null
+    }
+    if (spec != null) {
+        var draft by remember(openSel) { mutableStateOf(spec.current) }
+        AlertDialog(
+            onDismissRequest = { openSel = null },
+            containerColor = dialogBg().copy(alpha = ayxDialogAlpha()),
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            textContentColor = MaterialTheme.colorScheme.onSurface,
+            title = { Text(spec.title) },
+            text = {
+                Column {
+                    spec.options.forEachIndexed { i, lbl ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable { draft = i }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(
+                                selected = draft == i,
+                                onClick = { draft = i },
+                            )
+                            Text(lbl, style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    spec.apply(draft)
+                    openSel = null
+                }) { Text("Done") }
+            },
+            dismissButton = {
+                TextButton(onClick = { openSel = null }) { Text("Cancel") }
+            },
+        )
+    }
+}
+
+// Settings → Appearance → Message Motion (opened from the Appearance page).
+// Groups mirror the feature's own layout: Incoming / My messages / Chat
+// opening / Scrolling. Every row writes straight into MessageMotionSettings,
+// so changes apply live to the chat and to the preview above.
+@Composable
+private fun MessageMotionSettingsPage() {
+    val cfg = MessageMotionSettings
+    val enabled by cfg.enabled
+    val inStyle by cfg.inStyle
+    val inSpeed by cfg.inSpeed
+    val outStyle by cfg.outStyle
+    val outSpeed by cfg.outSpeed
+    val cascade by cfg.cascade
+    val scrollStyle by cfg.scrollStyle
+    val scrollSpeed by cfg.scrollSpeed
+    var openSel by remember { mutableStateOf<String?>(null) }
+
+    SettingsGroup("Preview") {
+        Column(Modifier.padding(vertical = 8.dp)) {
+            MessageMotionPreview()
+        }
+    }
+    SettingsGroup("Message motion") {
+        UiToggleRow(
+            icon = Icons.Filled.MotionPhotosOn, tint = Color(0xFFE88BD0),
+            title = "Message motion",
+            desc = "Animate chat messages as they appear",
+            checked = enabled, onChange = { cfg.setEnabled(it) },
+        )
+    }
+    SettingsGroup("Incoming") {
+        UiNavRow(
+            icon = Icons.Filled.Animation, tint = Color(0xFF82AAFF),
+            title = "Effect", desc = "How messages from others appear",
+            value = cfg.STYLE_LABELS[inStyle], onClick = { openSel = "in_style" },
+        )
+        UiDivider()
+        UiNavRow(
+            icon = Icons.Filled.Speed, tint = Color(0xFF4DD0C4),
+            title = "Speed", desc = "Animation speed for incoming messages",
+            value = cfg.SPEED_LABELS[inSpeed], onClick = { openSel = "in_speed" },
+        )
+    }
+    SettingsGroup("My messages") {
+        UiNavRow(
+            icon = Icons.AutoMirrored.Filled.Send, tint = Color(0xFF4DD0C4),
+            title = "Effect", desc = "How your sent messages appear",
+            value = cfg.STYLE_LABELS[outStyle], onClick = { openSel = "out_style" },
+        )
+        UiDivider()
+        UiNavRow(
+            icon = Icons.Filled.Speed, tint = Color(0xFF6EA8FF),
+            title = "Speed", desc = "Animation speed for your messages",
+            value = cfg.SPEED_LABELS[outSpeed], onClick = { openSel = "out_speed" },
+        )
+    }
+    SettingsGroup("Chat opening") {
+        UiToggleRow(
+            icon = Icons.Filled.Layers, tint = Color(0xFF6EC3E8),
+            title = "Wave on open",
+            desc = "Messages appear one by one from bottom to top",
+            checked = cascade, onChange = { cfg.setCascade(it) },
+        )
+    }
+    SettingsGroup("Scrolling") {
+        UiNavRow(
+            icon = Icons.Filled.SwapHoriz, tint = Color(0xFF4DD0C4),
+            title = "Effect", desc = "How messages appear while scrolling",
+            value = cfg.STYLE_LABELS[scrollStyle], onClick = { openSel = "scroll_style" },
+        )
+        UiDivider()
+        UiNavRow(
+            icon = Icons.Filled.Speed, tint = Color(0xFFFFB26B),
+            title = "Speed", desc = "Animation speed while scrolling",
+            value = cfg.SPEED_LABELS[scrollSpeed], onClick = { openSel = "scroll_speed" },
+        )
+    }
+    Text("Voice messages keep their usual behavior.", style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp, top = 2.dp))
+
+    val spec: TextAnimSelSpec? = when (openSel) {
+        "in_style" -> TextAnimSelSpec("Incoming effect", cfg.STYLE_LABELS, inStyle) { cfg.setInStyle(it) }
+        "in_speed" -> TextAnimSelSpec("Incoming speed", cfg.SPEED_LABELS, inSpeed) { cfg.setInSpeed(it) }
+        "out_style" -> TextAnimSelSpec("My messages effect", cfg.STYLE_LABELS, outStyle) { cfg.setOutStyle(it) }
+        "out_speed" -> TextAnimSelSpec("My messages speed", cfg.SPEED_LABELS, outSpeed) { cfg.setOutSpeed(it) }
+        "scroll_style" -> TextAnimSelSpec("Scrolling effect", cfg.STYLE_LABELS, scrollStyle) { cfg.setScrollStyle(it) }
+        "scroll_speed" -> TextAnimSelSpec("Scrolling speed", cfg.SPEED_LABELS, scrollSpeed) { cfg.setScrollSpeed(it) }
         else -> null
     }
     if (spec != null) {
