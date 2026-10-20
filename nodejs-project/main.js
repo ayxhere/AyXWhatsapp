@@ -2466,7 +2466,7 @@ app.get('/music/search', async (req, res) => {
         if (!audio) { noDec++; continue }
         let artist = ''
         try { artist = (mi.artistMap && mi.artistMap.primary_artists ? mi.artistMap.primary_artists.map(a => a.name).join(', ') : '') || it.primary_artists || it.subtitle || '' } catch (_) {}
-        items.push({ title: deEnt(it.title || it.song || ''), artist: deEnt(artist), image: String(it.image || '').replace('150x150', '500x500'), url: audio })
+        items.push({ title: deEnt(it.title || it.song || ''), artist: deEnt(artist), image: String(it.image || '').replace('150x150', '500x500'), url: audio, duration: parseInt(mi.duration || it.duration || '0', 10) || 0 })
       }
       diag.push('playable=' + items.length + (noMedia ? ' noMedia=' + noMedia : '') + (noDec ? ' noDec=' + noDec : ''))
     } catch (e) { diag.push('jio_err=' + (e && e.message)) }
@@ -2479,19 +2479,36 @@ app.get('/music/lyrics', async (req, res) => {
   try {
     const rawTitle = String(req.query.title || '').trim()
     const artist = String(req.query.artist || '').trim()
-    if (!rawTitle) return res.json({ synced: '', plain: '' })
+    // LYRICS LOCK (2026-10-20): do not modify without user approval.
+    // Duration-matched fetch: without a duration, lrclib happily returns synced lyrics for a
+    // DIFFERENT release of the song (album vs single vs edit) whose timestamps drift against
+    // the real audio — the recurring "lyrics mismatch". wantDur is the actual track duration
+    // (seconds, JioSaavn metadata); it is passed to lrclib /api/get and used to rank search
+    // fallbacks by closest duration. The matched track's own duration goes back as
+    // lyricsDuration so the client can proportionally rescale any remaining drift.
+    const wantDur = parseInt(req.query.duration || '0', 10) || 0
+    if (!rawTitle) return res.json({ synced: '', plain: '', lyricsDuration: 0 })
     const title = rawTitle.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').replace(/\bfrom\b.*$/i, '').replace(/\s*-\s*.*$/, '').trim() || rawTitle
     const firstArtist = artist.split(',')[0].trim()
+    const pick = (arr) => {
+      if (!Array.isArray(arr) || !arr.length) return null
+      if (wantDur > 0) {
+        const synced = arr.filter(x => x && x.syncedLyrics)
+        const pool = synced.length ? synced : arr
+        return pool.slice().sort((a, b) => Math.abs((a.duration || 0) - wantDur) - Math.abs((b.duration || 0) - wantDur))[0] || null
+      }
+      return arr.find(x => x.syncedLyrics) || arr[0]
+    }
     let data = {}
     try {
-      const body = await httpGet('https://lrclib.net/api/get?track_name=' + encodeURIComponent(title) + '&artist_name=' + encodeURIComponent(firstArtist), { 'User-Agent': 'AyXWhatsApp/1.0', 'Accept': 'application/json' })
+      const body = await httpGet('https://lrclib.net/api/get?track_name=' + encodeURIComponent(title) + '&artist_name=' + encodeURIComponent(firstArtist) + (wantDur > 0 ? '&duration=' + wantDur : ''), { 'User-Agent': 'AyXWhatsApp/1.0', 'Accept': 'application/json' })
       data = JSON.parse(body)
     } catch (_) {}
     if (!data || (!data.syncedLyrics && !data.plainLyrics)) {
       try {
         const sbody = await httpGet('https://lrclib.net/api/search?q=' + encodeURIComponent((title + ' ' + firstArtist).trim()), { 'User-Agent': 'AyXWhatsApp/1.0', 'Accept': 'application/json' })
         const arr = JSON.parse(sbody)
-        if (Array.isArray(arr) && arr.length) data = arr.find(x => x.syncedLyrics) || arr[0]
+        if (Array.isArray(arr) && arr.length) data = pick(arr) || data
       } catch (_) {}
     }
     // last resort: title-only search (artist spelling mismatches are common)
@@ -2499,11 +2516,11 @@ app.get('/music/lyrics', async (req, res) => {
       try {
         const sbody2 = await httpGet('https://lrclib.net/api/search?q=' + encodeURIComponent(title), { 'User-Agent': 'AyXWhatsApp/1.0', 'Accept': 'application/json' })
         const arr2 = JSON.parse(sbody2)
-        if (Array.isArray(arr2) && arr2.length) data = arr2.find(x => x.syncedLyrics) || arr2[0]
+        if (Array.isArray(arr2) && arr2.length) data = pick(arr2) || data
       } catch (_) {}
     }
-    res.json({ synced: (data && data.syncedLyrics) || '', plain: (data && data.plainLyrics) || '' })
-  } catch (e) { res.json({ synced: '', plain: '' }) }
+    res.json({ synced: (data && data.syncedLyrics) || '', plain: (data && data.plainLyrics) || '', lyricsDuration: (data && data.duration) || 0 })
+  } catch (e) { res.json({ synced: '', plain: '', lyricsDuration: 0 }) }
 })
 
 // B+/B10: ensureLive() — upgrade of the batch-9 (F3) staleness check.

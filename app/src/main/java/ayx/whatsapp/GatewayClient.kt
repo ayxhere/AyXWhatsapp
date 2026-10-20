@@ -370,17 +370,25 @@ object GatewayClient {
         }
         lines to failures.joinToString(" · ")
     }
-    data class Song(val title: String, val artist: String, val image: String?, val url: String)
+    data class Song(val title: String, val artist: String, val image: String?, val url: String, val durationSec: Int = 0)
     // returns synced lyrics as (timeMs, line); falls back to PLAIN (untimed) lyrics with
     // sequential timestamps when the provider has no synced lines; empty if none at all
-    suspend fun getLyrics(title: String, artist: String): List<Pair<Long, String>> = withContext(Dispatchers.IO) {
+    // LYRICS LOCK (2026-10-20): do not modify without user approval.
+    // Root cause of the recurring "lyrics mismatch": lrclib synced lyrics can belong to a
+    // DIFFERENT release of the song (different total length). Their timestamps are on that
+    // release's timeline, so they drift progressively against the real audio — no constant
+    // offset (trim anchor etc.) can ever fix that. durationSec (the actual track duration from
+    // JioSaavn metadata) is passed to the gateway so it picks the same cut, and if the
+    // returned lyrics' own duration (lyricsDuration) still differs materially, timestamps are
+    // rescaled proportionally onto the real audio's timeline.
+    suspend fun getLyrics(title: String, artist: String, durationSec: Int = 0): List<Pair<Long, String>> = withContext(Dispatchers.IO) {
         try {
             val t = java.net.URLEncoder.encode(title, "UTF-8"); val a = java.net.URLEncoder.encode(artist, "UTF-8")
-            val o = get("/music/lyrics?title=$t&artist=$a")
+            val o = get("/music/lyrics?title=$t&artist=$a" + if (durationSec > 0) "&duration=$durationSec" else "")
             val synced = o.optString("synced")
             if (synced.isNotBlank()) {
                 val rx = Regex("\\[(\\d+):(\\d+)(?:\\.(\\d+))?\\](.*)")
-                return@withContext synced.lines().mapNotNull { line ->
+                val parsed = synced.lines().mapNotNull { line ->
                     val m = rx.find(line) ?: return@mapNotNull null
                     val min = m.groupValues[1].toLong(); val sec = m.groupValues[2].toLong()
                     val cs = m.groupValues[3].ifEmpty { "0" }.take(2).padEnd(2, '0').toLong()
@@ -388,6 +396,17 @@ object GatewayClient {
                     val text = m.groupValues[4].trim()
                     if (text.isEmpty()) null else ms to text
                 }.sortedBy { it.first }
+                val lyrDur = o.optInt("lyricsDuration", 0)
+                if (durationSec > 0 && lyrDur > 0) {
+                    val diffSec = kotlin.math.abs(durationSec - lyrDur)
+                    val ratio = durationSec.toDouble() / lyrDur.toDouble()
+                    // Only rescale a plausible same-song drift; a wildly different ratio means a
+                    // different cut entirely, where stretching would make things worse.
+                    if (diffSec >= 3 && ratio in 0.85..1.18) {
+                        return@withContext parsed.map { (it.first * ratio).toLong() to it.second }
+                    }
+                }
+                return@withContext parsed
             }
             // provider has only plain (untimed) lyrics — spread them sequentially so karaoke still works
             val plain = o.optString("plain")
@@ -407,7 +426,7 @@ object GatewayClient {
             val arr = obj.optJSONArray("items")
             val songs = if (arr == null) emptyList() else (0 until arr.length()).mapNotNull { i ->
                 val o = arr.getJSONObject(i); val url = o.optString("url")
-                if (url.isBlank()) null else Song(o.optString("title"), o.optString("artist"), o.optString("image").ifEmpty { null }, url)
+                if (url.isBlank()) null else Song(o.optString("title"), o.optString("artist"), o.optString("image").ifEmpty { null }, url, o.optInt("duration", 0))
             }
             songs to obj.optString("error")
         } catch (e: Exception) { emptyList<Song>() to (e.message ?: "connection error") }

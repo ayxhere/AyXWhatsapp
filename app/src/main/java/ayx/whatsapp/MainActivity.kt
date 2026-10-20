@@ -1234,7 +1234,7 @@ fun GatewayApp() {
                             val aFile = File(dir, "ta_$stamp.m4a")
                             val outFile = File(dir, "final_$stamp.mp4")
                             val durMs = (tEnd - tStart).coerceAtLeast(3000L)
-                            val lyFetched = if (lyrics.isNotEmpty()) lyrics else getCachedLyrics(song.title, song.artist)
+                            val lyFetched = if (lyrics.isNotEmpty()) lyrics else getCachedLyrics(song.title, song.artist, song.durationSec)
                             // Safety net: romanize any Devanagari that slipped through (lyrics are normally romanized at fetch time).
                             val ly = romanizeLyricPairs(lyFetched)
                             val adjusted0 = ly.filter { it.first in tStart..tEnd }.map { ((it.first - tStart - 450L).coerceAtLeast(0L)) to it.second }
@@ -6946,7 +6946,7 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
             val key = sg.title + "|" + sg.artist
             if (!lyricsAvail.containsKey(key)) {
                 // LyricsCache first — no network for songs already fetched.
-                lyricsAvail[key] = LyricsCache.get(sg.title, sg.artist)?.isNotEmpty()
+                lyricsAvail[key] = LyricsCache.get(sg.title, sg.artist, sg.durationSec)?.isNotEmpty()
                     ?: runCatching { GatewayClient.getLyrics(sg.title, sg.artist).isNotEmpty() }.getOrDefault(false)
                 delay(60)
             }
@@ -7046,7 +7046,7 @@ private fun AudioTrimmer(song: GatewayClient.Song, onDone: (Long, Long, List<Pai
         // Cached lyrics: re-selecting an already-fetched song (e.g. tapping
         // "replace" and picking the same song) loads instantly — no spinner,
         // no refetch. A different song misses the cache and fetches normally.
-        lyrics = getCachedLyrics(song.title, song.artist)
+        lyrics = getCachedLyrics(song.title, song.artist, song.durationSec)
         lyricsLoaded = true
     }
     LaunchedEffect(playing) {
@@ -7399,29 +7399,33 @@ private suspend fun romanizeLyricPairs(lines: List<Pair<Long, String>>): List<Pa
 
 /**
  * In-memory lyrics cache (item 6): fetched + romanized lyrics per song,
- * keyed by normalized title|artist. Re-selecting an already-fetched song
+ * keyed by normalized title|artist|duration. Re-selecting an already-fetched song
  * (e.g. tapping "replace" then picking the same song) reuses the cache —
  * no spinner, no refetch. A genuinely different song misses the cache
  * and fetches normally. Capped at 60 entries, never persisted.
+ * LYRICS LOCK (2026-10-20): do not modify without user approval — the duration in the
+ * key matters: the same title+artist can be a different cut of the song with different
+ * lyrics timing, and a title|artist-only key pinned the wrong release's lyrics across
+ * song replaces (part of the recurring "lyrics mismatch").
  */
 private object LyricsCache {
     private val map = LinkedHashMap<String, List<Pair<Long, String>>>(64, 0.75f, true)
-    fun key(title: String, artist: String) =
-        title.trim().lowercase() + "|" + artist.trim().lowercase()
-    @Synchronized fun get(title: String, artist: String): List<Pair<Long, String>>? = map[key(title, artist)]
-    @Synchronized fun put(title: String, artist: String, lyrics: List<Pair<Long, String>>) {
-        map[key(title, artist)] = lyrics
+    fun key(title: String, artist: String, durationSec: Int = 0) =
+        title.trim().lowercase() + "|" + artist.trim().lowercase() + if (durationSec > 0) "|$durationSec" else ""
+    @Synchronized fun get(title: String, artist: String, durationSec: Int = 0): List<Pair<Long, String>>? = map[key(title, artist, durationSec)]
+    @Synchronized fun put(title: String, artist: String, lyrics: List<Pair<Long, String>>, durationSec: Int = 0) {
+        map[key(title, artist, durationSec)] = lyrics
         while (map.size > 60) { val k = map.keys.firstOrNull() ?: break; map.remove(k) }
     }
 }
 
 /** Cached lyrics fetch: returns the cached romanized lyrics, else fetches + romanizes + caches. */
-private suspend fun getCachedLyrics(title: String, artist: String): List<Pair<Long, String>> {
-    LyricsCache.get(title, artist)?.let { return it }
-    val lyrics = romanizeLyricPairs(GatewayClient.getLyrics(title, artist))
+private suspend fun getCachedLyrics(title: String, artist: String, durationSec: Int = 0): List<Pair<Long, String>> {
+    LyricsCache.get(title, artist, durationSec)?.let { return it }
+    val lyrics = romanizeLyricPairs(GatewayClient.getLyrics(title, artist, durationSec))
     // Cache even empty results briefly? No — only cache non-empty so a
     // transient failure doesn't poison the song; the caller shows "not found".
-    if (lyrics.isNotEmpty()) LyricsCache.put(title, artist, lyrics)
+    if (lyrics.isNotEmpty()) LyricsCache.put(title, artist, lyrics, durationSec)
     return lyrics
 }
 
