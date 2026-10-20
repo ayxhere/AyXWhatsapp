@@ -5027,45 +5027,14 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
         while (!playing) { delay(140); previewPos += 240; if (previewPos > to) previewPos = from }
     }
     val audLabel = when (audience) { "except" -> "Except " + selected.size; "only" -> "Only " + selected.size; else -> "My contacts" }
-    Dialog(onDismissRequest = onCancel, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-        // Keyboard must NOT move the media: the dialog window ignores IME
-        // resize (ADJUST_NOTHING) so the photo/video stays fixed full-screen.
-        // E2: ADJUST_NOTHING stops IME inset dispatch, so imePadding() alone
-        // does NOTHING — we detect the keyboard height manually via a
-        // GlobalLayoutListener and pad ONLY the bottom controls row.
-        val dialogView = LocalView.current
-        val dialogWindow = (dialogView.parent as? DialogWindowProvider)?.window
-        // H: ADJUST_NOTHING never dispatched IME insets on newer Android, so the caption box
-        // stayed hidden behind the keyboard. With an edge-to-edge dialog + ADJUST_RESIZE the
-        // IME arrives as WindowInsets.ime (window is NOT resized, so the media stays fixed)
-        // and only the bottom controls row is lifted. The manual detector below stays as a fallback.
-        SideEffect {
-            dialogWindow?.let { w ->
-                WindowCompat.setDecorFitsSystemWindows(w, false)
-                w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-                w.statusBarColor = android.graphics.Color.TRANSPARENT
-                w.navigationBarColor = android.graphics.Color.TRANSPARENT
-            }
-        }
-        var keyboardPx by remember { mutableStateOf(0) }
+    // L: drawn as an overlay INSIDE the edge-to-edge activity window (not a Dialog). On some phones a Dialog window
+    // sits inside the status/nav-bar zones, so the IME inset it saw was too small and the caption box + green send
+    // button stayed hidden behind the keyboard (→ "status with caption can't be uploaded"). The activity delivers
+    // the real IME inset, so only the bottom controls row is lifted and the media stays fixed.
+    BackHandler(onBack = onCancel)
+    ForceLightSystemBarIcons()
+    Box(Modifier.fullscreenOverlay()) {
         val focusManager = LocalFocusManager.current
-        DisposableEffect(dialogView) {
-            val root = dialogView.rootView
-            val listener = android.view.ViewTreeObserver.OnGlobalLayoutListener {
-                val r = android.graphics.Rect()
-                root.getWindowVisibleDisplayFrame(r)
-                val kb = (root.height - r.bottom).coerceAtLeast(0)
-                // Ignore tiny insets (nav bar); only real keyboards count.
-                keyboardPx = if (kb > root.height * 0.12) kb else 0
-            }
-            root.viewTreeObserver.addOnGlobalLayoutListener(listener)
-            onDispose { runCatching { root.viewTreeObserver.removeOnGlobalLayoutListener(listener) } }
-        }
-        val density = LocalDensity.current
-        val imeBottomPx = WindowInsets.ime.getBottom(density)
-        val navBottomPx = WindowInsets.navigationBars.getBottom(density)
-        // H: single bottom padding (IME inset already includes the nav bar area, so no double counting)
-        val controlsBottomDp = with(density) { maxOf(imeBottomPx, keyboardPx, navBottomPx).toDp() }
         Surface(Modifier.fillMaxSize(), color = Color.Black) {
             // ---- Full-bleed overlay layout: media fills the screen; top bar + controls float above it ----
             Box(Modifier.fillMaxSize().blur(editorBlur)) {
@@ -5099,19 +5068,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                             }
                             if (editedBytes != null) Text("Edited ✓", color = Color.White, style = MaterialTheme.typography.labelSmall,
                                 modifier = Modifier.align(Alignment.TopStart).padding(top = overlayTopPad + 54.dp, start = 12.dp).background(Color.Black.copy(alpha = 0.5f), uiShapeFor(8)).padding(horizontal = 8.dp, vertical = 4.dp))
-                            // AI Edit lives on the IMAGE HEADER (top-right, below the top bar) — same real OpenRouter backend.
-                            // V5: TEMPORARILY PAUSED — tapping shows the paused message instead of opening the editor.
-                            // V4: Crop button next to AI Edit.
-                            Row(Modifier.align(Alignment.TopEnd).padding(top = overlayTopPad, end = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                TextButton(onClick = { cropOpen = true }, contentPadding = PaddingValues(0.dp)) {
-                                    Text("✂ Crop", color = Color.White, style = MaterialTheme.typography.labelSmall,
-                                        modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), uiShapeFor(16)).padding(horizontal = 10.dp, vertical = 6.dp))
-                                }
-                                TextButton(onClick = { showAiPausedMsg = true }, contentPadding = PaddingValues(0.dp)) {
-                                    Text("✨ Edit image with AI", color = Color.White, style = MaterialTheme.typography.labelSmall,
-                                        modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), uiShapeFor(16)).padding(horizontal = 10.dp, vertical = 6.dp))
-                                }
-                            }
+                            // L: Crop moved to the header (icon); "Edit image with AI" removed for now.
                         }
                         else {
                             // Video preview (plays inside the trim window) — ExoPlayer.
@@ -5152,16 +5109,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                 Icon(if (videoPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, "play video", tint = Color.White,
                                     modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(12.dp))
                             }
-                            // Video header: ✂ Trim toggle + Sound indicator (top-right, below the top bar).
-                            Row(Modifier.align(Alignment.TopEnd).padding(top = overlayTopPad, end = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                TextButton(onClick = { videoTrimOpen = !videoTrimOpen }, contentPadding = PaddingValues(0.dp)) {
-                                    Text(if (videoTrimOpen) "✓ Trim" else "✂ Trim", color = Color.White, style = MaterialTheme.typography.labelSmall,
-                                        modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), uiShapeFor(8)).padding(horizontal = 8.dp, vertical = 4.dp))
-                                }
-                                Spacer(Modifier.width(6.dp))
-                                Text(if (videoMuted) "🔇 Muted" else "🔊 Sound", color = Color.White, style = MaterialTheme.typography.labelSmall,
-                                    modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), uiShapeFor(8)).padding(horizontal = 8.dp, vertical = 4.dp))
-                            }
+                            // L: Trim moved to the header (icon).
                             // LEFT-side X: remove the video (below the overlaid top bar).
                             IconButton(onClick = { runCatching { exoPlayer?.stop() }; videoPlaying = false; mediaUri = null }, modifier = Modifier.align(Alignment.TopStart).padding(top = overlayTopPad, start = 8.dp)) {
                                 Icon(Icons.Filled.Close, "remove video", tint = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(4.dp))
@@ -5202,9 +5150,17 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                 Box(Modifier.align(Alignment.TopCenter).fillMaxWidth()
                     .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent)))
                     .statusBarsPadding()) {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = onCancel) { Icon(Icons.Filled.Close, "close", tint = Color.White) }
-                        Text("New status", color = Color.White, fontWeight = FontWeight.Bold)
+                        Text("New status", color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f).padding(start = 4.dp))
+                        // L: actions as header ICONS (no text chips): Crop for photos, Trim for videos, Music for both.
+                        if (mediaType == "image" && mediaUri != null) {
+                            IconButton(onClick = { cropOpen = true }) { Icon(Icons.Filled.Crop, "crop", tint = Color.White) }
+                        }
+                        if (mediaType == "video" && mediaUri != null) {
+                            IconButton(onClick = { videoTrimOpen = !videoTrimOpen }) { Icon(Icons.Filled.ContentCut, "trim", tint = if (videoTrimOpen) AYX_GREEN else Color.White) }
+                        }
+                        IconButton(onClick = { musicOpen = true }) { Icon(Icons.Filled.MusicNote, "add music", tint = if (song != null) AYX_GREEN else Color.White) }
                         TextButton(onClick = { pickAudience = true }) { Text(audLabel, color = IOS_BLUE) }
                     }
                 }
@@ -5212,9 +5168,8 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                 val videoBars = remember(mediaUri) { val r = java.util.Random((mediaUri?.toString() ?: "").hashCode().toLong()); FloatArray(64) { 0.22f + r.nextFloat() * 0.78f } }
                 Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                     .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.78f))))
-                    // E2: manual keyboard padding (imePadding doesn't work with
-                    // ADJUST_NOTHING) — only this row rises, media stays fixed.
-                    .padding(bottom = controlsBottomDp)) {
+                    // L: real IME inset (+ small gap) — only this row rises, the media stays fixed.
+                    .navigationBarsPadding().imePadding().padding(bottom = 10.dp)) {
                     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 10.dp)) {
                             // ---- Video trimmer panel (V3): toggled from the ✂ Trim button in the video header.
                             // Draggable left/right edges set the range; the selection itself IS the length (no Length slider).
@@ -5230,7 +5185,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                             Row(Modifier.fillMaxWidth().clickable { if (song != null) showTranslateRow = !showTranslateRow }, verticalAlignment = Alignment.CenterVertically) {
                                 val sg = song
                                 if (sg == null) {
-                                    TextButton(onClick = { musicOpen = true }) { Text("♪  Add music", color = Color.White) }
+                                    /* L: "Add music" is a header icon now */
                                 } else {
                                     IconButton(onClick = {
                                         if (playing) { runCatching { player.pause() }; playing = false }

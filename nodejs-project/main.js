@@ -2033,10 +2033,14 @@ async function startSocket() {
           const viewer = rec.userJid || k.participant
           if (id && viewer) {
             const toMs = (x) => { if (!x) return 0; const n = (typeof x === 'object') ? (x.toNumber ? x.toNumber() : Number(x.low)) : Number(x); return n > 0 ? n * 1000 : 0 }
-            const t = toMs(rec.readTimestamp) || toMs(rec.receiptTimestamp) || toMs(rec.playedTimestamp) || Date.now()
-            if (!statusViewers[id]) statusViewers[id] = {}
-            const b = baseJid(viewer)
-            if (!(statusViewers[id][b] >= t)) statusViewers[id][b] = t
+            // M: a status "view" is a READ (or played) receipt only. A bare delivery receipt (receiptTimestamp) just means
+            // the phone received the status — counting it (and falling back to Date.now()) produced fake "viewed by" rows.
+            const t = toMs(rec.readTimestamp) || toMs(rec.playedTimestamp)
+            if (t) {
+              if (!statusViewers[id]) statusViewers[id] = {}
+              const b = baseJid(viewer)
+              if (!(statusViewers[id][b] >= t)) statusViewers[id][b] = t
+            }
           }
         } else if (k.fromMe && k.id) {
           // normal chat delivery/read receipt -> bump tick status

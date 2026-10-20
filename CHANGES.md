@@ -170,3 +170,8 @@ delivery is polling + local notifications — see "Deliberate deviations").
 
 ## K: viewers as in-window overlays
 - Status viewer + chat photo/video viewers are no longer Dialog windows (some phones lay Dialogs out inside the status/nav bar zones, so the screen underneath — status-list ring on top, Home/Status bar at the bottom — showed through). They are now opaque black top-z overlays inside the edge-to-edge activity window, with a touch blocker, BackHandler and white system-bar icons while open.
+
+## L/M: status composer + fake views
+- Status composer is an in-window overlay (not a Dialog): caption + green send row now sits above the keyboard (real IME inset + 10dp gap); previously it hid behind the keyboard so a status with a caption could not be sent.
+- Composer header actions are icons: Crop (photo) / Trim (video) / Music (both, turns green when a song is set) + audience. "Edit image with AI" chip removed; text chips "Crop/Trim/Sound/Add music" removed from the preview.
+- Node message-receipt.update: a status view = READ/played receipt only. Delivery receipts (and the Date.now() fallback) no longer create fake "Viewed by" rows.
