@@ -4,8 +4,13 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.view.HapticFeedbackConstants
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.border
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,9 +45,11 @@ import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -516,17 +523,29 @@ fun AnimatedComposerField(
     bus: TextAnimBus? = null,
     previewMode: Boolean = false,
     placeholderText: String = "Message",
+    textStyle: TextStyle = MaterialTheme.typography.bodyLarge,
+    textColor: Color = Color.Unspecified,
+    hintColor: Color = Color.Unspecified,
+    accentColor: Color = Color.Unspecified,
+    contentPadding: PaddingValues = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
+    singleLine: Boolean = false,
 ) {
     val cfg = TextAnimSettings
     val density = LocalDensity.current
     val dpPx = density.density
-    val padXPx = 16f * dpPx
-    val padYPx = 16f * dpPx
+    val layoutDirection = LocalLayoutDirection.current
+    val padXPx = with(density) { contentPadding.calculateLeftPadding(layoutDirection).toPx() }
+    val padYPx = with(density) { contentPadding.calculateTopPadding().toPx() }
     val slidePx = 20f * dpPx
     val sinkPx = 2f * dpPx
     val blurSpreadPx = 2.2f * dpPx
 
-    val textStyleBase = MaterialTheme.typography.bodyLarge
+    val textStyleBase = textStyle
+    val drawColor = if (textColor != Color.Unspecified) textColor
+        else if (textStyle.color != Color.Unspecified) textStyle.color
+        else onSurface
+    val accent = if (accentColor != Color.Unspecified) accentColor else primary
+    val hint = if (hintColor != Color.Unspecified) hintColor else onSurfaceVariant
     val onSurface = MaterialTheme.colorScheme.onSurface
     val onSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
     val primary = MaterialTheme.colorScheme.primary
@@ -552,7 +571,7 @@ fun AnimatedComposerField(
     var lastTrailNanos by remember { mutableStateOf(0L) }
     val engine = remember { TextAnimEngine() }
 
-    val fieldStyleDraw = textStyleBase.copy(color = onSurface)
+    val fieldStyleDraw = textStyleBase.copy(color = drawColor)
     val measureCache = remember(fieldStyleDraw) { HashMap<String, TextLayoutResult>() }
     fun measureCluster(cluster: String): TextLayoutResult {
         measureCache[cluster]?.let { return it }
@@ -577,7 +596,7 @@ fun AnimatedComposerField(
             if (cfg.deleteScatter.value) {
                 spawnScatter(
                     engine, cfg.burstStyle.value, cfg.amount(), clusters[i],
-                    fieldRect, rng, dpPx, onSurface, now
+                    fieldRect, rng, dpPx, drawColor, now
                 )
             }
         }
@@ -696,7 +715,7 @@ fun AnimatedComposerField(
         spawnBurst(
             engine, txt, lay, padXPx, padYPx, target,
             cfg.burstStyle.value == 3 || cfg.burstStyle.value == 4,
-            rng, onSurface, primary, System.nanoTime()
+            rng, drawColor, accent, System.nanoTime()
         )
     }
 
@@ -720,7 +739,7 @@ fun AnimatedComposerField(
         layNow.size.height + padYPx * 2 <= fieldSize.height + 2
     val customText = cfg.anyAppear() && scrollSafe
     val customCaret = cfg.cursor.value && scrollSafe
-    val fieldStyle = textStyleBase.copy(color = if (customText) Color.Transparent else onSurface)
+    val fieldStyle = textStyleBase.copy(color = if (customText) Color.Transparent else drawColor)
     val effectiveSelectionColors = if (customText && cfg.liquidSelection.value) {
         TextSelectionColors(selectionColors.handleColor, Color.Transparent)
     } else selectionColors
@@ -755,8 +774,9 @@ fun AnimatedComposerField(
                     },
                 readOnly = previewMode,
                 textStyle = fieldStyle,
-                cursorBrush = if (customCaret) SolidColor(Color.Transparent) else SolidColor(primary),
+                cursorBrush = if (customCaret) SolidColor(Color.Transparent) else SolidColor(accent),
                 maxLines = maxLines,
+                singleLine = singleLine,
                 onTextLayout = { lr ->
                     layoutResult = lr
                     if (tfv.text.isNotEmpty()) {
@@ -765,12 +785,12 @@ fun AnimatedComposerField(
                     }
                 },
                 decorationBox = { inner ->
-                    Box(Modifier.padding(horizontal = 16.dp, vertical = 16.dp)) {
+                    Box(Modifier.padding(contentPadding)) {
                         if (tfv.text.isEmpty()) {
                             Text(
                                 placeholderText,
                                 style = textStyleBase,
-                                color = onSurfaceVariant,
+                                color = hint,
                             )
                         }
                         inner()
@@ -809,7 +829,7 @@ fun AnimatedComposerField(
                     val clRect = clusterRect(cl, 0 until g.text.length)
                     val dx = g.rect.left - (clRect?.left ?: 0f)
                     val dy = g.rect.top - (clRect?.top ?: 0f) + sinkPx * min(ageP, 1f)
-                    drawText(cl, color = onSurface, topLeft = Offset(dx, dy), alpha = a)
+                    drawText(cl, color = drawColor, topLeft = Offset(dx, dy), alpha = a)
                 }
 
                 // Glyphs: the text itself, per cluster, with appear animations.
@@ -825,7 +845,7 @@ fun AnimatedComposerField(
                         val baseY = rect.top + padYPx - (clRect?.top ?: 0f)
                         val anim = engine.glyphs.firstOrNull { it.start == r.first }
                         if (anim == null) {
-                            drawText(cl, color = onSurface, topLeft = Offset(baseX, baseY))
+                            drawText(cl, color = drawColor, topLeft = Offset(baseX, baseY))
                         } else {
                             val pRaw = ((now - anim.startNanos).toFloat() / durF).coerceIn(0f, 1f)
                             val p = TextAnimEasing.apply(cfg.curve.value, pRaw)
@@ -845,15 +865,15 @@ fun AnimatedComposerField(
                                     }
                                     if (cfg.rotate.value) rotate((1f - p) * -15f, pivot)
                                 }) {
-                                    drawText(cl, color = onSurface, topLeft = topLeft, alpha = alpha)
+                                    drawText(cl, color = drawColor, topLeft = topLeft, alpha = alpha)
                                     if (cfg.blur.value && pRaw < 1f) {
-                                        drawBlurGhosts(cl, onSurface, topLeft.x, topLeft.y, alpha, pRaw, blurSpreadPx)
+                                        drawBlurGhosts(cl, drawColor, topLeft.x, topLeft.y, alpha, pRaw, blurSpreadPx)
                                     }
                                 }
                             } else {
-                                drawText(cl, color = onSurface, topLeft = topLeft, alpha = alpha)
+                                drawText(cl, color = drawColor, topLeft = topLeft, alpha = alpha)
                                 if (cfg.blur.value && pRaw < 1f) {
-                                    drawBlurGhosts(cl, onSurface, topLeft.x, topLeft.y, alpha, pRaw, blurSpreadPx)
+                                    drawBlurGhosts(cl, drawColor, topLeft.x, topLeft.y, alpha, pRaw, blurSpreadPx)
                                 }
                             }
                         }
@@ -905,7 +925,7 @@ fun AnimatedComposerField(
                 val caretColor = when (cfg.cursorColor.value) {
                     1 -> ThemeStore.accentColor()
                     2 -> Color.hsv(((now / 1_000_000L % 3600L) / 10f), 0.65f, 1f)
-                    else -> primary
+                    else -> accent
                 }
                 var ca = 1f
                 if (cfg.blink.value) {
@@ -1044,5 +1064,73 @@ fun TextAnimPreview() {
             bus = bus,
             previewMode = true,
         )
+    }
+}
+
+/**
+ * Reusable animated replacement for a Material3 OutlinedTextField: same
+ * outlined shell (border that highlights on focus, optional leading icon,
+ * optional filled container), but the text inside is [AnimatedComposerField],
+ * so typing / delete / caret effects apply. Hosts use this only when the
+ * Text Animation master switch is on and keep their original
+ * OutlinedTextField otherwise, so the off state is pixel-identical to before.
+ */
+@Composable
+fun AnimatedOutlinedField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    placeholderText: String = "",
+    singleLine: Boolean = false,
+    maxLines: Int = 4,
+    shape: Shape = RoundedCornerShape(12.dp),
+    textStyle: TextStyle = MaterialTheme.typography.bodyLarge,
+    textColor: Color = Color.Unspecified,
+    hintColor: Color = Color.Unspecified,
+    accentColor: Color = Color.Unspecified,
+    borderColor: Color = Color.Unspecified,
+    focusedBorderColor: Color = Color.Unspecified,
+    containerColor: Color = Color.Transparent,
+    leadingIcon: (@Composable () -> Unit)? = null,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val outline = MaterialTheme.colorScheme.outline
+    val primary = MaterialTheme.colorScheme.primary
+    val bOff = if (borderColor != Color.Unspecified) borderColor else outline
+    val bOn = if (focusedBorderColor != Color.Unspecified) focusedBorderColor else primary
+    Box(
+        modifier
+            .clip(shape)
+            .background(containerColor)
+            .border(if (focused) 2.dp else 1.dp, if (focused) bOn else bOff, shape)
+    ) {
+        Row(verticalAlignment = if (singleLine) Alignment.CenterVertically else Alignment.Top) {
+            if (leadingIcon != null) {
+                Box(
+                    Modifier.padding(
+                        start = 12.dp,
+                        top = if (singleLine) 0.dp else 16.dp,
+                    )
+                ) { leadingIcon() }
+            }
+            AnimatedComposerField(
+                value = value,
+                onValueChange = onValueChange,
+                modifier = Modifier.weight(1f),
+                maxLines = maxLines,
+                singleLine = singleLine,
+                onFocusChanged = { focused = it.isFocused },
+                placeholderText = placeholderText,
+                textStyle = textStyle,
+                textColor = textColor,
+                hintColor = hintColor,
+                accentColor = accentColor,
+                contentPadding = if (leadingIcon != null) {
+                    PaddingValues(start = 8.dp, end = 16.dp, top = 16.dp, bottom = 16.dp)
+                } else {
+                    PaddingValues(horizontal = 16.dp, vertical = 16.dp)
+                },
+            )
+        }
     }
 }

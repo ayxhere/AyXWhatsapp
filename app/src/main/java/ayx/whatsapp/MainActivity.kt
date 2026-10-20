@@ -1292,7 +1292,11 @@ fun GatewayApp() {
                             style = MaterialTheme.typography.titleMedium, maxLines = 6, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(18.dp))
                     }
                     Spacer(Modifier.height(12.dp))
-                    OutlinedTextField(vtext, { vtext = it }, placeholder = { Text("Type your status…") }, modifier = Modifier.fillMaxWidth(), shape = uiShapeFor(14), maxLines = 4)
+                    if (TextAnimSettings.enabled.value) {
+                        AnimatedOutlinedField(vtext, { vtext = it }, placeholderText = "Type your status…", modifier = Modifier.fillMaxWidth(), shape = uiShapeFor(14), maxLines = 4)
+                    } else {
+                        OutlinedTextField(vtext, { vtext = it }, placeholder = { Text("Type your status…") }, modifier = Modifier.fillMaxWidth(), shape = uiShapeFor(14), maxLines = 4)
+                    }
                     Spacer(Modifier.height(10.dp))
                     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         bgColors.forEachIndexed { i, c ->
@@ -1509,11 +1513,20 @@ fun GatewayApp() {
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
                 title = {
                     if (searchMode && openChat == null && screen == "chats") {
-                        OutlinedTextField(searchQuery, { searchQuery = it }, placeholder = { Text("Search chats") },
-                            leadingIcon = { Icon(Icons.Filled.Search, null, tint = IOS_BLUE) }, singleLine = true, shape = uiShapeFor(24),
-                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent,
-                                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant, unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant),
-                            modifier = Modifier.fillMaxWidth())
+                        if (TextAnimSettings.enabled.value) {
+                            AnimatedOutlinedField(searchQuery, { searchQuery = it }, placeholderText = "Search chats",
+                                singleLine = true, shape = uiShapeFor(24),
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                borderColor = Color.Transparent, focusedBorderColor = Color.Transparent,
+                                leadingIcon = { Icon(Icons.Filled.Search, null, tint = IOS_BLUE) },
+                                modifier = Modifier.fillMaxWidth())
+                        } else {
+                            OutlinedTextField(searchQuery, { searchQuery = it }, placeholder = { Text("Search chats") },
+                                leadingIcon = { Icon(Icons.Filled.Search, null, tint = IOS_BLUE) }, singleLine = true, shape = uiShapeFor(24),
+                                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent,
+                                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant, unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant),
+                                modifier = Modifier.fillMaxWidth())
+                        }
                     } else if (openChat != null) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Avatar(openChat!!, chatName ?: "?", dpCache, 38.dp, CircleShape)
@@ -1975,8 +1988,13 @@ private fun ForwardPicker(messages: List<GatewayClient.Msg>, dpCache: MutableMap
                     IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, "close") }
                 }
                 Spacer(Modifier.height(10.dp))
-                OutlinedTextField(query, { query = it }, placeholder = { Text("Search chats") }, singleLine = true,
-                    leadingIcon = { Icon(Icons.Filled.Search, null) }, shape = uiShapeFor(24), modifier = Modifier.fillMaxWidth())
+                if (TextAnimSettings.enabled.value) {
+                    AnimatedOutlinedField(query, { query = it }, placeholderText = "Search chats", singleLine = true,
+                        shape = uiShapeFor(24), leadingIcon = { Icon(Icons.Filled.Search, null) }, modifier = Modifier.fillMaxWidth())
+                } else {
+                    OutlinedTextField(query, { query = it }, placeholder = { Text("Search chats") }, singleLine = true,
+                        leadingIcon = { Icon(Icons.Filled.Search, null) }, shape = uiShapeFor(24), modifier = Modifier.fillMaxWidth())
+                }
                 Spacer(Modifier.height(8.dp))
                 LazyColumn(Modifier.weight(1f)) {
                     itemsIndexed(filtered, key = { _, jid -> jid }) { _, jid ->
@@ -2611,6 +2629,8 @@ private fun ChatDetail(
                     textAnimBus.sendTargetWindow = lc.positionInWindow() + Offset(lc.size.width / 2f, lc.size.height / 2f)
                 }) { Icon(Icons.AutoMirrored.Filled.Send, "send") }
         }
+        // Composer text size: default bodyLarge is 16sp - user asked for a bigger type box (+3sp).
+        val composerTextStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 19.sp)
         val textField: @Composable (Modifier) -> Unit = { mod ->
             if (TextAnimSettings.enabled.value) {
                 // Text Animation field: same slot/visuals, animated typing/delete/caret inside.
@@ -2622,9 +2642,10 @@ private fun ChatDetail(
                     focusRequester = fieldFocus,
                     onFocusChanged = { fieldHadFocus = it.isFocused },
                     bus = textAnimBus,
+                    textStyle = composerTextStyle,
                 )
             } else {
-                OutlinedTextField(input, { input = it }, placeholder = { Text("Message") }, maxLines = if (expanded) 8 else 4,
+                OutlinedTextField(input, { input = it }, placeholder = { Text("Message", style = composerTextStyle) }, textStyle = composerTextStyle, maxLines = if (expanded) 8 else 4,
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent,
                         focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent),
                     modifier = mod.focusRequester(fieldFocus).onFocusChanged { fieldHadFocus = it.isFocused })
@@ -5009,14 +5030,23 @@ private fun NewChatScreen(contacts: List<DeviceContact>, loading: Boolean, dpCac
     }
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
         Spacer(Modifier.height(10.dp))
-        OutlinedTextField(q, { q = it }, placeholder = { Text("Search name or number") },
-            leadingIcon = { Icon(Icons.Filled.Search, null, tint = IOS_BLUE) },
-            singleLine = true, shape = uiShapeFor(28),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent,
-                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant),
-            modifier = Modifier.fillMaxWidth())
+        if (TextAnimSettings.enabled.value) {
+            AnimatedOutlinedField(q, { q = it }, placeholderText = "Search name or number",
+                singleLine = true, shape = uiShapeFor(28),
+                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                borderColor = Color.Transparent, focusedBorderColor = Color.Transparent,
+                leadingIcon = { Icon(Icons.Filled.Search, null, tint = IOS_BLUE) },
+                modifier = Modifier.fillMaxWidth())
+        } else {
+            OutlinedTextField(q, { q = it }, placeholder = { Text("Search name or number") },
+                leadingIcon = { Icon(Icons.Filled.Search, null, tint = IOS_BLUE) },
+                singleLine = true, shape = uiShapeFor(28),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent,
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant),
+                modifier = Modifier.fillMaxWidth())
+        }
         Spacer(Modifier.height(8.dp))
         when {
             loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -5520,11 +5550,18 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                             // keyboard opens; the overlay's imePadding() keeps the whole row just above the keyboard.
                             Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Box(Modifier.weight(1f).clip(uiShapeFor(24)).background(Color.White.copy(alpha = 0.07f))) {
-                                    OutlinedTextField(caption, { caption = it }, placeholder = { Text("Add a caption…", color = Color.White.copy(alpha = 0.6f)) }, maxLines = 3, shape = uiShapeFor(24),
-                                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.White.copy(alpha = 0.22f), unfocusedBorderColor = Color.White.copy(alpha = 0.10f),
-                                            focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
-                                            focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White),
-                                        modifier = Modifier.fillMaxWidth())
+                                    if (TextAnimSettings.enabled.value) {
+                                        AnimatedOutlinedField(caption, { caption = it }, placeholderText = "Add a caption…", maxLines = 3, shape = uiShapeFor(24),
+                                            textColor = Color.White, hintColor = Color.White.copy(alpha = 0.6f), accentColor = Color.White,
+                                            borderColor = Color.White.copy(alpha = 0.10f), focusedBorderColor = Color.White.copy(alpha = 0.22f),
+                                            modifier = Modifier.fillMaxWidth())
+                                    } else {
+                                        OutlinedTextField(caption, { caption = it }, placeholder = { Text("Add a caption…", color = Color.White.copy(alpha = 0.6f)) }, maxLines = 3, shape = uiShapeFor(24),
+                                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.White.copy(alpha = 0.22f), unfocusedBorderColor = Color.White.copy(alpha = 0.10f),
+                                                focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
+                                                focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White),
+                                            modifier = Modifier.fillMaxWidth())
+                                    }
                                 }
                                 Spacer(Modifier.width(8.dp))
                                 FilledIconButton(enabled = mediaUri != null,
@@ -5911,7 +5948,11 @@ private fun AudienceSheet(contacts: List<DeviceContact>, audienceIn: String, sel
                 AudRadio("My contacts except…", aud == "except") { aud = "except" }
                 AudRadio("Only share with…", aud == "only") { aud = "only" }
                 if (aud != "all") {
-                    OutlinedTextField(q, { q = it }, placeholder = { Text("Search") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp))
+                    if (TextAnimSettings.enabled.value) {
+                        AnimatedOutlinedField(q, { q = it }, placeholderText = "Search", singleLine = true, shape = RoundedCornerShape(4.dp), modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp))
+                    } else {
+                        OutlinedTextField(q, { q = it }, placeholder = { Text("Search") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp))
+                    }
                     LazyColumn(Modifier.heightIn(max = 340.dp)) {
                         itemsIndexed(filtered) { _, c ->
                             val jid = c.number + "@s.whatsapp.net"
@@ -6196,11 +6237,19 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                         }
                     } else {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            OutlinedTextField(replyText, { replyText = it }, placeholder = { Text("Reply to status…", color = Color.White.copy(alpha = 0.6f)) }, singleLine = true, shape = uiShapeFor(26),
-                                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.White.copy(alpha = 0.4f), unfocusedBorderColor = Color.White.copy(alpha = 0.25f),
-                                    focusedContainerColor = Color.Black.copy(alpha = 0.4f), unfocusedContainerColor = Color.Black.copy(alpha = 0.4f),
-                                    focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White),
-                                modifier = Modifier.weight(1f))
+                            if (TextAnimSettings.enabled.value) {
+                                AnimatedOutlinedField(replyText, { replyText = it }, placeholderText = "Reply to status…", singleLine = true, shape = uiShapeFor(26),
+                                    textColor = Color.White, hintColor = Color.White.copy(alpha = 0.6f), accentColor = Color.White,
+                                    borderColor = Color.White.copy(alpha = 0.25f), focusedBorderColor = Color.White.copy(alpha = 0.4f),
+                                    containerColor = Color.Black.copy(alpha = 0.4f),
+                                    modifier = Modifier.weight(1f))
+                            } else {
+                                OutlinedTextField(replyText, { replyText = it }, placeholder = { Text("Reply to status…", color = Color.White.copy(alpha = 0.6f)) }, singleLine = true, shape = uiShapeFor(26),
+                                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.White.copy(alpha = 0.4f), unfocusedBorderColor = Color.White.copy(alpha = 0.25f),
+                                        focusedContainerColor = Color.Black.copy(alpha = 0.4f), unfocusedContainerColor = Color.Black.copy(alpha = 0.4f),
+                                        focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White),
+                                    modifier = Modifier.weight(1f))
+                            }
                             Spacer(Modifier.width(8.dp))
                             FilledIconButton(onClick = { if (replyText.isNotBlank()) { onReply(group.first, replyText.trim()); replyText = "" } }, enabled = replyText.isNotBlank()) { Icon(Icons.AutoMirrored.Filled.Send, "send") }
                         }
