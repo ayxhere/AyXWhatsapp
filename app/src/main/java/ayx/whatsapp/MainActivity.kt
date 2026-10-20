@@ -50,6 +50,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.key
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.Canvas
@@ -82,7 +83,6 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.changedToUpOrCanceled
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -7235,20 +7235,20 @@ private fun VideoFilmstripTrimmer(
                 down.consume()
                 val startAtDown = curStart
                 val endAtDown = curEnd
-                val downX = down.position.x
+                val downX: Float = down.position.x
                 val minLen = 1000L
                 curScrub(true)
                 try {
                     while (true) {
                         val event = awaitPointerEvent()
                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        if (change.changedToUpOrCanceled()) { change.consume(); break }
-                        val totalDx = change.position.x - downX
+                        if (change.previousPressed && !change.pressed) { change.consume(); break }  // up or canceled (inlined changedToUpOrCanceled — that import does not resolve on this classpath)
+                        val totalDx: Float = change.position.x - downX
                         if (totalDx != 0f) {
                             change.consume()
                             // 1:1 mapping from TOTAL displacement — immune to
                             // dropped/coalesced events and per-event truncation.
-                            val dMs = (totalDx / w * durationMs).toLong()
+                            val dMs: Long = (totalDx / w * durationMs).toLong()
                             when (mode) {
                                 1 -> { val ns = (startAtDown + dMs).coerceIn(0L, (endAtDown - minLen).coerceAtLeast(0L)); curChange(ns, endAtDown); curSeek(ns) }
                                 // Seek a hair BEFORE the end: landing exactly on it
