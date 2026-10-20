@@ -41,7 +41,6 @@ object AyxHere {
     private const val BIN_URL = "f3f176322cb326a07d7b90a8cebc229491ae489210340e335ce212915ec1a4dd4dfb2d258ff44418731a97d6e6b5377f"
     private const val BUILT_BY = "d3e3d87547e2bff3b6392239a2ba32f8f4d2f4ea64a8ab7744f27f5b0481c5144ffb1ff8eb6f34eb5d37f82f99bf4244"
     private const val ABOUT_HEY = "76bcf5b6347920643a0edbd9340bfafe2f1ab13d555f176e90be12f1b85dd4a7"
-    private const val GH_REPO = "b154de45a8825b469d91160f1cf637f99a832b409deb0ea7b392a1bd8c376584d83595189b1c8394b7a1b0785a79a2a9"
     private const val GH_RELEASES = "b154de45a8825b469d91160f1cf637f99a832b409deb0ea7b392a1bd8c3765846c39cd9138d5b2aed0585efcf255b7d48958b49f191bf96ab05a0d04ddf1f189"
     private const val IG_LABEL = "b769581883979b7a39f626513fa85a55"
     private const val IG_URL = "89c2562c0ad648e39b4601557f86ed558cb234f7cca26de470236bcc174fe6a6e4d9bda691264a70428990658b3bcd2df9db72690e7b3dacd8e6eaea12cbc7f1"
@@ -60,7 +59,6 @@ object AyxHere {
     val binanceUrl: String get() = dec(BIN_URL)
     val builtBy: String get() = dec(BUILT_BY)
     val aboutHey: String get() = dec(ABOUT_HEY)
-    val githubRepo: String get() = dec(GH_REPO)
     val githubReleases: String get() = dec(GH_RELEASES)
     val igLabel: String get() = dec(IG_LABEL)
     val igUrl: String get() = dec(IG_URL)
