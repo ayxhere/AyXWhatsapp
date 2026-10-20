@@ -175,3 +175,7 @@ delivery is polling + local notifications — see "Deliberate deviations").
 - Status composer is an in-window overlay (not a Dialog): caption + green send row now sits above the keyboard (real IME inset + 10dp gap); previously it hid behind the keyboard so a status with a caption could not be sent.
 - Composer header actions are icons: Crop (photo) / Trim (video) / Music (both, turns green when a song is set) + audience. "Edit image with AI" chip removed; text chips "Crop/Trim/Sound/Add music" removed from the preview.
 - Node message-receipt.update: a status view = READ/played receipt only. Delivery receipts (and the Date.now() fallback) no longer create fake "Viewed by" rows.
+
+## N: build fix + short status toast
+- Added missing icon imports (Crop, ContentCut, MusicNote) that broke compileReleaseKotlin (#441).
+- Status upload success toast is now just "✅ Status uploaded" (was "sent id=… to N contacts"); failures still show the error.

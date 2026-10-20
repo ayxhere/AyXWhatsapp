@@ -420,7 +420,7 @@ object GatewayClient {
             c.outputStream.use { it.write(body.toByteArray()) }
             val txt = (if (c.responseCode in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: "{}"
             val o = JSONObject(txt)
-            o.optBoolean("ok", false) to (if (o.optBoolean("ok", false)) ("sent id=" + o.optString("id") + " to " + o.optInt("recipients") + " contacts") else (o.optString("error") + " | " + o.optString("diag")))
+            o.optBoolean("ok", false) to (if (o.optBoolean("ok", false)) "Status uploaded" else (o.optString("error") + " | " + o.optString("diag")))
         } catch (e: Exception) { false to (e.message ?: "connection error") }
     }
 
@@ -436,7 +436,7 @@ object GatewayClient {
             c.outputStream.use { it.write(body.toByteArray()) }
             val txt = (if (c.responseCode in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: "{}"
             val o = JSONObject(txt)
-            o.optBoolean("ok", false) to (if (o.optBoolean("ok", false)) ("voice status sent to " + o.optInt("recipients") + " contacts") else o.optString("error"))
+            o.optBoolean("ok", false) to (if (o.optBoolean("ok", false)) "Status uploaded" else o.optString("error"))
         } catch (e: Exception) { false to (e.message ?: "connection error") }
     }
 
@@ -452,7 +452,7 @@ object GatewayClient {
             c.outputStream.use { it.write(body.toByteArray()) }
             val txt = (if (c.responseCode in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: "{}"
             val o = JSONObject(txt)
-            o.optBoolean("ok", false) to (if (o.optBoolean("ok", false)) ("status posted to " + o.optInt("recipients") + " contacts") else o.optString("error"))
+            o.optBoolean("ok", false) to (if (o.optBoolean("ok", false)) "Status uploaded" else o.optString("error"))
         } catch (e: Exception) { false to (e.message ?: "connection error") }
     }
 

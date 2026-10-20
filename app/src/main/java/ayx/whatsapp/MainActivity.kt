@@ -120,6 +120,9 @@ import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Crop
+import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowUp
