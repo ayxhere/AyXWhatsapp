@@ -66,6 +66,7 @@ object GatewayClient {
     data class Contact(val jid: String, val name: String, val number: String)
     data class Msg(val chat: String, val name: String, val fromMe: Boolean, val text: String, val ts: Long,
                    val mediaName: String? = null, val mediaType: String? = null, val thumb: String? = null, val deleted: Boolean = false, val id: String? = null, val reaction: String? = null, val sender: String? = null, val quotedText: String? = null, val quotedId: String? = null, val edited: Boolean = false, val status: Int = 0, val forwarded: Boolean = false,
+                   val albumId: String? = null,
                    // Group chats only: the Baileys group subject (group name) from the
                    // gateway. NOTE: `name` on a group message is the SENDER's pushName,
                    // never the group name — use chatName for group titles.
@@ -264,8 +265,11 @@ object GatewayClient {
      * background. This polls /sendmedia/status/:id for completion so the UI
      * reports the REAL outcome instead of faking "sent".
      */
-    suspend fun sendMedia(jid: String, dataB64: String, type: String, filename: String, caption: String): Boolean = withContext(Dispatchers.IO) {
+    suspend fun sendMedia(jid: String, dataB64: String, type: String, filename: String, caption: String, albumId: String = "", albumCount: Int = 0): Boolean = withContext(Dispatchers.IO) {
         val body = JSONObject().put("jid", jid).put("type", type).put("data", dataB64).put("filename", filename).put("caption", caption)
+        // Album batch (multi-select send): one shared albumId per batch so
+        // the gateway tags every stored item and the chat renders ONE album.
+        if (albumId.isNotBlank()) { body.put("albumId", albumId); body.put("albumCount", albumCount) }
         val o = post("/sendmedia", body, readTimeoutMs = 60000)
         if (!o.optBoolean("ok", false)) throw RuntimeException(o.optString("error", "send failed"))
         val uploadId = o.optString("uploadId", "")
@@ -806,6 +810,7 @@ object GatewayClient {
                     status = m.optInt("status", 0),
                     forwarded = m.optBoolean("forwarded", false),
                     chatName = m.optString("chatName").ifEmpty { null },
+                    albumId = m.optString("albumId").ifEmpty { null },
                 ))
             }
         }

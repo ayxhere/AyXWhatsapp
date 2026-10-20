@@ -861,9 +861,18 @@ fun GatewayApp() {
 
     // file picker for sending media
     var pendingMedia by remember { mutableStateOf<Pair<Uri, String>?>(null) }
+    // Multi-select batch (attach → Photos & Videos / Videos): staged,
+    // previewed and sent together as ONE album (shared albumId, see
+    // GatewayClient.sendMedia). A batch never follows you into another chat.
+    var pendingBatch by remember { mutableStateOf<List<Pair<Uri, String>>>(emptyList()) }
     // an attachment staged in one chat must NEVER follow you into another chat → drop it whenever the open chat changes
-    LaunchedEffect(openChat) { pendingMedia = null }
+    LaunchedEffect(openChat) { pendingMedia = null; pendingBatch = emptyList() }
     var chatsPage by remember { mutableStateOf(0) }
+    // Home chat-list scroll state lives HERE (app level, never leaves the
+    // composition): the list unmounts while a chat is open, and a state
+    // remembered inside ChatList reset the scroll to the top on every
+    // back-press. Hoisted, the exact position survives chat open/back.
+    val homeChatListState = remember { LazyListState() }
     var storyView by remember { mutableStateOf<String?>(null) }
     var myJid by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(status.registered) { if (status.registered) { val j = GatewayClient.getMe(); if (j.isNotBlank()) myJid = j } }
@@ -911,8 +920,20 @@ fun GatewayApp() {
     }
 
     var wallpaper by remember { mutableStateOf<ImageBitmap?>(null) }
-    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? -> if (uri != null && openChat != null) pendingMedia = uri to "image" }
-    val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? -> if (uri != null && openChat != null) pendingMedia = uri to "video" }
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(10)) { uris: List<Uri> ->
+        if (openChat != null && uris.isNotEmpty()) {
+            // Mixed picks allowed: classify each item by its real mime type.
+            val typed = uris.map { u -> u to if ((ctx.contentResolver.getType(u) ?: "").startsWith("video")) "video" else "image" }
+            if (typed.size == 1) { pendingMedia = typed.first(); pendingBatch = emptyList() }
+            else { pendingBatch = typed; pendingMedia = null }
+        }
+    }
+    val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(10)) { uris: List<Uri> ->
+        if (openChat != null && uris.isNotEmpty()) {
+            if (uris.size == 1) { pendingMedia = uris.first() to "video"; pendingBatch = emptyList() }
+            else { pendingBatch = uris.map { it to "video" }; pendingMedia = null }
+        }
+    }
     fun loadWallpaper() {
         val f = File(ctx.filesDir, "wallpaper.jpg")
         wallpaper = if (f.exists()) runCatching { decodeScaled(f.absolutePath, 1440)?.asImageBitmap() }.getOrNull() else null
@@ -1631,6 +1652,35 @@ fun GatewayApp() {
                 canSend = true,
                 pendingMedia = pendingMedia,
                 onClearPendingMedia = { pendingMedia = null },
+                pendingBatch = pendingBatch,
+                onClearPendingBatch = { pendingBatch = emptyList() },
+                onSendBatch = { caption ->
+                    val batch = pendingBatch
+                    val mjid = openChat
+                    pendingBatch = emptyList()
+                    if (mjid != null && batch.isNotEmpty()) scope.launch {
+                        // One albumId for the whole batch → the chat shows ONE
+                        // grouped album bubble, not N separate bubbles.
+                        val albumId = if (batch.size > 1) "alb-" + System.currentTimeMillis().toString(36) + "-" + batch.size else ""
+                        var sentAny = false
+                        for ((idx, item) in batch.withIndex()) {
+                            val (buri, btype) = item
+                            val up = UploadingMedia(mjid, buri, btype)
+                            uploading.add(up)
+                            try {
+                                val bytes = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(buri)?.use { it.readBytes() } }
+                                if (bytes == null) { notify("can't read file") }
+                                else {
+                                    // Caption rides on the FIRST item only (WhatsApp album style).
+                                    GatewayClient.sendMedia(mjid, Base64.encodeToString(bytes, Base64.NO_WRAP), btype, queryName(ctx, buri) ?: "file", if (idx == 0) caption else "", albumId, batch.size)
+                                    sentAny = true
+                                }
+                            } catch (e: Exception) { notify("send failed: " + e.message) }
+                            finally { uploading.remove(up) }
+                        }
+                        if (sentAny) { notify("sent"); runCatching { messages = GatewayClient.getMessages() } }
+                    }
+                },
                 onSend = { text ->
                     val pmSend = pendingMedia
                     if (pmSend != null) {
@@ -1713,7 +1763,7 @@ fun GatewayApp() {
                     scope.launch { GatewayClient.deleteMessage(m.chat, m.id, m.text, m.ts, everyone, m.fromMe); messages = GatewayClient.getMessages() }
                 },
                 onAttach = { picker.launch("*/*") },
-                onPickChatPhoto = { photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                onPickChatPhoto = { photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) },
                 onPickChatVideo = { videoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)) },
                 onCamera = { openCamera() },
                 onReplySend = { text, qid, qtext ->
@@ -1821,6 +1871,7 @@ fun GatewayApp() {
                     onSaveName = { n -> scope.launch { runCatching { GatewayClient.setProfileName(n) }.onSuccess { notify("name updated") }.onFailure { notify("name: ${it.message}") } } }) }
                 else -> ChatsWithStatus(messages, chats, statuses, dpCache, searchQuery, chatsPage, topInset = pad.calculateTopPadding(),
                     ayxSnippet = ayxSnippet,
+                    chatListState = homeChatListState,
                     onPageChange = { chatsPage = it },
                     onLoadStatuses = { scope.launch { val fresh = GatewayClient.getStatuses(); statuses = if (fresh.isNotEmpty()) StatusData.merge(fresh) else StatusData.load() } },
                     onOpenStatus = { st ->
@@ -2137,7 +2188,7 @@ private fun chatTitleOfRow(row: ChatRow): String {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChatList(messages: List<GatewayClient.Msg>, chats: List<GatewayClient.ChatInfo> = emptyList(), dpCache: MutableMap<String, ImageBitmap?>, query: String, contentPad: androidx.compose.foundation.layout.PaddingValues, ayxSnippet: String, onToggleReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit, clearedUnread: Map<String, Long> = emptyMap()) {
+private fun ChatList(messages: List<GatewayClient.Msg>, chats: List<GatewayClient.ChatInfo> = emptyList(), dpCache: MutableMap<String, ImageBitmap?>, query: String, contentPad: androidx.compose.foundation.layout.PaddingValues, ayxSnippet: String, onToggleReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit, listState: LazyListState, clearedUnread: Map<String, Long> = emptyMap()) {
     // MERGED chat list (BUG FIX: rows used to come ONLY from messages, so
     // chats with no recent messages never appeared — fewer chats than the
     // original WhatsApp). Union of message-derived chats + gateway /chats.
@@ -2183,7 +2234,7 @@ private fun ChatList(messages: List<GatewayClient.Msg>, chats: List<GatewayClien
     var mutePick by remember { mutableStateOf<String?>(null) }
     val blurDp by animateDpAsState(if (menuChat != null || mutePick != null) 18.dp else 0.dp, label = "homeblur")
 
-    LazyColumn(Modifier.fillMaxSize().blur(blurDp), contentPadding = contentPad) {
+    LazyColumn(state = listState, modifier = Modifier.fillMaxSize().blur(blurDp), contentPadding = contentPad) {
         if (groups.isEmpty() && hiddenCount == 0) {
             item {
                 Box(Modifier.fillMaxWidth().padding(top = 48.dp), contentAlignment = Alignment.Center) {
@@ -2341,6 +2392,76 @@ private fun MuteTimerDialog(onDismiss: () -> Unit, onPick: (Long) -> Unit) {
     }
 }
 
+/**
+ * Display grouping for the chat list: consecutive media messages that belong
+ * to one batch collapse into ONE album group. Authoritative path: a shared
+ * albumId (the gateway tags batch sends). Fallback for media that arrived
+ * without an albumId (e.g. an album sent from the official app / another
+ * device): same sender, image/video only, each neighbour ≤45s apart, total
+ * span ≤3 min, at most 10 — the same visual clustering WhatsApp itself
+ * does. Anything else stays a single-message group and renders as before.
+ */
+private fun groupChatRows(rows: List<GatewayClient.Msg>): List<List<GatewayClient.Msg>> {
+    fun eligible(m: GatewayClient.Msg) = (m.mediaType == "image" || m.mediaType == "video") && m.mediaName != null && !m.deleted && m.id != null
+    fun senderKey(m: GatewayClient.Msg) = if (m.fromMe) "me" else (m.sender ?: m.name)
+    fun canJoin(group: List<GatewayClient.Msg>, m: GatewayClient.Msg): Boolean {
+        if (!eligible(m) || group.any { !eligible(it) }) return false
+        val head = group.first()
+        if (head.fromMe != m.fromMe || senderKey(head) != senderKey(m)) return false
+        val ids = group.map { it.albumId } + m.albumId
+        if (ids.any { it != null }) {
+            // Album groups are exact: every member must carry the SAME id.
+            val a = ids.firstOrNull { it != null } ?: return false
+            return ids.all { it == a }
+        }
+        val gap = group.last().ts - m.ts
+        if (gap < 0L || gap > 45_000L) return false
+        if (head.ts - m.ts > 180_000L) return false
+        return group.size < 10
+    }
+    val out = mutableListOf<MutableList<GatewayClient.Msg>>()
+    for (m in rows) {
+        val g = out.lastOrNull()
+        if (g != null && canJoin(g, m)) g.add(m) else out.add(mutableListOf(m))
+    }
+    return out
+}
+
+/** Stable LazyColumn key for a display group: singles keep the historic
+ *  per-message key; albums anchor on their newest item so the key survives
+ *  older history pages joining the group. */
+private fun groupRowKey(g: List<GatewayClient.Msg>): String {
+    val first = g.first()
+    val base = first.id ?: "opt-${first.ts}-${first.text.hashCode()}"
+    return if (g.size > 1) "grp-$base" else base
+}
+
+/** One staged item in the multi-select batch preview strip (composer). */
+@Composable
+private fun BatchThumb(uri: android.net.Uri, type: String) {
+    val ctx = LocalContext.current
+    val bmp = remember(uri) {
+        runCatching {
+            if (type == "image") {
+                val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, o) }
+                var ss = 1
+                while (o.outWidth / ss > 300 || o.outHeight / ss > 300) ss *= 2
+                val o2 = BitmapFactory.Options().apply { inSampleSize = ss }
+                ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, o2)?.asImageBitmap() }
+            } else {
+                val mmr = android.media.MediaMetadataRetriever()
+                try { mmr.setDataSource(ctx, uri); mmr.getFrameAtTime(0)?.asImageBitmap() } finally { runCatching { mmr.release() } }
+            }
+        }.getOrNull()
+    }
+    Box(Modifier.size(56.dp).clip(uiShapeFor(10)).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+        if (bmp != null) Image(bmp, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        else if (type != "video") Icon(Icons.Filled.Image, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (type == "video") Icon(Icons.Filled.PlayArrow, "video", tint = Color.White, modifier = Modifier.size(22.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape))
+    }
+}
+
 /** U2: actions ChatDetail hands up so the glass header can drive selection mode. */
 private data class SelActions(val selectAll: () -> Unit, val deleteSelected: () -> Unit)
 
@@ -2371,6 +2492,9 @@ private fun ChatDetail(
     wallpaper: ImageBitmap?,
     pendingMedia: Pair<android.net.Uri, String>?,
     onClearPendingMedia: () -> Unit,
+    pendingBatch: List<Pair<android.net.Uri, String>> = emptyList(),
+    onClearPendingBatch: () -> Unit = {},
+    onSendBatch: (String) -> Unit = {},
     /** Queued (not yet sent) messages in this chat — shown as a banner, never faked as sent. */
     queuedCount: Int = 0,
     onRetryQueued: () -> Unit = {},
@@ -2492,6 +2616,10 @@ private fun ChatDetail(
         }
         (serverMsgs + tombstones + liveOptimistic.map { GatewayClient.Msg(chat, "", true, it.text, it.ts, quotedText = it.quotedText) }).sortedByDescending { it.ts }
     }
+    // Display grouping: batch media collapses into ONE album group (see
+    // groupChatRows). Search / quote-jump still index into `rows` —
+    // jumpToRow translates a row index into the display-group index.
+    val displayGroups = remember(rows) { groupChatRows(rows) }
     // U2: hand selection actions up so the glass header drives them.
     LaunchedEffect(rows) {
         onSelectionActions(SelActions(
@@ -2508,6 +2636,10 @@ private fun ChatDetail(
     // Message Motion: stamp this chat as freshly opened BEFORE the rows
     // below compose, so the open-cascade can stagger them bottom-up.
     remember(chat) { MessageMotionTracker.chatOpened(chat) }
+    // Message Motion "always": leaving the chat ends its motion session
+    // (seen-set dropped), so reopening replays the cascade and messages
+    // animate on every visit — not just the first one ever.
+    DisposableEffect(chat) { onDispose { MessageMotionTracker.chatClosed(chat) } }
     // Load older history when the user scrolls near the OLD end (highest
     // index — reverseLayout puts the oldest messages there). Older pages
     // are APPENDED at the end, so visible indices never shift and the
@@ -2553,8 +2685,11 @@ private fun ChatDetail(
         if (q.isBlank()) emptyList() else rows.indices.filter { rows[it].text.contains(q, ignoreCase = true) }
     }
     fun jumpToRow(rowIdx: Int) {
-        rows.getOrNull(rowIdx)?.id?.let { highlightId = it }
-        jumpScope.launch { listState.animateScrollToItem(1 + uploading.size + rowIdx) }
+        val target = rows.getOrNull(rowIdx) ?: return
+        target.id?.let { highlightId = it }
+        // Scroll to the DISPLAY item (album group or single) holding the target.
+        val dIdx = displayGroups.indexOfFirst { g -> g.any { it.id != null && it.id == target.id } }
+        jumpScope.launch { listState.animateScrollToItem(1 + uploading.size + (if (dIdx >= 0) dIdx else rowIdx)) }
     }
     fun jumpToMsgId(id: String) {
         val idx = rows.indexOfFirst { it.id == id }
@@ -2690,18 +2825,30 @@ private fun ChatDetail(
             // optimistic ones (no id yet) by ts + text hash.
             // NO animateItem(): placement animation on every 3s poll
             // reorder made the whole list slide/jump constantly.
-            itemsIndexed(rows, key = { _, m -> m.id ?: "opt-${m.ts}-${m.text.hashCode()}" }) { itemIndex, m ->
-                val motionKey = m.id ?: "opt-${m.ts}-${m.text.hashCode()}"
+            itemsIndexed(displayGroups, key = { _, g -> groupRowKey(g) }) { itemIndex, g ->
+                val first = g.first()
+                val motionKey = groupRowKey(g)
                 val bubble: @Composable () -> Unit = {
                     Box(Modifier.fillMaxWidth()) {
-                        MessageBubble(m, previewCache, dpCache, onMedia, onShare, onDownload,
-                            onReply = { replyTo = it }, onAvatarClick = onAvatarClick,
-                            highlighted = highlightId != null && m.id == highlightId,
-                            onQuoteTap = { onQuoteTap(it) },
-                            selMode = selMode, selected = m.id != null && m.id in selIds,
-                            onToggleSelect = { mm -> mm.id?.let { if (it in selIds) selIds.remove(it) else selIds.add(it); if (selIds.isEmpty()) onExitSel() } },
-                            onTranslate = { onTranslateMsg(it) },
-                            onLongClick = { reactMsg = it })
+                        if (g.size == 1) {
+                            val m = first
+                            MessageBubble(m, previewCache, dpCache, onMedia, onShare, onDownload,
+                                onReply = { replyTo = it }, onAvatarClick = onAvatarClick,
+                                highlighted = highlightId != null && m.id == highlightId,
+                                onQuoteTap = { onQuoteTap(it) },
+                                selMode = selMode, selected = m.id != null && m.id in selIds,
+                                onToggleSelect = { mm -> mm.id?.let { if (it in selIds) selIds.remove(it) else selIds.add(it); if (selIds.isEmpty()) onExitSel() } },
+                                onTranslate = { onTranslateMsg(it) },
+                                onLongClick = { reactMsg = it })
+                        } else {
+                            AlbumBubble(msgs = g, previewCache = previewCache, dpCache = dpCache,
+                                onMedia = onMedia,
+                                highlighted = highlightId != null && g.any { it.id == highlightId },
+                                selMode = selMode,
+                                isSelected = { mm -> mm.id != null && mm.id in selIds },
+                                onToggleSelect = { mm -> mm.id?.let { if (it in selIds) selIds.remove(it) else selIds.add(it); if (selIds.isEmpty()) onExitSel() } },
+                                onLongClick = { reactMsg = it })
+                        }
                     }
                 }
                 // Message Motion ON → the bubble enters with the motion
@@ -2709,7 +2856,7 @@ private fun ChatDetail(
                 // of the generic scroll fade-in; OFF → stock fade-in,
                 // exactly as before.
                 if (MessageMotionSettings.enabled.value) {
-                    MessageMotionItem(chatKey = chat, motionKey = motionKey, fromMe = m.fromMe, isAudio = m.mediaType == "audio", text = m.text) { bubble() }
+                    MessageMotionItem(chatKey = chat, motionKey = motionKey, fromMe = first.fromMe, isAudio = g.size == 1 && first.mediaType == "audio", text = g.firstOrNull { it.text.isNotBlank() }?.text ?: "") { bubble() }
                 } else {
                     AyxFadeInListItem(key = motionKey, index = itemIndex) { bubble() }
                 }
@@ -2727,7 +2874,7 @@ private fun ChatDetail(
             }
         }
         // ===== Composer: ONE rounded floating card (Claude-style). The attachment preview lives INSIDE it and the box grows as you type =====
-        val hasMedia = pendingMedia != null
+        val hasMedia = pendingMedia != null || pendingBatch.isNotEmpty()
         val expanded = hasMedia || input.contains('\n') || input.length > 26
         val fieldFocus = remember { FocusRequester() }
         var fieldHadFocus by remember { mutableStateOf(false) }
@@ -2738,7 +2885,7 @@ private fun ChatDetail(
                 IconButton(onClick = { attachMenu = true }) { Icon(Icons.Filled.Add, "add") }
                 DropdownMenu(expanded = attachMenu, onDismissRequest = { attachMenu = false }, containerColor = MaterialTheme.colorScheme.surface.copy(alpha = ayxMenuAlpha())) {
                     DropdownMenuItem(text = { Text("Camera") }, leadingIcon = { Icon(Icons.Filled.PhotoCamera, null) }, onClick = { attachMenu = false; onCamera() })
-                    DropdownMenuItem(text = { Text("Photos") }, leadingIcon = { Icon(Icons.Filled.Image, null) }, onClick = { attachMenu = false; onPickChatPhoto() })
+                    DropdownMenuItem(text = { Text("Photos & Videos") }, leadingIcon = { Icon(Icons.Filled.Image, null) }, onClick = { attachMenu = false; onPickChatPhoto() })
                     DropdownMenuItem(text = { Text("Videos") }, leadingIcon = { Icon(Icons.Filled.VideoFile, null) }, onClick = { attachMenu = false; onPickChatVideo() })
                     DropdownMenuItem(text = { Text("Files") }, leadingIcon = { Icon(Icons.Filled.AttachFile, null) }, onClick = { attachMenu = false; onAttach() })
                 }
@@ -2747,15 +2894,17 @@ private fun ChatDetail(
         val sendButton: @Composable () -> Unit = {
             FilledIconButton(onClick = {
                 // Text Animation: fire the send-burst BEFORE the text is cleared below.
-                if (TextAnimSettings.enabled.value && (input.isNotBlank() || pendingMedia != null)) textAnimBus.fireSend()
-                if (pendingMedia != null) {
+                if (TextAnimSettings.enabled.value && (input.isNotBlank() || pendingMedia != null || pendingBatch.isNotEmpty())) textAnimBus.fireSend()
+                if (pendingBatch.isNotEmpty()) {
+                    onSendBatch(input.trim()); input = ""; replyTo = null   // whole batch + caption, one album
+                } else if (pendingMedia != null) {
                     onSend(input.trim()); input = ""; replyTo = null   // caption is optional when an attachment is staged
                 } else if (input.isNotBlank()) {
                     val rt = replyTo
                     if (rt?.id != null) onReplySend(input.trim(), rt.id!!, rt.text) else onSend(input.trim())
                     input = ""; replyTo = null
                 }
-            }, enabled = (input.isNotBlank() || pendingMedia != null) && canSend,
+            }, enabled = (input.isNotBlank() || pendingMedia != null || pendingBatch.isNotEmpty()) && canSend,
                 modifier = Modifier.onGloballyPositioned { lc ->
                     textAnimBus.sendTargetWindow = lc.positionInWindow() + Offset(lc.size.width / 2f, lc.size.height / 2f)
                 }) { Icon(Icons.AutoMirrored.Filled.Send, "send") }
@@ -2796,6 +2945,20 @@ private fun ChatDetail(
         }
         Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp).animateContentSize()
             .clip(RoundedCornerShape(28.dp)).background(MaterialTheme.colorScheme.surface.copy(alpha = ayxGlassAlpha(0.90f, BlurElement.BOTTOM_SHEET)))) {
+            if (pendingBatch.isNotEmpty()) {
+                // Batch preview: every staged item as a thumbnail strip —
+                // what you see is exactly what sends as one album.
+                Row(Modifier.padding(start = 12.dp, top = 12.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        pendingBatch.forEach { (buri, btype) -> BatchThumb(buri, btype) }
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        IconButton(onClick = onClearPendingBatch, modifier = Modifier.size(28.dp).background(Color.Black.copy(alpha = 0.55f), CircleShape)) { Icon(Icons.Filled.Close, "clear batch", tint = Color.White, modifier = Modifier.size(16.dp)) }
+                        Text("${pendingBatch.size} items", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
             pendingMedia?.let { pm ->
                 val puri = pm.first; val pmtype = pm.second
                 val bigPlay = playPreview && pmtype == "video"
@@ -3461,6 +3624,135 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                                 Icon(Icons.Filled.Share, "share", modifier = Modifier.size(15.dp), tint = if (m.fromMe) Color.White else textColor)
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** One album grid cell: media thumbnail (+ video badge, "+N" overflow,
+ *  selection check). Tap → full viewer for THIS item (or select in
+ *  selection mode); long-press → the item's action sheet. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun AlbumCell(
+    item: GatewayClient.Msg,
+    previewCache: MutableMap<String, ImageBitmap?>,
+    plusCount: Int,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    val ctx = LocalContext.current
+    val name = item.mediaName
+    LaunchedEffect(name) { if (name != null && !previewCache.containsKey(name)) previewCache[name] = loadPreview(ctx, item) }
+    val preview = (name?.let { previewCache[it] }) ?: remember(item.thumb) { decodeThumb(item.thumb) }
+    Box(modifier.clip(uiShapeFor(8)).background(Color.Black.copy(alpha = 0.25f))
+        .combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick, onLongClick = onLongClick),
+        contentAlignment = Alignment.Center) {
+        if (preview != null) Image(preview, "media", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        else Icon(Icons.Filled.Image, null, tint = Color.White.copy(alpha = 0.7f))
+        if (item.mediaType == "video") Box(Modifier.size(34.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape), contentAlignment = Alignment.Center) {
+            Icon(Icons.Filled.PlayArrow, "play", tint = Color.White, modifier = Modifier.size(22.dp))
+        }
+        if (plusCount > 0) {
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)), contentAlignment = Alignment.Center) {
+                Text("+$plusCount", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            }
+        }
+        if (selected) {
+            Box(Modifier.fillMaxSize().background(AYX_GREEN.copy(alpha = 0.35f)), contentAlignment = Alignment.TopEnd) {
+                Icon(Icons.Filled.CheckCircle, "selected", tint = AYX_GREEN, modifier = Modifier.padding(4.dp).size(20.dp).background(Color.White, CircleShape))
+            }
+        }
+    }
+}
+
+/**
+ * WhatsApp-style album bubble for one batch of media messages. [msgs] are
+ * newest-first (chat rows order); the grid lays them out in send order:
+ * 2 = side-by-side, 3 = one wide + a pair, 4+ = 2×2 grid with "+N" on the
+ * last visible cell when the batch is bigger. The batch caption (carried
+ * by the first-sent item) shows under the grid; time/ticks come from the
+ * newest item, like WhatsApp.
+ */
+@Composable
+private fun AlbumBubble(
+    msgs: List<GatewayClient.Msg>,
+    previewCache: MutableMap<String, ImageBitmap?>,
+    dpCache: MutableMap<String, ImageBitmap?>,
+    onMedia: (GatewayClient.Msg) -> Unit,
+    highlighted: Boolean = false,
+    selMode: Boolean = false,
+    isSelected: (GatewayClient.Msg) -> Boolean = { false },
+    onToggleSelect: (GatewayClient.Msg) -> Unit = {},
+    onLongClick: (GatewayClient.Msg) -> Unit = {},
+) {
+    val dark = isSystemInDarkTheme()
+    val newest = msgs.first()
+    val spec = bubbleSpec(newest.fromMe, dark)
+    val chrono = msgs.reversed()   // send order for the grid
+    val caption = chrono.firstOrNull { it.text.isNotBlank() }?.text ?: ""
+    val cellTap: (GatewayClient.Msg) -> Unit = { item -> if (selMode) onToggleSelect(item) else onMedia(item) }
+    Row(Modifier.fillMaxWidth()
+        .background(if (highlighted) AYX_GREEN.copy(alpha = 0.30f) else Color.Transparent)
+        .padding(vertical = 1.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = if (newest.fromMe) Arrangement.End else Arrangement.Start) {
+        if (!newest.fromMe && newest.chat.endsWith("@g.us") && !newest.sender.isNullOrBlank()) {
+            Box(Modifier.clip(CircleShape)) { Avatar(newest.sender!!, newest.name.ifBlank { "?" }, dpCache, 30.dp) }
+            Spacer(Modifier.width(6.dp))
+        }
+        Surface(color = spec.first, shape = spec.third, modifier = Modifier.widthIn(max = 290.dp)) {
+            Column(Modifier.padding(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                if (!newest.fromMe && newest.chat.endsWith("@g.us") && newest.name.isNotBlank()) {
+                    Text(SetName.get(newest.sender ?: "") ?: newest.name, style = MaterialTheme.typography.labelMedium, color = IOS_BLUE,
+                        modifier = Modifier.padding(horizontal = 8.dp))
+                }
+                val shown = chrono.take(4)
+                val extra = chrono.size - shown.size
+                when {
+                    chrono.size == 2 -> Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        AlbumCell(shown[0], previewCache, 0, selMode && isSelected(shown[0]), Modifier.weight(1f).height(190.dp),
+                            onClick = { cellTap(shown[0]) }, onLongClick = { if (!selMode) onLongClick(shown[0]) })
+                        AlbumCell(shown[1], previewCache, 0, selMode && isSelected(shown[1]), Modifier.weight(1f).height(190.dp),
+                            onClick = { cellTap(shown[1]) }, onLongClick = { if (!selMode) onLongClick(shown[1]) })
+                    }
+                    chrono.size == 3 -> Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        AlbumCell(shown[0], previewCache, 0, selMode && isSelected(shown[0]), Modifier.fillMaxWidth().height(150.dp),
+                            onClick = { cellTap(shown[0]) }, onLongClick = { if (!selMode) onLongClick(shown[0]) })
+                        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            AlbumCell(shown[1], previewCache, 0, selMode && isSelected(shown[1]), Modifier.weight(1f).height(105.dp),
+                                onClick = { cellTap(shown[1]) }, onLongClick = { if (!selMode) onLongClick(shown[1]) })
+                            AlbumCell(shown[2], previewCache, 0, selMode && isSelected(shown[2]), Modifier.weight(1f).height(105.dp),
+                                onClick = { cellTap(shown[2]) }, onLongClick = { if (!selMode) onLongClick(shown[2]) })
+                        }
+                    }
+                    else -> Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            AlbumCell(shown[0], previewCache, 0, selMode && isSelected(shown[0]), Modifier.weight(1f).height(130.dp),
+                                onClick = { cellTap(shown[0]) }, onLongClick = { if (!selMode) onLongClick(shown[0]) })
+                            AlbumCell(shown[1], previewCache, 0, selMode && isSelected(shown[1]), Modifier.weight(1f).height(130.dp),
+                                onClick = { cellTap(shown[1]) }, onLongClick = { if (!selMode) onLongClick(shown[1]) })
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            AlbumCell(shown[2], previewCache, 0, selMode && isSelected(shown[2]), Modifier.weight(1f).height(130.dp),
+                                onClick = { cellTap(shown[2]) }, onLongClick = { if (!selMode) onLongClick(shown[2]) })
+                            AlbumCell(shown[3], previewCache, extra, selMode && isSelected(shown[3]), Modifier.weight(1f).height(130.dp),
+                                onClick = { cellTap(shown[3]) }, onLongClick = { if (!selMode) onLongClick(shown[3]) })
+                        }
+                    }
+                }
+                Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                    if (caption.isNotBlank()) {
+                        Row(verticalAlignment = Alignment.Bottom) {
+                            Box(Modifier.weight(1f, fill = false)) { LinkText(caption, spec.second) }
+                            BubbleTimeTicks(newest, spec.second, Modifier.padding(start = 6.dp, top = 2.dp))
+                        }
+                    } else {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { BubbleTimeTicks(newest, spec.second) }
                     }
                 }
             }
@@ -5355,7 +5647,7 @@ private fun NewChatScreen(contacts: List<DeviceContact>, loading: Boolean, dpCac
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, chats: List<GatewayClient.ChatInfo> = emptyList(), statuses: List<GatewayClient.StatusItem>, dpCache: MutableMap<String, ImageBitmap?>, query: String, page: Int, topInset: androidx.compose.ui.unit.Dp, ayxSnippet: String, onPageChange: (Int) -> Unit, onLoadStatuses: () -> Unit, onOpenStatus: (GatewayClient.StatusItem) -> Unit, onToggleStatusReveal: () -> Unit, onToggleChatReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit, clearedUnread: Map<String, Long> = emptyMap()) {
+private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, chats: List<GatewayClient.ChatInfo> = emptyList(), statuses: List<GatewayClient.StatusItem>, dpCache: MutableMap<String, ImageBitmap?>, query: String, page: Int, topInset: androidx.compose.ui.unit.Dp, ayxSnippet: String, onPageChange: (Int) -> Unit, onLoadStatuses: () -> Unit, onOpenStatus: (GatewayClient.StatusItem) -> Unit, onToggleStatusReveal: () -> Unit, onToggleChatReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit, chatListState: LazyListState, clearedUnread: Map<String, Long> = emptyMap()) {
     val pager = rememberPagerState(initialPage = page) { 2 }
     // content scrolls BEHIND the glass header (topInset) and the floating bottom nav (bottom)
     val contentPad = androidx.compose.foundation.layout.PaddingValues(top = topInset + 6.dp, bottom = 118.dp)
@@ -5397,7 +5689,7 @@ private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, chats: List<Gatew
         Box(Modifier.fillMaxSize().graphicsLayer {
             alpha = tabAlpha; scaleX = tabScale; scaleY = tabScale; translationY = tabOffsetY
         }) {
-            if (pg == 0) ChatList(messages, chats, dpCache, query, contentPad, ayxSnippet, onToggleChatReveal, onDelete, onOpen, clearedUnread)
+            if (pg == 0) ChatList(messages, chats, dpCache, query, contentPad, ayxSnippet, onToggleChatReveal, onDelete, onOpen, chatListState, clearedUnread)
             else StatusScreen(statuses, contentPad, onOpenStatus, dpCache, onToggleStatusReveal)
         }
     }
@@ -5587,6 +5879,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
         vTrimStart = 0L
         vTrimEnd = if (dur > 0L) minOf(60000L, dur) else 0L
         videoTrimOpen = false
+        videoPlaying = true   // editor autoplays (WhatsApp-style); the trim-window loop below pauses at vTrimEnd
     }
     // Video preview loop: play inside the trim window, then stop at its end.
     LaunchedEffect(videoPlaying) {
@@ -5626,6 +5919,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
             Box(Modifier.fillMaxSize().blur(editorBlur)) {
                 val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
                 val overlayTopPad = statusTop + 64.dp   // corner buttons sit below the overlaid top bar
+                val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
                 // ---- Media layer: full-bleed, no crop (ContentScale.Fit — preview matches the uncropped upload) ----
                 // E3: tapping the media/background hides the keyboard (clears focus).
                 Box(Modifier.fillMaxSize().background(Color.Black).clickable(
@@ -5662,7 +5956,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                 ExoVideoPlayer(
                                     uri = curUri,
                                     modifier = Modifier.fillMaxSize(),
-                                    autoPlay = false,
+                                    autoPlay = true,
                                     muted = videoMuted,
                                     onPlayer = { exoPlayer = it; runCatching { it.seekTo(vTrimStart) } },
                                     // V1: surface preview errors instead of showing a grey/blank view silently.
@@ -5682,13 +5976,19 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                             IconButton(onClick = {
                                 val pl = exoPlayer
                                 if (pl != null) {
-                                    if (videoPlaying) { runCatching { pl.pause() }; videoPlaying = false }
-                                    else {
-                                        runCatching {
+                                    runCatching {
+                                        if (pl.playWhenReady) { pl.pause(); videoPlaying = false }
+                                        else {
+                                            // Recover a player that never prepared (or was reset):
+                                            // reload + prepare instead of flipping UI state blindly.
+                                            if (pl.playbackState == androidx.media3.common.Player.STATE_IDLE) {
+                                                pl.setMediaItem(androidx.media3.common.MediaItem.fromUri(curUri))
+                                                pl.prepare()
+                                            }
                                             if (pl.currentPosition < vTrimStart || (vTrimEnd > 0L && pl.currentPosition >= vTrimEnd)) pl.seekTo(vTrimStart)
                                             pl.play()
+                                            videoPlaying = true
                                         }
-                                        videoPlaying = true
                                     }
                                 }
                             }, modifier = Modifier.align(Alignment.Center)) {
@@ -5751,19 +6051,20 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                     }
                 }
                 // ---- Bottom controls overlay: always visible (no collapse), readability scrim ----
-                val videoBars = remember(mediaUri) { val r = java.util.Random((mediaUri?.toString() ?: "").hashCode().toLong()); FloatArray(64) { 0.22f + r.nextFloat() * 0.78f } }
                 Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-                    .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.78f))))
+                    .then(if (imeVisible) Modifier.background(Color.Black) else Modifier.background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.78f)))))
                     // L: real IME inset (+ small gap) — only this row rises, the media stays fixed.
                     .navigationBarsPadding().imePadding().padding(bottom = 10.dp)) {
                     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 10.dp)) {
                             // ---- Video trimmer panel (V3): toggled from the ✂ Trim button in the video header.
                             // Draggable left/right edges set the range; the selection itself IS the length (no Length slider).
                             if (mediaType == "video" && mediaUri != null && videoDuration > 0L && videoTrimOpen) {
-                                WaveformTrimmer(videoBars, videoDuration, vTrimStart, vTrimEnd, videoPos, edgeHandles = true) { ns, ne -> vTrimStart = ns; vTrimEnd = ne }
+                                VideoFilmstripTrimmer(ctx, mediaUri!!, videoDuration, vTrimStart, vTrimEnd, videoPos,
+                                    onChange = { ns, ne -> vTrimStart = ns; vTrimEnd = ne },
+                                    onSeek = { ms -> runCatching { exoPlayer?.seekTo(ms) } })
                                 val vSelSec = ((vTrimEnd - vTrimStart).coerceAtLeast(0L) / 1000L)
                                 Text(fmtMs(vTrimStart) + "  →  " + fmtMs(vTrimEnd) + "   •   (" + vSelSec + "s)", color = Color.White, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 4.dp))
-                                Text("drag the edges or swipe the waveform to move", color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall)
+                                Text("drag the edges to trim, or drag the selection to move it", color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall)
                                 Spacer(Modifier.height(6.dp))
                             }
                             // ---- SONG row: tap toggles the AI Lyrics Translate button below. Actions are ICONS (no text).
@@ -5824,7 +6125,8 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                             // Explicit Row (not trailingIcon) so the button can never detach or misalign when the
                             // keyboard opens; the overlay's imePadding() keeps the whole row just above the keyboard.
                             Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Box(Modifier.weight(1f).clip(uiShapeFor(24)).background(Color.White.copy(alpha = 0.07f))) {
+                                // Keyboard open → SOLID background behind the caption/keyboard zone (the video used to bleed through the transparent gradient); keyboard closed keeps the gradient scrim over the full-bleed media.
+                                Box(Modifier.weight(1f).clip(uiShapeFor(24)).background(Color.White.copy(alpha = if (imeVisible) 0.13f else 0.07f))) {
                                     if (TextAnimSettings.enabled.value) {
                                         AnimatedOutlinedField(caption, { caption = it }, placeholderText = "Add a caption…", maxLines = 3, shape = uiShapeFor(24),
                                             textColor = Color.White, hintColor = Color.White.copy(alpha = 0.6f), accentColor = Color.White,
@@ -6798,6 +7100,125 @@ private fun AudioTrimmer(song: GatewayClient.Song, onDone: (Long, Long, List<Pai
                 manualOpen = false
             },
             onCancel = { manualOpen = false })
+    }
+}
+
+/**
+ * WhatsApp-style VIDEO trimmer: filmstrip of real frame thumbnails, two
+ * draggable edge handles, dimmed unselected regions, moving playhead.
+ * Replaces the waveform UI for VIDEO only (the song trimmer keeps the
+ * waveform). Trim semantics are unchanged — [onChange] reports start/end ms
+ * exactly like the waveform did, and the send-time trim is untouched.
+ */
+@Composable
+private fun VideoFilmstripTrimmer(
+    ctx: android.content.Context,
+    uri: Uri,
+    durationMs: Long,
+    startMs: Long,
+    endMs: Long,
+    posMs: Long,
+    onChange: (Long, Long) -> Unit,
+    onSeek: (Long) -> Unit,
+) {
+    // Frame thumbnails spread across the whole duration, decoded once per
+    // video on IO (MediaMetadataRetriever is slow — never on the UI thread).
+    val frames = remember(uri, durationMs) { mutableStateOf<List<ImageBitmap>>(emptyList()) }
+    LaunchedEffect(uri, durationMs) {
+        if (durationMs <= 0L) return@LaunchedEffect
+        val list = withContext(Dispatchers.IO) {
+            runCatching {
+                val mmr = MediaMetadataRetriever()
+                try {
+                    mmr.setDataSource(ctx, uri)
+                    val n = 14
+                    val out = ArrayList<ImageBitmap>(n)
+                    for (i in 0 until n) {
+                        val tUs = durationMs * 1000L * i / (n - 1)
+                        val f = mmr.getFrameAtTime(tUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                        if (f != null) {
+                            val targetW = 120
+                            val targetH = (targetW * f.height / f.width.coerceAtLeast(1)).coerceIn(40, 200)
+                            out.add(android.graphics.Bitmap.createScaledBitmap(f, targetW, targetH, false).asImageBitmap())
+                        }
+                    }
+                    out
+                } finally { runCatching { mmr.release() } }
+            }.getOrDefault(emptyList())
+        }
+        frames.value = list
+    }
+    val curStart by rememberUpdatedState(startMs)
+    val curEnd by rememberUpdatedState(endMs)
+    val grabPx = with(LocalDensity.current) { 30.dp.toPx() }
+    Box(Modifier.fillMaxWidth().height(72.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFF1C1C1E))) {
+        // Filmstrip of real frames.
+        Row(Modifier.fillMaxSize()) {
+            val fs = frames.value
+            if (fs.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("Loading frames…", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall)
+                }
+            } else {
+                fs.forEach { img -> Image(img, null, Modifier.weight(1f).fillMaxSize(), contentScale = ContentScale.Crop) }
+            }
+        }
+        // Overlay: dimmed unselected regions, selection frame + white grip
+        // handles, moving playhead — plus ALL drag handling (same gesture
+        // model as WaveformTrimmer: near an edge = resize, inside = move).
+        Canvas(Modifier.fillMaxSize().pointerInput(durationMs) {
+            val w = size.width.toFloat().coerceAtLeast(1f)
+            var accS = 0L
+            var accE = 0L
+            var mode = 0   // 1 = left edge, 2 = right edge, 3 = move window
+            detectHorizontalDragGestures(
+                onDragStart = { off ->
+                    accS = curStart; accE = curEnd; mode = 0
+                    if (durationMs > 0) {
+                        val sx = curStart.toFloat() / durationMs * w
+                        val ex = curEnd.toFloat() / durationMs * w
+                        mode = when {
+                            kotlin.math.abs(off.x - sx) <= grabPx -> 1
+                            kotlin.math.abs(off.x - ex) <= grabPx -> 2
+                            off.x in sx..ex -> 3
+                            else -> 0
+                        }
+                    }
+                },
+                onHorizontalDrag = { _, dragAmount ->
+                    if (durationMs <= 0) return@detectHorizontalDragGestures
+                    val dMs = (dragAmount / w * durationMs).toLong()
+                    val minLen = 1000L
+                    when (mode) {
+                        1 -> { accS = (accS + dMs).coerceIn(0L, (accE - minLen).coerceAtLeast(0L)); onChange(accS, accE); onSeek(accS) }
+                        2 -> { accE = (accE + dMs).coerceIn((accS + minLen).coerceAtMost(durationMs), durationMs); onChange(accS, accE); onSeek(accE) }
+                        3 -> {
+                            val len = (accE - accS).coerceAtLeast(minLen)
+                            accS = (accS + dMs).coerceIn(0L, (durationMs - len).coerceAtLeast(0L))
+                            accE = accS + len
+                            onChange(accS, accE); onSeek(accS)
+                        }
+                    }
+                }
+            )
+        }) {
+            if (durationMs > 0) {
+                val selStartX = startMs.toFloat() / durationMs * size.width
+                val selEndX = endMs.toFloat() / durationMs * size.width
+                drawRect(Color.Black.copy(alpha = 0.55f), topLeft = Offset(0f, 0f), size = Size(selStartX.coerceAtLeast(0f), size.height))
+                drawRect(Color.Black.copy(alpha = 0.55f), topLeft = Offset(selEndX, 0f), size = Size((size.width - selEndX).coerceAtLeast(0f), size.height))
+                drawRoundRect(Color.White, topLeft = Offset(selStartX, 0f), size = Size((selEndX - selStartX).coerceAtLeast(2f), size.height), cornerRadius = CornerRadius(10f, 10f), style = Stroke(width = 3f))
+                val hw = 14f
+                for (hx in listOf(selStartX, selEndX)) {
+                    drawRoundRect(Color.White, topLeft = Offset(hx - hw / 2f, 0f), size = Size(hw, size.height), cornerRadius = CornerRadius(7f, 7f))
+                    for (dy in listOf(0.38f, 0.5f, 0.62f)) drawCircle(Color(0xFF1C1C1E), radius = 2.4f, center = Offset(hx, size.height * dy))
+                }
+                if (posMs in 0..durationMs) {
+                    val px = posMs.toFloat() / durationMs * size.width
+                    drawRect(Color.White, topLeft = Offset(px - 1.5f, 0f), size = Size(3f, size.height))
+                }
+            }
+        }
     }
 }
 

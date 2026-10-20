@@ -1725,6 +1725,16 @@ async function handleMessagesBatch({ messages, type }) {
       if (isForwarded(msg.message)) entry.forwarded = true
       entry.quoted = quotedOf(msg.message)
       await enrichMedia(msg, entry)
+      // Album tag: consume one slot of this chat's active album session
+      // (registered by /sendmedia) so the upsert echo of a batch item
+      // carries the shared albumId even if it landed before the send call
+      // returned. Authoritative for own batch sends; no-op otherwise.
+      if (fromMe && entry.media && !entry.albumId) {
+        for (const [aid, s] of albumSessions) {
+          if (Date.now() > s.expires) { albumSessions.delete(aid); continue }
+          if (s.chat === entry.chat && s.remaining > 0) { entry.albumId = aid; s.remaining--; if (s.remaining <= 0) albumSessions.delete(aid); break }
+        }
+      }
       const text = entry.text
 
       // safety net: never show blank incoming bubbles (stray edit/protocol/system messages)
@@ -2282,6 +2292,10 @@ app.post('/profile/picture', async (req, res) => {
 // background (large videos were timing out the HTTP request with no retry).
 // The app polls /sendmedia/status/:id for completion.
 const mediaUploads = new Map()
+// Album batches (multi-select send): albumId -> { chat, remaining, expires }.
+// The app sends a batch as sequential /sendmedia calls sharing one albumId;
+// each stored message of the batch gets tagged so the app renders ONE album.
+const albumSessions = new Map()
 let _uploadSeq = 0
 app.post('/sendmedia', async (req, res) => {
   try {
@@ -2290,12 +2304,15 @@ app.post('/sendmedia', async (req, res) => {
     const b64 = String(req.body?.data || '')
     const filename = String(req.body?.filename || 'file')
     const caption = String(req.body?.caption || '')
+    const albumId = String(req.body?.albumId || '')
+    const albumCount = parseInt(req.body?.albumCount || 0) || 0
     if (!jid || !b64) return res.status(400).json({ ok: false, error: 'jid and data required' })
     const buf = Buffer.from(b64, 'base64')
     if (!buf || buf.length === 0) return res.status(400).json({ ok: false, error: 'empty media' })
     const uploadId = 'up' + (++_uploadSeq) + '_' + Date.now()
     mediaUploads.set(uploadId, { state: 'pending', jid, type })
     if (mediaUploads.size > 20) { const k = mediaUploads.keys().next().value; mediaUploads.delete(k) }
+    if (albumId && albumCount > 1) albumSessions.set(albumId, { chat: canon(jid), remaining: albumCount, expires: Date.now() + 180000 })
     // Background upload — the HTTP request returns immediately so large
     // videos can't time out. B+: zombie-safe probe; kicks a reconnect and
     // waits for it. On failure the upload is marked error and the app
@@ -2316,9 +2333,12 @@ app.post('/sendmedia', async (req, res) => {
         const id = r?.key?.id || null
         markSocketActive()  // F3: successful send proves the socket is alive
         if (id) storeRawSent(id, r.key, r.message)  // A+: unified 2000 cap + disk backup
+        // Album: if the upsert echo stored this message before its id was
+        // known here, tag that entry now (our own entry below carries it too).
+        if (id && albumId) { const ex = msgStore.get(id); if (ex && !ex.albumId) { ex.albumId = albumId; saveMessagesDebounced() } }
         // S2: add to msgStore immediately with status=2 so receipts update the tick.
         if (id && !msgStore.has(id)) {
-          const entry = { chat: canon(jid), fromMe: true, text: caption || '', ts: Date.now(), id, status: 2, mediaType: type }
+          const entry = { chat: canon(jid), fromMe: true, text: caption || '', ts: Date.now(), id, status: 2, mediaType: type, ...(albumId ? { albumId } : {}) }
           adoptPendingStatus(entry); msgStore.set(id, entry); msgLog.unshift(entry); saveMessagesDebounced()
         }
         mediaUploads.set(uploadId, { state: 'done', jid, type, id })

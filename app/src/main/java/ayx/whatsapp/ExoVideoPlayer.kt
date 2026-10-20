@@ -76,9 +76,14 @@ fun ExoVideoPlayer(
                         onError(error.message ?: "playback error")
                     }
                 })
-                onPlayer(this)
             }
     }
+    // Deliver the instance from an effect, NOT from inside remember{}: a
+    // callback fired during the remember calculation writes parent state
+    // mid-composition, which made the status editor's captured player
+    // reference unreliable (its play/pause state flipped while the player
+    // itself sat idle and the preview never played).
+    LaunchedEffect(player) { onPlayer(player) }
     // (Re)load whenever the URI changes.
     LaunchedEffect(uri) {
         runCatching {

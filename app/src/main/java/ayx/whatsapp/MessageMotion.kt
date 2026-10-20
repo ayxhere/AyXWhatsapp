@@ -39,12 +39,16 @@ import kotlinx.coroutines.launch
 
 /**
  * Message Motion — entrance animations for chat message bubbles, written
- * fresh for this app: a message animates the FIRST time it appears, with a
- * per-direction effect (incoming vs my messages), a bottom-up "wave" when a
- * chat opens, and a separate gentler effect for bubbles that first appear
- * while scrolling. Already-seen messages never re-animate, and only
- * graphicsLayer transforms are animated (never layout size), so the list
- * cannot jump, overlap or flicker because of an animation.
+ * fresh for this app: a message animates the first time it appears within
+ * one chat-open session, with a per-direction effect (incoming vs my
+ * messages), a bottom-up "wave" when a chat opens, and a separate gentler
+ * effect for bubbles that first appear while scrolling. Seen state is
+ * scoped to ONE chat-open session — within a session, recycling, poll
+ * refreshes and scroll-backs never re-animate a bubble; leaving the chat
+ * ends the session, so reopening replays the open-cascade and new messages
+ * always animate on arrival. Only graphicsLayer transforms are animated
+ * (never layout size), so the list cannot jump, overlap or flicker because
+ * of an animation.
  *
  * Everything is driven by [MessageMotionSettings] (SharedPreferences
  * "ayx_message_motion") and edited from
@@ -140,10 +144,13 @@ private val MotionEaseOutQuint = Easing { t ->
 }
 
 /**
- * Decides, once per message, whether and how it animates. "Seen" keys live
- * process-wide (not per-composition), so LazyColumn recycling, poll
- * refreshes and scroll-backs never re-animate a bubble. Chat-open state and
- * live scroll state are fed in by the chat screen.
+ * Decides, once per message per chat-open session, whether and how it
+ * animates. "Seen" keys are scoped to ONE chat-open session (per chat, not
+ * process-wide and not per-composition): within a session, LazyColumn
+ * recycling, poll refreshes and scroll-backs never re-animate a bubble;
+ * leaving the chat ends the session, so reopening replays the open-cascade
+ * and new messages always animate on arrival. Chat-open state and live
+ * scroll state are fed in by the chat screen.
  */
 object MessageMotionTracker {
     class Plan(val style: Int, val factor: Float, val delayMs: Int) {
@@ -157,7 +164,8 @@ object MessageMotionTracker {
     private const val CASCADE_WINDOW_MS = 1500L
     private const val ECHO_GUARD_MS = 20_000L
 
-    private val seen = Collections.synchronizedSet(mutableSetOf<String>())
+    private val seenByChat = ConcurrentHashMap<String, MutableSet<String>>()
+    private val sessionIds = ConcurrentHashMap<String, Int>()
     private val openedAt = ConcurrentHashMap<String, Long>()
     private val cascadeSlots = ConcurrentHashMap<String, AtomicInteger>()
     private val scrollingChats = Collections.synchronizedSet(mutableSetOf<String>())
@@ -166,10 +174,27 @@ object MessageMotionTracker {
     // this guard the same bubble would pop twice (optimistic + echo).
     private val recentOut = ConcurrentHashMap<String, Long>()
 
+    /** Monotonic per-chat session counter — bumped on every (re)open so
+     *  MessageMotionItem can key its animation state by session. */
+    fun sessionId(chat: String): Int = sessionIds[chat] ?: 0
+
     /** Called by the chat screen when a chat is (re)opened. */
     fun chatOpened(chat: String) {
         openedAt[chat] = System.currentTimeMillis()
         cascadeSlots[chat] = AtomicInteger(0)
+        // Fresh session: forget everything this chat has shown so the
+        // open-cascade replays and new messages animate again.
+        seenByChat[chat] = Collections.synchronizedSet(mutableSetOf())
+        sessionIds[chat] = (sessionIds[chat] ?: 0) + 1
+    }
+
+    /** Called by the chat screen when it leaves the composition: the next
+     *  open starts a fresh motion session for this chat. */
+    fun chatClosed(chat: String) {
+        seenByChat.remove(chat)
+        openedAt.remove(chat)
+        cascadeSlots.remove(chat)
+        scrollingChats.remove(chat)
     }
 
     /** Called by the chat screen whenever its list's scroll state changes. */
@@ -180,14 +205,15 @@ object MessageMotionTracker {
     fun planFor(chat: String, key: String, fromMe: Boolean, text: String): Plan {
         val cfg = MessageMotionSettings
         val full = "$chat|$key"
+        val seen = seenByChat.computeIfAbsent(chat) { Collections.synchronizedSet(mutableSetOf()) }
         synchronized(seen) {
             if (full in seen) return none
-            // Evict the OLDEST ~1000 keys past the cap (never clear-all —
-            // that would re-animate everything on screen at once).
-            if (seen.size > 5000) {
+            // Evict the OLDEST ~500 keys past this chat's cap (never
+            // clear-all — that would re-animate everything on screen).
+            if (seen.size > 3000) {
                 val it = seen.iterator()
                 var n = 0
-                while (it.hasNext() && n < 1000) { it.next(); it.remove(); n++ }
+                while (it.hasNext() && n < 500) { it.next(); it.remove(); n++ }
             }
             seen.add(full)
         }
@@ -240,19 +266,20 @@ fun MessageMotionItem(
 ) {
     val cfg = MessageMotionSettings
     if (!cfg.enabled.value || isAudio) { content(); return }
-    val plan = remember(chatKey, motionKey) {
+    val session = MessageMotionTracker.sessionId(chatKey)
+    val plan = remember(chatKey, motionKey, session) {
         MessageMotionTracker.planFor(chatKey, motionKey, fromMe, text)
     }
     if (!plan.animated) { content(); return }
 
     val density = LocalDensity.current
     val shiftPx = with(density) { 48.dp.toPx() }
-    val scale = remember(chatKey, motionKey) { Animatable(cfg.startScale(plan.style)) }
-    val alphaA = remember(chatKey, motionKey) { Animatable(0f) }
-    val shift = remember(chatKey, motionKey) {
+    val scale = remember(chatKey, motionKey, session) { Animatable(cfg.startScale(plan.style)) }
+    val alphaA = remember(chatKey, motionKey, session) { Animatable(0f) }
+    val shift = remember(chatKey, motionKey, session) {
         Animatable(if (plan.style == MessageMotionSettings.SLIDE) (if (fromMe) shiftPx else -shiftPx) else 0f)
     }
-    LaunchedEffect(chatKey, motionKey) {
+    LaunchedEffect(chatKey, motionKey, session) {
         if (plan.delayMs > 0) delay(plan.delayMs.toLong())
         val f = plan.factor
         launch {
