@@ -3222,26 +3222,40 @@ app.post('/markread', async (req, res) => {
 
 app.post('/status/delete', async (req, res) => {
   try {
-    if (!sock) return res.status(409).json({ error: 'not connected' })
+    if (!sock) return res.status(409).json({ ok: false, error: 'not connected' })
     const id = String(req.body?.id || '')
-    if (!id) return res.status(400).json({ error: 'id required' })
+    if (!id) return res.status(400).json({ ok: false, error: 'id required' })
+    // SD1: probe/reconnect first, like every other send route — this route used to fire the
+    // revoke into a possibly-zombie socket, where it never actually reached WhatsApp.
+    if (!(await ensureLive())) return res.status(409).json({ ok: false, error: 'connection reconnecting — try again in a moment' })
     // Prefer the EXACT key we stored when the status was posted/received — a reconstructed key often
-    // doesn't match what WhatsApp has, so the revoke silently no-ops. Fall back to a minimal own key.
+    // doesn't match what WhatsApp has, so the revoke silently no-ops. Fall back to a built key.
     const raw = rawStore.get(id)
     // S3: also look up the status to get the sender (needed for the participant field on others' statuses).
     const st = statuses.find(x => x.id === id)
-    let key = (raw && raw.key) ? raw.key : null
-    if (!key) {
-      key = { remoteJid: 'status@broadcast', id, fromMe: true }
-      // If it's someone else's status, we need their JID as participant.
-      if (st && !st.mine && st.sender) { key.fromMe = false; key.participant = st.sender }
+    const mine = st ? !!st.mine : true
+    let key = (raw && raw.key) ? { ...raw.key } : null
+    if (!key) key = { remoteJid: 'status@broadcast', id, fromMe: mine }
+    // SD1: WhatsApp keys every status message by (remoteJid, id, participant = author). A DELETE
+    // protocol message WITHOUT participant matches nothing on the server and is silently dropped.
+    // The old fallback key had no participant, so deleting a status whose raw key was missing
+    // (posted from the primary phone, or evicted from rawStore) never deleted anything server-side.
+    key.remoteJid = 'status@broadcast'
+    key.id = id
+    if (mine) {
+      key.fromMe = true
+      if (!key.participant) { const me = baseJid(sock.user && sock.user.id); if (me) key.participant = me }
+    } else if (st && st.sender) {
+      key.fromMe = false
+      key.participant = st.sender
     }
     let ok = false, err = ''
     try { await sock.sendMessage('status@broadcast', { delete: key }); ok = true; log('status delete sent → WhatsApp:', id, raw ? '(stored key)' : '(built key)') }
     catch (e) { err = (e && e.message) || 'delete failed'; log('status delete err:', err) }
     statuses = statuses.filter(x => x.id !== id); saveStatusesDebounced()
+    try { rawStore.delete(id) } catch (_) {}
     res.json({ ok, error: err })
-  } catch (e) { res.status(500).json({ error: e && e.message }) }
+  } catch (e) { res.status(500).json({ ok: false, error: e && e.message }) }
 })
 
 app.get('/status/viewers', async (req, res) => {

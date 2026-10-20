@@ -123,6 +123,22 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Animation
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.BlurLinear
+import androidx.compose.material.icons.filled.Category
+import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.FormatShapes
+import androidx.compose.material.icons.filled.Gesture
+import androidx.compose.material.icons.filled.Grain
+import androidx.compose.material.icons.filled.RotateRight
+import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Timeline
+import androidx.compose.material.icons.filled.Vibration
+import androidx.compose.material.icons.filled.WaterDrop
+import androidx.compose.material.icons.filled.ZoomIn
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -389,6 +405,7 @@ class MainActivity : ComponentActivity() {
         SetName.init(applicationContext)
         GroupNameStore.init(applicationContext)
         ThemeStore.init(applicationContext)
+        TextAnimSettings.init(applicationContext)
         UiStyleStore.init(applicationContext)
         ayx.whatsapp.ui.UiAnimationSettings.init(applicationContext)
         ChatStyle.init(applicationContext)
@@ -1364,9 +1381,12 @@ fun GatewayApp() {
                 },
                 onDeleteStatus = { id ->
                     scope.launch {
-                        val ok = GatewayClient.deleteStatus(id)
-                        notify(if (ok) "Status deleted" else "Delete failed")
-                        if (ok) statuses = StatusData.merge(GatewayClient.getStatuses())
+                        // SD1: go through StatusDl (server revoke + local tombstone). This used to
+                        // call GatewayClient.deleteStatus alone, so the status stayed in the
+                        // StatusData cache and the union-merge brought it back on the next refresh.
+                        val (_, msg) = StatusDl.deleteEverywhere(id)
+                        notify(msg)
+                        statuses = StatusData.merge(GatewayClient.getStatuses())
                     }
                 },
                 onReply = { sid, text ->
@@ -2341,6 +2361,8 @@ private fun ChatDetail(
     // remember let one chat's typed text ghost into another chat during
     // the screen-switch transition ("garbled leftover text").
     var input by remember(chat) { mutableStateOf("") }
+    // Text Animation: bridge between the composer field and the send button (burst target + trigger).
+    val textAnimBus = remember { TextAnimBus() }
     var attachMenu by remember { mutableStateOf(false) }
     var replyTo by remember { mutableStateOf<GatewayClient.Msg?>(null) }
     var reactMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
@@ -2574,6 +2596,8 @@ private fun ChatDetail(
         }
         val sendButton: @Composable () -> Unit = {
             FilledIconButton(onClick = {
+                // Text Animation: fire the send-burst BEFORE the text is cleared below.
+                if (TextAnimSettings.enabled.value && (input.isNotBlank() || pendingMedia != null)) textAnimBus.fireSend()
                 if (pendingMedia != null) {
                     onSend(input.trim()); input = ""; replyTo = null   // caption is optional when an attachment is staged
                 } else if (input.isNotBlank()) {
@@ -2581,13 +2605,29 @@ private fun ChatDetail(
                     if (rt?.id != null) onReplySend(input.trim(), rt.id!!, rt.text) else onSend(input.trim())
                     input = ""; replyTo = null
                 }
-            }, enabled = (input.isNotBlank() || pendingMedia != null) && canSend) { Icon(Icons.AutoMirrored.Filled.Send, "send") }
+            }, enabled = (input.isNotBlank() || pendingMedia != null) && canSend,
+                modifier = Modifier.onGloballyPositioned { lc ->
+                    textAnimBus.sendTargetWindow = lc.positionInWindow() + Offset(lc.size.width / 2f, lc.size.height / 2f)
+                }) { Icon(Icons.AutoMirrored.Filled.Send, "send") }
         }
         val textField: @Composable (Modifier) -> Unit = { mod ->
-            OutlinedTextField(input, { input = it }, placeholder = { Text("Message") }, maxLines = if (expanded) 8 else 4,
-                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent,
-                    focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent),
-                modifier = mod.focusRequester(fieldFocus).onFocusChanged { fieldHadFocus = it.isFocused })
+            if (TextAnimSettings.enabled.value) {
+                // Text Animation field: same slot/visuals, animated typing/delete/caret inside.
+                AnimatedComposerField(
+                    value = input,
+                    onValueChange = { input = it },
+                    modifier = mod,
+                    maxLines = if (expanded) 8 else 4,
+                    focusRequester = fieldFocus,
+                    onFocusChanged = { fieldHadFocus = it.isFocused },
+                    bus = textAnimBus,
+                )
+            } else {
+                OutlinedTextField(input, { input = it }, placeholder = { Text("Message") }, maxLines = if (expanded) 8 else 4,
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent,
+                        focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent),
+                    modifier = mod.focusRequester(fieldFocus).onFocusChanged { fieldHadFocus = it.isFocused })
+            }
         }
         // Queued banner: makes it unmistakable that these messages are NOT
         // sent yet (they will go out when the connection is back). Never
@@ -3271,10 +3311,10 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
 private fun settingsTitle(page: String): String = when (page) {
     "general" -> "General"; "autoreply" -> "Auto-reply"; "ai" -> "AI Assistant"; "chat" -> "Chat Settings"
     "imageai" -> "Image AI"; "aimemory" -> "AI Memory"; "voice" -> "AI Voice"; "font" -> "App font"; "emoji" -> "Emoji"
-    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "about" -> "About"; "support" -> "Support Development"; else -> "Settings"
+    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "textanim" -> "Text Animation"; "about" -> "About"; "support" -> "Support Development"; else -> "Settings"
 }
 // parent page for nested back (Wallpaper under Chat Settings; Image AI / AI Memory / Voice under AI Assistant; Font under General)
-private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "general"; "emoji" -> "general"; else -> "home" }
+private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "general"; "emoji" -> "general"; "textanim" -> "appearance"; else -> "home" }
 
 @Composable
 private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient.Settings, page: String, onPage: (String) -> Unit, wallpaperVersion: Int,
@@ -3295,7 +3335,8 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
             "voice" -> VoicePickerScreen(settings, onToggle, ctx)
             "chat" -> SettingsSubPage { ChatSettings(onOpenWallpaper = { onPage("wallpaper") }) }
             "wallpaper" -> SettingsSubPage { WallpaperSettings(ctx, wallpaperVersion, onPickWallpaper, onRemoveWallpaper) }
-            "appearance" -> SettingsSubPage { AppearanceSettings() }
+            "appearance" -> SettingsSubPage { AppearanceSettings(onOpenTextAnim = { onPage("textanim") }) }
+            "textanim" -> SettingsSubPage { TextAnimationSettings() }
             "about" -> SettingsSubPage { AboutSettings(ctx, onLogout) }
             "support" -> SettingsSubPage { SupportSettings(ctx) }
             else -> SettingsHome(status) { onPage(it) }
@@ -4152,7 +4193,7 @@ private fun BubbleColorRow(selected: Int, onPick: (Int) -> Unit) {
 }
 
 @Composable
-private fun AppearanceSettings() {
+private fun AppearanceSettings(onOpenTextAnim: () -> Unit) {
     val mode = ThemeStore.mode.value
     val accent = ThemeStore.accent.value
     val modes = listOf(
@@ -4264,6 +4305,17 @@ private fun AppearanceSettings() {
         )
     }
 
+    SettingsGroup("Text") {
+        UiNavRow(
+            icon = Icons.Filled.Animation,
+            tint = Color(0xFF82AAFF),
+            title = "Text Animation",
+            desc = "Typing, delete and cursor effects",
+            value = if (TextAnimSettings.enabled.value) "On" else "Off",
+            onClick = onOpenTextAnim,
+        )
+    }
+
     if (showElementsDialog) {
         var draft by remember { mutableStateOf(blurElements) }
         AlertDialog(
@@ -4356,6 +4408,231 @@ private fun AppearanceSettings() {
             },
             dismissButton = {
                 TextButton(onClick = { showStyleDialog = false }) { Text("Cancel") }
+            },
+        )
+    }
+}
+
+private class TextAnimSelSpec(
+    val title: String,
+    val options: List<String>,
+    val current: Int,
+    val apply: (Int) -> Unit,
+)
+
+// Settings → Appearance → Text Animation (opened from the Appearance page).
+// Every row writes straight into TextAnimSettings, so changes apply live to
+// the chat composer and to the preview above.
+@Composable
+private fun TextAnimationSettings() {
+    val cfg = TextAnimSettings
+    val enabled by cfg.enabled
+    val speed by cfg.speed
+    val curve by cfg.curve
+    val blur by cfg.blur
+    val slide by cfg.slide
+    val scaleA by cfg.scale
+    val rotateA by cfg.rotate
+    val delFade by cfg.deleteFade
+    val delScatter by cfg.deleteScatter
+    val style by cfg.burstStyle
+    val amount by cfg.burstAmount
+    val sendBurst by cfg.sendBurst
+    val cursor by cfg.cursor
+    val pace by cfg.cursorPace
+    val blink by cfg.blink
+    val liquidCursor by cfg.liquidCursor
+    val liquidSelection by cfg.liquidSelection
+    val shape by cfg.cursorShape
+    val ccolor by cfg.cursorColor
+    val trail by cfg.cursorTrail
+    val haptic by cfg.haptic
+    var openSel by remember { mutableStateOf<String?>(null) }
+
+    SettingsGroup("Preview") {
+        Column(Modifier.padding(vertical = 8.dp)) {
+            TextAnimPreview()
+        }
+    }
+    SettingsGroup("Text animation") {
+        UiToggleRow(
+            icon = Icons.Filled.Animation, tint = Color(0xFF82AAFF),
+            title = "Text animation",
+            desc = "Animate typing, deleting and the cursor in the message box",
+            checked = enabled, onChange = { cfg.setEnabled(it) },
+        )
+    }
+    SettingsGroup("Appearance") {
+        UiNavRow(
+            icon = Icons.Filled.Speed, tint = Color(0xFF4DD0C4),
+            title = "Speed", desc = "How fast new letters animate in",
+            value = cfg.SPEED_LABELS[speed], onClick = { openSel = "speed" },
+        )
+        UiDivider()
+        UiNavRow(
+            icon = Icons.Filled.Timeline, tint = Color(0xFF82AAFF),
+            title = "Curve", desc = "Easing curve for letter animations",
+            value = cfg.CURVE_LABELS[curve], onClick = { openSel = "curve" },
+        )
+        UiDivider()
+        UiToggleRow(
+            icon = Icons.Filled.BlurOn, tint = Color(0xFF8B7CFF),
+            title = "From blur", desc = "Letters sharpen in from a blur",
+            checked = blur, onChange = { cfg.setBlur(it) },
+        )
+        UiDivider()
+        UiToggleRow(
+            icon = Icons.Filled.ArrowDownward, tint = Color(0xFF6EC3E8),
+            title = "Slide from above", desc = "Letters drop in from above",
+            checked = slide, onChange = { cfg.setSlide(it) },
+        )
+        UiDivider()
+        UiToggleRow(
+            icon = Icons.Filled.ZoomIn, tint = Color(0xFF4DD07A),
+            title = "Grow from a point", desc = "Letters scale up as they appear",
+            checked = scaleA, onChange = { cfg.setScale(it) },
+        )
+        UiDivider()
+        UiToggleRow(
+            icon = Icons.Filled.RotateRight, tint = Color(0xFFFFB26B),
+            title = "Rotate in", desc = "Letters rotate into place",
+            checked = rotateA, onChange = { cfg.setRotate(it) },
+        )
+    }
+    SettingsGroup("Deletion") {
+        UiToggleRow(
+            icon = Icons.Filled.VisibilityOff, tint = Color(0xFFB69DF8),
+            title = "Fade out", desc = "Deleted letters fade away as ghosts",
+            checked = delFade, onChange = { cfg.setDeleteFade(it) },
+        )
+        UiDivider()
+        UiToggleRow(
+            icon = Icons.Filled.Grain, tint = Color(0xFFE88BD0),
+            title = "Scatter", desc = "Deleted letters burst into particles",
+            checked = delScatter, onChange = { cfg.setDeleteScatter(it) },
+        )
+        UiDivider()
+        UiNavRow(
+            icon = Icons.Filled.Category, tint = Color(0xFFF48FB1),
+            title = "Scatter into", desc = "What deleted letters turn into",
+            value = cfg.STYLE_LABELS[style], onClick = { openSel = "style" },
+        )
+        UiDivider()
+        UiNavRow(
+            icon = Icons.Filled.Tune, tint = Color(0xFF6EA8FF),
+            title = "Particle amount", desc = "Particles per deleted letter",
+            value = cfg.AMOUNT_LABELS[amount], onClick = { openSel = "amount" },
+        )
+        UiDivider()
+        UiToggleRow(
+            icon = Icons.AutoMirrored.Filled.Send, tint = Color(0xFF4DD0C4),
+            title = "Burst into send button", desc = "On send, the text flies into the send button",
+            checked = sendBurst, onChange = { cfg.setSendBurst(it) },
+        )
+    }
+    SettingsGroup("Cursor") {
+        UiToggleRow(
+            icon = Icons.Filled.Gesture, tint = Color(0xFF82AAFF),
+            title = "Smooth cursor", desc = "The cursor glides instead of jumping",
+            checked = cursor, onChange = { cfg.setCursor(it) },
+        )
+        UiDivider()
+        UiNavRow(
+            icon = Icons.Filled.Speed, tint = Color(0xFF4DD0C4),
+            title = "Cursor speed", desc = "How fast the cursor glides",
+            value = cfg.PACE_LABELS[pace], onClick = { openSel = "pace" },
+        )
+        UiDivider()
+        UiNavRow(
+            icon = Icons.Filled.FormatShapes, tint = Color(0xFFFFB26B),
+            title = "Cursor shape", desc = "Shape of the typing cursor",
+            value = cfg.SHAPE_LABELS[shape], onClick = { openSel = "shape" },
+        )
+        UiDivider()
+        UiNavRow(
+            icon = Icons.Filled.Palette, tint = Color(0xFFFF7EB6),
+            title = "Cursor color", desc = "Color of the typing cursor",
+            value = cfg.COLOR_LABELS[ccolor], onClick = { openSel = "ccolor" },
+        )
+        UiDivider()
+        UiToggleRow(
+            icon = Icons.Filled.FlashOn, tint = Color(0xFFFFD54F),
+            title = "Soft blinking", desc = "Cursor gently fades in and out when idle",
+            checked = blink, onChange = { cfg.setBlink(it) },
+        )
+        UiDivider()
+        UiToggleRow(
+            icon = Icons.Filled.WaterDrop, tint = Color(0xFF4DD0E1),
+            title = "Liquid cursor", desc = "Cursor stretches while it moves",
+            checked = liquidCursor, onChange = { cfg.setLiquidCursor(it) },
+        )
+        UiDivider()
+        UiToggleRow(
+            icon = Icons.Filled.SelectAll, tint = Color(0xFF8B7CFF),
+            title = "Liquid selection", desc = "Animated highlight when selecting text",
+            checked = liquidSelection, onChange = { cfg.setLiquidSelection(it) },
+        )
+        UiDivider()
+        UiToggleRow(
+            icon = Icons.Filled.BlurLinear, tint = Color(0xFF6EC3E8),
+            title = "Cursor trail", desc = "Fading trail when the cursor jumps",
+            checked = trail, onChange = { cfg.setCursorTrail(it) },
+        )
+    }
+    SettingsGroup("Feedback") {
+        UiToggleRow(
+            icon = Icons.Filled.Vibration, tint = Color(0xFF4DD07A),
+            title = "Haptic feedback", desc = "Tiny vibration while typing",
+            checked = haptic, onChange = { cfg.setHaptic(it) },
+        )
+    }
+
+    val spec: TextAnimSelSpec? = when (openSel) {
+        "speed" -> TextAnimSelSpec("Speed", cfg.SPEED_LABELS, speed) { cfg.setSpeed(it) }
+        "curve" -> TextAnimSelSpec("Curve", cfg.CURVE_LABELS, curve) { cfg.setCurve(it) }
+        "style" -> TextAnimSelSpec("Scatter into", cfg.STYLE_LABELS, style) { cfg.setBurstStyle(it) }
+        "amount" -> TextAnimSelSpec("Particle amount", cfg.AMOUNT_LABELS, amount) { cfg.setBurstAmount(it) }
+        "pace" -> TextAnimSelSpec("Cursor speed", cfg.PACE_LABELS, pace) { cfg.setCursorPace(it) }
+        "shape" -> TextAnimSelSpec("Cursor shape", cfg.SHAPE_LABELS, shape) { cfg.setCursorShape(it) }
+        "ccolor" -> TextAnimSelSpec("Cursor color", cfg.COLOR_LABELS, ccolor) { cfg.setCursorColor(it) }
+        else -> null
+    }
+    if (spec != null) {
+        var draft by remember(openSel) { mutableStateOf(spec.current) }
+        AlertDialog(
+            onDismissRequest = { openSel = null },
+            containerColor = dialogBg().copy(alpha = ayxDialogAlpha()),
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            textContentColor = MaterialTheme.colorScheme.onSurface,
+            title = { Text(spec.title) },
+            text = {
+                Column {
+                    spec.options.forEachIndexed { i, lbl ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable { draft = i }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(
+                                selected = draft == i,
+                                onClick = { draft = i },
+                            )
+                            Text(lbl, style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    spec.apply(draft)
+                    openSel = null
+                }) { Text("Done") }
+            },
+            dismissButton = {
+                TextButton(onClick = { openSel = null }) { Text("Cancel") }
             },
         )
     }

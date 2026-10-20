@@ -18,11 +18,39 @@ object StatusData {
     private val seen = HashSet<String>()
     val seenVersion = androidx.compose.runtime.mutableStateOf(0)
 
+    // SD1: tombstones for statuses the user deleted from this app (id -> delete time).
+    // merge() below is a UNION of cache + fresh, so without a tombstone a deleted status
+    // kept resurrecting from the local cache even after the WhatsApp revoke succeeded.
+    // Tombstones only need to outlive the status itself, so they expire after 24h.
+    private val deleted = HashMap<String, Long>()
+
     fun init(ctx: Context) {
         if (prefs == null) {
             prefs = ctx.getSharedPreferences("statusdata", Context.MODE_PRIVATE)
             prefs?.getStringSet("seen_ids", null)?.let { seen.clear(); seen.addAll(it) }
+            prefs?.getString("deleted_ids", null)?.let { raw ->
+                try {
+                    val o = JSONObject(raw)
+                    val cutoff = System.currentTimeMillis() - 24L * 3600L * 1000L
+                    val keys = o.keys()
+                    while (keys.hasNext()) {
+                        val k = keys.next()
+                        val t = o.optLong(k, 0L)
+                        if (t >= cutoff) deleted[k] = t
+                    }
+                } catch (e: Exception) {}
+            }
         }
+    }
+
+    fun isDeleted(id: String?): Boolean = id != null && deleted.containsKey(id)
+
+    private fun saveDeleted() {
+        try {
+            val o = JSONObject()
+            for ((k, v) in deleted) o.put(k, v)
+            prefs?.edit()?.putString("deleted_ids", o.toString())?.apply()
+        } catch (e: Exception) {}
     }
 
     fun isSeen(id: String?): Boolean = id != null && seen.contains(id)
@@ -42,7 +70,7 @@ object StatusData {
 
     fun load(): List<GatewayClient.StatusItem> {
         val json = prefs?.getString("items", null) ?: return emptyList()
-        return try {
+        val items = try {
             val arr = JSONArray(json)
             val cutoff = System.currentTimeMillis() - 24L * 3600L * 1000L
             (0 until arr.length()).mapNotNull { i ->
@@ -62,6 +90,8 @@ object StatusData {
                 )
             }
         } catch (e: Exception) { emptyList() }
+        // SD1: never hand a tombstoned (user-deleted) status back to the UI.
+        return items.filterNot { isDeleted(it.id) }
     }
 
     /** Merge fresh items with the cached ones (by sender+ts+id), keep last 24h, persist. */
@@ -70,7 +100,8 @@ object StatusData {
         val map = LinkedHashMap<String, GatewayClient.StatusItem>()
         // keep existing first, then overlay fresh (fresh wins)
         for (s in load()) if (s.ts >= cutoff) map[keyOf(s)] = s
-        for (s in fresh) if (s.ts >= cutoff) map[keyOf(s)] = s
+        // SD1: a tombstoned id must not re-enter via the fresh list either (stale gateway copy).
+        for (s in fresh) if (s.ts >= cutoff && !isDeleted(s.id)) map[keyOf(s)] = s
         val merged = map.values.sortedByDescending { it.ts }.take(150)
         save(merged)
         // keep the seen-set bounded: drop ids that are no longer present (expired statuses)
@@ -84,6 +115,10 @@ object StatusData {
 
     fun remove(id: String) {
         if (id.isBlank()) return
+        // SD1: tombstone first — even if the item is not in the cache right now,
+        // a later merge must never bring this id back.
+        deleted[id] = System.currentTimeMillis()
+        saveDeleted()
         save(load().filterNot { it.id == id })
     }
 
