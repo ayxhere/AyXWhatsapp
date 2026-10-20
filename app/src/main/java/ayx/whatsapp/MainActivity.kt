@@ -49,6 +49,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.key
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.rememberUpdatedState
@@ -80,6 +82,8 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.changedToUpOrCanceled
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.CornerRadius
@@ -5857,14 +5861,21 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     var videoPlaying by remember { mutableStateOf(false) }
     var exoPlayer by remember { mutableStateOf<androidx.media3.exoplayer.ExoPlayer?>(null) }
     var videoTrimOpen by remember { mutableStateOf(false) }   // V3: trimmer panel toggled from the ✂ Trim button in the video header
+    var trimScrubbing by remember { mutableStateOf(false) }   // true while a trim handle/window drag is in progress — the preview loop must not fight the drag
     // ---- Song tap toggles the AI Lyrics Translate button below the song row ----
     var showTranslateRow by remember { mutableStateOf(false) }
     var songQuery by remember { mutableStateOf("") }   // last song-search query (preserved across replace)
     val pickPhoto = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { u ->
-        if (u != null) { mediaUri = u; mediaType = "image"; editedBytes = null }
+        if (u != null) { mediaUri = u; mediaType = "image"; editedBytes = null
+            // No stale video trim may leak onto the next media: clear it NOW,
+            // not only when the (async) duration effect below gets to run.
+            videoDuration = 0L; vTrimStart = 0L; vTrimEnd = 0L; videoPos = 0L; videoTrimOpen = false; videoPlaying = false }
     }
     val pickVideo = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { u ->
-        if (u != null) { mediaUri = u; mediaType = "video"; editedBytes = null }
+        if (u != null) { mediaUri = u; mediaType = "video"; editedBytes = null
+            // Same anti-leak reset: the previous video's trim must never show
+            // against (or be sent with) the newly picked video.
+            videoDuration = 0L; vTrimStart = 0L; vTrimEnd = 0L; videoPos = 0L; videoTrimOpen = false; videoPlaying = false }
     }
     // Video duration + trim defaults when the video (re)loads.
     LaunchedEffect(mediaUri, mediaType) {
@@ -5885,7 +5896,11 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     LaunchedEffect(videoPlaying) {
         while (videoPlaying) {
             videoPos = runCatching { exoPlayer?.currentPosition ?: 0L }.getOrDefault(videoPos)
-            if (vTrimEnd > 0L && videoPos >= vTrimEnd) { runCatching { exoPlayer?.pause(); exoPlayer?.seekTo(vTrimStart) }; videoPlaying = false; videoPos = vTrimStart }
+            // While the user is scrubbing a trim handle, the seek target sits ON
+            // (or past) the window end — enforcing the end-stop mid-drag paused
+            // the preview and yanked it back to the start, which is exactly why
+            // end-handle drags felt broken. The stop applies only when not scrubbing.
+            if (!trimScrubbing && vTrimEnd > 0L && videoPos >= vTrimEnd) { runCatching { exoPlayer?.pause(); exoPlayer?.seekTo(vTrimStart) }; videoPlaying = false; videoPos = vTrimStart }
             delay(90)
         }
     }
@@ -5997,7 +6012,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                             }
                             // L: Trim moved to the header (icon).
                             // LEFT-side X: remove the video (below the overlaid top bar).
-                            IconButton(onClick = { runCatching { exoPlayer?.stop() }; videoPlaying = false; mediaUri = null }, modifier = Modifier.align(Alignment.TopStart).padding(top = overlayTopPad, start = 8.dp)) {
+                            IconButton(onClick = { runCatching { exoPlayer?.stop() }; videoPlaying = false; mediaUri = null; videoDuration = 0L; vTrimStart = 0L; vTrimEnd = 0L; videoPos = 0L; videoTrimOpen = false }, modifier = Modifier.align(Alignment.TopStart).padding(top = overlayTopPad, start = 8.dp)) {
                                 Icon(Icons.Filled.Close, "remove video", tint = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(4.dp))
                             }
                         }
@@ -6059,9 +6074,23 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                             // ---- Video trimmer panel (V3): toggled from the ✂ Trim button in the video header.
                             // Draggable left/right edges set the range; the selection itself IS the length (no Length slider).
                             if (mediaType == "video" && mediaUri != null && videoDuration > 0L && videoTrimOpen) {
-                                VideoFilmstripTrimmer(ctx, mediaUri!!, videoDuration, vTrimStart, vTrimEnd, videoPos,
-                                    onChange = { ns, ne -> vTrimStart = ns; vTrimEnd = ne },
-                                    onSeek = { ms -> runCatching { exoPlayer?.seekTo(ms) } })
+                                // key(mediaUri): a different video always gets a FRESH
+                                // trimmer (frames + gesture state) — nothing stale survives.
+                                // The layout{} bleed cancels the column's 12dp side padding so
+                                // the strip runs screen-to-screen like WhatsApp's trimmer.
+                                key(mediaUri) {
+                                    Box(Modifier.layout { measurable, constraints ->
+                                        val bleed = 12.dp.roundToPx()
+                                        val w = constraints.maxWidth + bleed * 2
+                                        val p = measurable.measure(constraints.copy(minWidth = w, maxWidth = w))
+                                        layout(p.width, p.height) { p.place(-bleed, 0) }
+                                    }) {
+                                        VideoFilmstripTrimmer(ctx, mediaUri!!, videoDuration, vTrimStart, vTrimEnd, videoPos,
+                                            onChange = { ns, ne -> vTrimStart = ns; vTrimEnd = ne },
+                                            onSeek = { ms -> videoPos = ms; runCatching { exoPlayer?.seekTo(ms) } },
+                                            onScrubChange = { trimScrubbing = it })
+                                    }
+                                }
                                 val vSelSec = ((vTrimEnd - vTrimStart).coerceAtLeast(0L) / 1000L)
                                 Text(fmtMs(vTrimStart) + "  →  " + fmtMs(vTrimEnd) + "   •   (" + vSelSec + "s)", color = Color.White, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 4.dp))
                                 Text("drag the edges to trim, or drag the selection to move it", color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall)
@@ -7109,6 +7138,16 @@ private fun AudioTrimmer(song: GatewayClient.Song, onDone: (Long, Long, List<Pai
  * Replaces the waveform UI for VIDEO only (the song trimmer keeps the
  * waveform). Trim semantics are unchanged — [onChange] reports start/end ms
  * exactly like the waveform did, and the send-time trim is untouched.
+ *
+ * Gesture model (rewritten after device testing of the first version):
+ * the drag target is chosen from the EXACT down position and the down is
+ * consumed immediately, so (a) no touch-slop offset can mis-pick a handle,
+ * (b) the parent column's vertical scroll can never steal a mixed-axis drag,
+ * and (c) values track the finger 1:1 from the TOTAL displacement since the
+ * down — no per-event deltas to lose or truncate. The container carries
+ * [systemGestureExclusion] so an edge-starting handle drag is never stolen
+ * by Android's gesture-navigation Back. [onScrubChange] tells the host a
+ * drag is live so its playback loop doesn't fight the seek targets.
  */
 @Composable
 private fun VideoFilmstripTrimmer(
@@ -7120,6 +7159,7 @@ private fun VideoFilmstripTrimmer(
     posMs: Long,
     onChange: (Long, Long) -> Unit,
     onSeek: (Long) -> Unit,
+    onScrubChange: (Boolean) -> Unit = {},
 ) {
     // Frame thumbnails spread across the whole duration, decoded once per
     // video on IO (MediaMetadataRetriever is slow — never on the UI thread).
@@ -7150,8 +7190,14 @@ private fun VideoFilmstripTrimmer(
     }
     val curStart by rememberUpdatedState(startMs)
     val curEnd by rememberUpdatedState(endMs)
-    val grabPx = with(LocalDensity.current) { 30.dp.toPx() }
-    Box(Modifier.fillMaxWidth().height(72.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFF1C1C1E))) {
+    val curChange by rememberUpdatedState(onChange)
+    val curSeek by rememberUpdatedState(onSeek)
+    val curScrub by rememberUpdatedState(onScrubChange)
+    val grabPx = with(LocalDensity.current) { 24.dp.toPx() }
+    // systemGestureExclusion: the strip's bounds are excluded from Android's
+    // edge gesture zones — dragging a handle that sits at the screen edge can
+    // no longer be hijacked into a Back navigation.
+    Box(Modifier.fillMaxWidth().height(72.dp).systemGestureExclusion().clip(RoundedCornerShape(10.dp)).background(Color(0xFF1C1C1E))) {
         // Filmstrip of real frames.
         Row(Modifier.fillMaxSize()) {
             val fs = frames.value
@@ -7164,43 +7210,59 @@ private fun VideoFilmstripTrimmer(
             }
         }
         // Overlay: dimmed unselected regions, selection frame + white grip
-        // handles, moving playhead — plus ALL drag handling (same gesture
-        // model as WaveformTrimmer: near an edge = resize, inside = move).
-        Canvas(Modifier.fillMaxSize().pointerInput(durationMs) {
+        // handles, moving playhead — plus ALL drag handling. Target picking
+        // uses the exact down position: within the grab zone of an edge =
+        // resize that edge (nearer edge wins when both are in range); anywhere
+        // else (inside OR outside the selection) = move the whole window by
+        // the finger delta — no dead zones anywhere on the strip.
+        Canvas(Modifier.fillMaxSize().pointerInput(uri, durationMs) {
             val w = size.width.toFloat().coerceAtLeast(1f)
-            var accS = 0L
-            var accE = 0L
-            var mode = 0   // 1 = left edge, 2 = right edge, 3 = move window
-            detectHorizontalDragGestures(
-                onDragStart = { off ->
-                    accS = curStart; accE = curEnd; mode = 0
-                    if (durationMs > 0) {
-                        val sx = curStart.toFloat() / durationMs * w
-                        val ex = curEnd.toFloat() / durationMs * w
-                        mode = when {
-                            kotlin.math.abs(off.x - sx) <= grabPx -> 1
-                            kotlin.math.abs(off.x - ex) <= grabPx -> 2
-                            off.x in sx..ex -> 3
-                            else -> 0
-                        }
-                    }
-                },
-                onHorizontalDrag = { _, dragAmount ->
-                    if (durationMs <= 0) return@detectHorizontalDragGestures
-                    val dMs = (dragAmount / w * durationMs).toLong()
-                    val minLen = 1000L
-                    when (mode) {
-                        1 -> { accS = (accS + dMs).coerceIn(0L, (accE - minLen).coerceAtLeast(0L)); onChange(accS, accE); onSeek(accS) }
-                        2 -> { accE = (accE + dMs).coerceIn((accS + minLen).coerceAtMost(durationMs), durationMs); onChange(accS, accE); onSeek(accE) }
-                        3 -> {
-                            val len = (accE - accS).coerceAtLeast(minLen)
-                            accS = (accS + dMs).coerceIn(0L, (durationMs - len).coerceAtLeast(0L))
-                            accE = accS + len
-                            onChange(accS, accE); onSeek(accS)
-                        }
-                    }
+            if (durationMs <= 0L) return@pointerInput
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                val startX = curStart.toFloat() / durationMs * w
+                val endX = curEnd.toFloat() / durationMs * w
+                val dStart = kotlin.math.abs(down.position.x - startX)
+                val dEnd = kotlin.math.abs(down.position.x - endX)
+                val mode = when {
+                    dStart <= grabPx && dStart <= dEnd -> 1   // left edge
+                    dEnd <= grabPx -> 2                        // right edge
+                    else -> 3                                  // move window
                 }
-            )
+                // Claim the gesture NOW: every change from here on is consumed,
+                // so the parent vertical scroll (and any other ancestor handler)
+                // can never take this drag over mid-flight.
+                down.consume()
+                val startAtDown = curStart
+                val endAtDown = curEnd
+                val downX = down.position.x
+                val minLen = 1000L
+                curScrub(true)
+                try {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (change.changedToUpOrCanceled()) { change.consume(); break }
+                        val totalDx = change.position.x - downX
+                        if (totalDx != 0f) {
+                            change.consume()
+                            // 1:1 mapping from TOTAL displacement — immune to
+                            // dropped/coalesced events and per-event truncation.
+                            val dMs = (totalDx / w * durationMs).toLong()
+                            when (mode) {
+                                1 -> { val ns = (startAtDown + dMs).coerceIn(0L, (endAtDown - minLen).coerceAtLeast(0L)); curChange(ns, endAtDown); curSeek(ns) }
+                                // Seek a hair BEFORE the end: landing exactly on it
+                                // (or on the media end) reads as "window finished"
+                                // to the player and yanks the preview back mid-drag.
+                                2 -> { val ne = (endAtDown + dMs).coerceIn((startAtDown + minLen).coerceAtMost(durationMs), durationMs); curChange(startAtDown, ne); curSeek((ne - 400L).coerceAtLeast(startAtDown)) }
+                                else -> { val len = (endAtDown - startAtDown).coerceAtLeast(minLen); val ns = (startAtDown + dMs).coerceIn(0L, (durationMs - len).coerceAtLeast(0L)); curChange(ns, ns + len); curSeek(ns) }
+                            }
+                        }
+                    }
+                } finally {
+                    curScrub(false)
+                }
+            }
         }) {
             if (durationMs > 0) {
                 val selStartX = startMs.toFloat() / durationMs * size.width
