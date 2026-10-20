@@ -143,6 +143,7 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Share
@@ -809,6 +810,9 @@ fun GatewayApp() {
     val chatSelIds = remember(openChat) { mutableStateListOf<String>() }
     var selActions by remember(openChat) { mutableStateOf<SelActions?>(null) }
     fun exitChatSel() { chatSelMode = false; chatSelIds.clear() }
+    // In-chat message search: hoisted so the glass header's 3-dot "Search"
+    // item can open the search bar that lives inside ChatDetail.
+    var chatSearchOpen by remember(openChat) { mutableStateOf(false) }
     // Unread badge: jid -> wall-clock ms when that chat was marked read.
     // The badge clears the moment a chat is opened (see markChatRead), so
     // going back home never shows a stale count — but a message arriving
@@ -1763,6 +1767,8 @@ fun GatewayApp() {
                 selIds = chatSelIds,
                 onExitSel = { exitChatSel() },
                 onSelectionActions = { selActions = it },
+                searchOpen = chatSearchOpen,
+                onSearchOpenChange = { chatSearchOpen = it },
             )
             }
             val ocBlocked = ocChat in blockedJids
@@ -1778,6 +1784,7 @@ fun GatewayApp() {
                 onBlock = { scope.launch { runCatching { GatewayClient.blockChat(ocChat, true) }.onSuccess { notify("blocked"); blockedJids = blockedJids + ocChat; blkPrefs.edit().putStringSet("blocked", blockedJids).apply() }.onFailure { notify("failed: ${it.message}") } } },
                 onUnblock = { scope.launch { runCatching { GatewayClient.blockChat(ocChat, false) }.onSuccess { notify("unblocked"); blockedJids = blockedJids - ocChat; blkPrefs.edit().putStringSet("blocked", blockedJids).apply() }.onFailure { notify("failed: ${it.message}") } } },
                 onAvatarClick = { dpView = ocChat },
+                onSearch = { chatSearchOpen = true },
                 // U2: selection mode renders inside the header (3-dot replaced by delete + select-all).
                 selCount = if (chatSelMode) chatSelIds.size else 0,
                 onExitSel = { exitChatSel() },
@@ -2373,6 +2380,9 @@ private fun ChatDetail(
     selIds: SnapshotStateList<String>,
     onExitSel: () -> Unit,
     onSelectionActions: (SelActions) -> Unit = {},
+    /** In-chat message search bar visibility (hoisted — opened from the glass header's 3-dot "Search"). */
+    searchOpen: Boolean = false,
+    onSearchOpenChange: (Boolean) -> Unit = {},
 ) {
     val clipboard = LocalClipboardManager.current
     val ctx = LocalContext.current
@@ -2519,6 +2529,74 @@ private fun ChatDetail(
     // clear the floating header: status bar + header card height, so the top message is never hidden
     val topClear = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 78.dp
 
+    // ===== In-chat message search + quote-tap jump (ONE shared scroll/highlight helper) =====
+    val jumpScope = rememberCoroutineScope()
+    var searchQuery by remember(chat) { mutableStateOf("") }
+    var searchPos by remember(chat) { mutableStateOf(0) }
+    var highlightId by remember(chat) { mutableStateOf<String?>(null) }
+    var pendingJumpId by remember(chat) { mutableStateOf<String?>(null) }
+    // Matches over the LOADED rows only (initial page + paged history + live
+    // feed), newest first — same order as rows. As older pages load, matches
+    // grow on their own because rows is a remember key.
+    val searchMatches = remember(rows, searchQuery) {
+        val q = searchQuery.trim()
+        if (q.isBlank()) emptyList() else rows.indices.filter { rows[it].text.contains(q, ignoreCase = true) }
+    }
+    fun jumpToRow(rowIdx: Int) {
+        rows.getOrNull(rowIdx)?.id?.let { highlightId = it }
+        jumpScope.launch { listState.animateScrollToItem(1 + uploading.size + rowIdx) }
+    }
+    fun jumpToMsgId(id: String) {
+        val idx = rows.indexOfFirst { it.id == id }
+        if (idx >= 0) jumpToRow(idx) else pendingJumpId = id
+    }
+    fun onQuoteTap(m: GatewayClient.Msg) {
+        val qid = m.quotedId
+        if (!qid.isNullOrBlank()) { jumpToMsgId(qid); return }
+        // Messages received before the gateway sent quoted ids: fall back to
+        // the nearest OLDER message whose text matches the quote preview.
+        val qt = m.quotedText
+        val cand = if (!qt.isNullOrBlank())
+            rows.filter { it.id != null && it.id != m.id && it.text == qt && it.ts <= m.ts }.maxByOrNull { it.ts }
+                ?: rows.firstOrNull { it.id != null && it.id != m.id && it.text == qt }
+        else null
+        if (cand?.id != null) jumpToRow(rows.indexOfFirst { it.id == cand.id })
+        else Toast.makeText(ctx, "Original message not available", Toast.LENGTH_SHORT).show()
+    }
+    // Quote-jump target not loaded yet: page older history in (same fetch the
+    // scroll-pagination uses) until it appears — or history runs out → toast.
+    LaunchedEffect(pendingJumpId, rows, hasMoreHistory) {
+        val target = pendingJumpId ?: return@LaunchedEffect
+        val idx = rows.indexOfFirst { it.id == target }
+        if (idx >= 0) { jumpToRow(idx); pendingJumpId = null; return@LaunchedEffect }
+        if (!hasMoreHistory) {
+            Toast.makeText(ctx, "Original message not available", Toast.LENGTH_SHORT).show()
+            pendingJumpId = null
+            return@LaunchedEffect
+        }
+        if (!loadingOlder) {
+            loadingOlder = true
+            val before = rows.minOfOrNull { it.ts } ?: 0
+            val older = GatewayClient.getChatMessages(chat, before = before, limit = 200)
+            val fresh = older.filter { o -> o.id == null || pagedMsgs.none { it.id == o.id } }
+            if (fresh.isNotEmpty()) pagedMsgs = (pagedMsgs + fresh).sortedByDescending { it.ts }
+            if (older.size < 200 || fresh.isEmpty()) hasMoreHistory = false
+            loadingOlder = false
+        }
+    }
+    // Jump flash-highlight fades after ~1.6s.
+    LaunchedEffect(highlightId) {
+        if (highlightId != null) { delay(1600); highlightId = null }
+    }
+    // New query → land on the newest match straight away.
+    LaunchedEffect(searchQuery) {
+        searchPos = 0
+        if (searchOpen && searchQuery.isNotBlank()) {
+            val first = rows.indices.firstOrNull { rows[it].text.contains(searchQuery.trim(), ignoreCase = true) }
+            if (first != null) jumpToRow(first)
+        }
+    }
+
     // auto-translate: when mode is Auto, translate incoming messages automatically
     LaunchedEffect(rows.size, TranslateStore.mode, TranslateStore.lang) {
         if (TranslateStore.mode == "auto") {
@@ -2536,8 +2614,39 @@ private fun ChatDetail(
         wallpaper?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
         // full-bleed column; only bottom (nav bar + keyboard) is inset, top stays under the floating header
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))) {
+        if (searchOpen) {
+            // In-chat search bar: sits under the floating glass header (topClear),
+            // WhatsApp style — query + match counter + older/newer navigation.
+            Row(Modifier.fillMaxWidth().padding(top = topClear, start = 4.dp, end = 4.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) {
+                    if (TextAnimSettings.enabled.value) {
+                        AnimatedOutlinedField(searchQuery, { searchQuery = it }, placeholderText = "Search messages",
+                            singleLine = true, shape = uiShapeFor(24),
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            borderColor = Color.Transparent, focusedBorderColor = Color.Transparent,
+                            leadingIcon = { Icon(Icons.Filled.Search, null, tint = IOS_BLUE) },
+                            modifier = Modifier.fillMaxWidth())
+                    } else {
+                        OutlinedTextField(searchQuery, { searchQuery = it }, placeholder = { Text("Search messages") },
+                            leadingIcon = { Icon(Icons.Filled.Search, null, tint = IOS_BLUE) }, singleLine = true, shape = uiShapeFor(24),
+                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent,
+                                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant, unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant),
+                            modifier = Modifier.fillMaxWidth())
+                    }
+                }
+                if (searchQuery.isNotBlank()) {
+                    Text(if (searchMatches.isEmpty()) "0/0" else "${searchPos + 1}/${searchMatches.size}",
+                        style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 6.dp))
+                    IconButton(onClick = { if (searchPos < searchMatches.size - 1) { searchPos++; jumpToRow(searchMatches[searchPos]) } },
+                        enabled = searchPos < searchMatches.size - 1) { Icon(Icons.Filled.KeyboardArrowUp, "older match") }
+                    IconButton(onClick = { if (searchPos > 0) { searchPos--; jumpToRow(searchMatches[searchPos]) } },
+                        enabled = searchPos > 0) { Icon(Icons.Filled.KeyboardArrowDown, "newer match") }
+                }
+                IconButton(onClick = { onSearchOpenChange(false); searchQuery = ""; searchPos = 0 }) { Icon(Icons.Filled.Close, "close search") }
+            }
+        }
         LazyColumn(state = listState, reverseLayout = true, modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp),
-            contentPadding = PaddingValues(top = topClear, bottom = 4.dp),
+            contentPadding = PaddingValues(top = if (searchOpen) 8.dp else topClear, bottom = 4.dp),
             verticalArrangement = Arrangement.spacedBy(3.dp)) {
             item { Spacer(Modifier.height(6.dp)) }
             // S4: uploading media (video/photo) — WhatsApp-style progress bubble.
@@ -2576,6 +2685,8 @@ private fun ChatDetail(
                 Box(Modifier.fillMaxWidth()) {
                     MessageBubble(m, previewCache, dpCache, onMedia, onShare, onDownload,
                         onReply = { replyTo = it }, onAvatarClick = onAvatarClick,
+                        highlighted = highlightId != null && m.id == highlightId,
+                        onQuoteTap = { onQuoteTap(it) },
                         selMode = selMode, selected = m.id != null && m.id in selIds,
                         onToggleSelect = { mm -> mm.id?.let { if (it in selIds) selIds.remove(it) else selIds.add(it); if (selIds.isEmpty()) onExitSel() } },
                         onTranslate = { onTranslateMsg(it) },
@@ -2942,6 +3053,8 @@ private fun ChatGlassHeader(
     onBlock: () -> Unit,
     onUnblock: () -> Unit,
     onAvatarClick: () -> Unit,
+    /** Opens the in-chat message search bar (state hoisted to the parent). */
+    onSearch: () -> Unit = {},
     /** U2: >0 while messages are selected — the 3-dot menu is REPLACED by delete + select-all. */
     selCount: Int = 0,
     onExitSel: () -> Unit = {},
@@ -2981,6 +3094,7 @@ private fun ChatGlassHeader(
                 Box {
                     IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "menu", tint = onPill) }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(text = { Text("Search") }, leadingIcon = { Icon(Icons.Filled.Search, null) }, onClick = { menu = false; onSearch() })
                         DropdownMenuItem(text = { Text("Set name") }, leadingIcon = { Icon(Icons.Filled.Edit, null) }, onClick = { menu = false; onEdit() })
                         DropdownMenuItem(text = { Text("Change wallpaper") }, onClick = { menu = false; onWallpaper() })
                         if (!isBlocked) DropdownMenuItem(text = { Text("Block contact") }, onClick = { menu = false; onBlock() })
@@ -3179,7 +3293,7 @@ private fun BubbleTimeTicks(m: GatewayClient.Msg, textColor: Color, modifier: Mo
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String, ImageBitmap?>, dpCache: MutableMap<String, ImageBitmap?>, onMedia: (GatewayClient.Msg) -> Unit, onShare: (GatewayClient.Msg) -> Unit, onDownload: (GatewayClient.Msg) -> Unit, onReply: (GatewayClient.Msg) -> Unit, onAvatarClick: (String) -> Unit, selMode: Boolean = false, selected: Boolean = false, onToggleSelect: (GatewayClient.Msg) -> Unit = {}, onTranslate: (GatewayClient.Msg) -> Unit = {}, onLongClick: (GatewayClient.Msg) -> Unit) {
+private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String, ImageBitmap?>, dpCache: MutableMap<String, ImageBitmap?>, onMedia: (GatewayClient.Msg) -> Unit, onShare: (GatewayClient.Msg) -> Unit, onDownload: (GatewayClient.Msg) -> Unit, onReply: (GatewayClient.Msg) -> Unit, onAvatarClick: (String) -> Unit, selMode: Boolean = false, selected: Boolean = false, onToggleSelect: (GatewayClient.Msg) -> Unit = {}, onTranslate: (GatewayClient.Msg) -> Unit = {}, onLongClick: (GatewayClient.Msg) -> Unit, highlighted: Boolean = false, onQuoteTap: (GatewayClient.Msg) -> Unit = {}) {
     val ctx = LocalContext.current
     val dark = isSystemInDarkTheme()
     val spec = bubbleSpec(m.fromMe, dark)
@@ -3196,7 +3310,11 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
 
     var swipeX by remember(m.id) { mutableStateOf(0f) }
     Row(Modifier.fillMaxWidth()
-        .background(if (selMode && selected) AYX_GREEN.copy(alpha = 0.14f) else Color.Transparent)
+        .background(when {
+            highlighted -> AYX_GREEN.copy(alpha = 0.30f)
+            selMode && selected -> AYX_GREEN.copy(alpha = 0.14f)
+            else -> Color.Transparent
+        })
         .then(if (selMode) Modifier.clickable { onToggleSelect(m) } else Modifier)
         .padding(vertical = 1.dp)
         .pointerInput(m.id, selMode) {
@@ -3231,7 +3349,8 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                     }
                 }
                 if (!m.quotedText.isNullOrBlank()) {
-                    Row(Modifier.padding(horizontal = 6.dp, vertical = 2.dp)) {
+                    // Tap the quote block → jump to the original message (highlight flash).
+                    Row(Modifier.clickable(enabled = !selMode) { onQuoteTap(m) }.padding(horizontal = 6.dp, vertical = 2.dp)) {
                         Box(Modifier.width(3.dp).height(30.dp).background(if (m.fromMe) Color.White.copy(alpha = 0.7f) else IOS_BLUE, uiShapeFor(2)))
                         Spacer(Modifier.width(6.dp))
                         Text(m.quotedText!!, style = MaterialTheme.typography.bodySmall,

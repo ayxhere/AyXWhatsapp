@@ -540,15 +540,15 @@ fun AnimatedComposerField(
     val sinkPx = 2f * dpPx
     val blurSpreadPx = 2.2f * dpPx
 
+    val onSurface = MaterialTheme.colorScheme.onSurface
+    val onSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
+    val primary = MaterialTheme.colorScheme.primary
     val textStyleBase = textStyle
     val drawColor = if (textColor != Color.Unspecified) textColor
         else if (textStyle.color != Color.Unspecified) textStyle.color
         else onSurface
     val accent = if (accentColor != Color.Unspecified) accentColor else primary
     val hint = if (hintColor != Color.Unspecified) hintColor else onSurfaceVariant
-    val onSurface = MaterialTheme.colorScheme.onSurface
-    val onSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
-    val primary = MaterialTheme.colorScheme.primary
     val selectionColors = LocalTextSelectionColors.current
     val view = LocalView.current
     val measurer = rememberTextMeasurer()

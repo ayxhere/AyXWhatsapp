@@ -65,7 +65,7 @@ object GatewayClient {
     )
     data class Contact(val jid: String, val name: String, val number: String)
     data class Msg(val chat: String, val name: String, val fromMe: Boolean, val text: String, val ts: Long,
-                   val mediaName: String? = null, val mediaType: String? = null, val thumb: String? = null, val deleted: Boolean = false, val id: String? = null, val reaction: String? = null, val sender: String? = null, val quotedText: String? = null, val edited: Boolean = false, val status: Int = 0, val forwarded: Boolean = false,
+                   val mediaName: String? = null, val mediaType: String? = null, val thumb: String? = null, val deleted: Boolean = false, val id: String? = null, val reaction: String? = null, val sender: String? = null, val quotedText: String? = null, val quotedId: String? = null, val edited: Boolean = false, val status: Int = 0, val forwarded: Boolean = false,
                    // Group chats only: the Baileys group subject (group name) from the
                    // gateway. NOTE: `name` on a group message is the SENDER's pushName,
                    // never the group name — use chatName for group titles.
@@ -801,6 +801,7 @@ object GatewayClient {
                     reaction = m.optString("reaction").ifEmpty { null },
                     sender = m.optString("sender").ifEmpty { null },
                     quotedText = m.optJSONObject("quoted")?.optString("text")?.ifEmpty { null },
+                    quotedId = m.optJSONObject("quoted")?.optString("id")?.ifEmpty { null },
                     edited = m.optBoolean("edited", false),
                     status = m.optInt("status", 0),
                     forwarded = m.optBoolean("forwarded", false),

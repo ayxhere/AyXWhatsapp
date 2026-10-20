@@ -1556,7 +1556,7 @@ function quotedOf(message) {
   if (!message) return null
   for (const k of Object.keys(message)) {
     const ci = message[k] && message[k].contextInfo
-    if (ci && ci.quotedMessage) return { text: extractText(ci.quotedMessage) || '[media]', sender: ci.participant || '' }
+    if (ci && ci.quotedMessage) return { text: extractText(ci.quotedMessage) || '[media]', sender: ci.participant || '', id: ci.stanzaId || ci.stanzaID || '' }
   }
   return null
 }
