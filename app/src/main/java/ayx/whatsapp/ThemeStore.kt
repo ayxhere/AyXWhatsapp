@@ -15,7 +15,7 @@ import androidx.compose.ui.graphics.Color
  * UiStyleStore.
  */
 object ThemeStore {
-    // system | light | dark | amoled
+    // system | light | amoled  ("dark" was removed — stored values migrate to amoled in init)
     val mode = mutableStateOf("system")
     // key into [accents]
     val accent = mutableStateOf("purple")
@@ -57,6 +57,15 @@ object ThemeStore {
         if (prefs != null) return
         prefs = ctx.getSharedPreferences("theme", Context.MODE_PRIVATE)
         mode.value = prefs!!.getString("mode", "system") ?: "system"
+        // The standalone "Dark" theme option was removed (user request,
+        // 2026-10-21): a stored "dark" now means AMOLED. Migrate the stored
+        // value itself so no selector ever has to display a mode that no
+        // longer exists; rendering of any leftover "dark" is also mapped
+        // to AMOLED at the theme-resolution site as a safety net.
+        if (mode.value == "dark") {
+            mode.value = "amoled"
+            prefs!!.edit().putString("mode", "amoled").apply()
+        }
         accent.value = prefs!!.getString("accent", "purple") ?: "purple"
         // Migrate legacy appearance_style to UiStyleStore if present
         val legacy = prefs!!.getString("appearance_style", null)

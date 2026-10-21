@@ -97,6 +97,8 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -413,6 +415,7 @@ class MainActivity : ComponentActivity() {
         TextAnimSettings.init(applicationContext)
         MessageMotionSettings.init(applicationContext)
         IconStyleSettings.init(applicationContext)
+        IosSelectionSettings.init(applicationContext)
         UiStyleStore.init(applicationContext)
         ayx.whatsapp.ui.UiAnimationSettings.init(applicationContext)
         ChatStyle.init(applicationContext)
@@ -422,7 +425,10 @@ class MainActivity : ComponentActivity() {
         setContent {
             val sysDark = isSystemInDarkTheme()
             val mode = ThemeStore.mode.value
-            val amoled = mode == "amoled"
+            // "dark" is no longer a selectable mode (stored values are
+            // migrated to AMOLED in ThemeStore.init) — map it to AMOLED
+            // rendering here too, as a safety net.
+            val amoled = mode == "amoled" || mode == "dark"
             val dark = when (mode) { "light" -> false; "dark", "amoled" -> true; else -> sysDark }
             val accent = ThemeStore.accentColor()
             val base = if (dark) darkColorScheme() else lightColorScheme()
@@ -2524,12 +2530,17 @@ private fun ChatDetail(
     var attachMenu by remember { mutableStateOf(false) }
     var replyTo by remember { mutableStateOf<GatewayClient.Msg?>(null) }
     var reactMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
+    // iOS-style selection: window bounds of the long-pressed bubble, captured
+    // at press time so the action sheet can float its copy at the message's
+    // own position (see MessageActionSheet).
+    var reactAnchor by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
     var editMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
     var infoMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
     // multi-select state: long-press → "Select" enters a mode where tapping bubbles toggles them.
     // U2: selMode/selIds are hoisted (parent params) so the glass header renders selection mode.
-    // blur the chat behind the long-press action sheet (iOS/WhatsApp context-menu style)
-    val menuBlur by animateDpAsState(if (reactMsg != null) 18.dp else 0.dp, label = "msgblur")
+    // blur the chat behind the long-press action sheet (iOS-style selection;
+    // part of that effect, so it only applies while the setting is on)
+    val menuBlur by animateDpAsState(if (IosSelectionSettings.enabled.value && reactMsg != null) 18.dp else 0.dp, label = "msgblur")
     // message translation (double-tap). Ask the target language once, then translate directly.
     val transScope = rememberCoroutineScope()
     var askTransFor by remember { mutableStateOf<GatewayClient.Msg?>(null) }
@@ -2558,6 +2569,8 @@ private fun ChatDetail(
     reactMsg?.let { rm ->
         MessageActionSheet(
             m = rm,
+            anchor = reactAnchor,
+            previewCache = previewCache,
             onDismiss = { reactMsg = null },
             onReact = { e -> onReact(rm, e); reactMsg = null },
             onEdit = { editMsg = rm; reactMsg = null },
@@ -2833,8 +2846,9 @@ private fun ChatDetail(
             itemsIndexed(displayGroups, key = { _, g -> groupRowKey(g) }) { itemIndex, g ->
                 val first = g.first()
                 val motionKey = groupRowKey(g)
+                var itemBounds by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
                 val bubble: @Composable () -> Unit = {
-                    Box(Modifier.fillMaxWidth()) {
+                    Box(Modifier.fillMaxWidth().onGloballyPositioned { itemBounds = it.boundsInWindow() }) {
                         if (g.size == 1) {
                             val m = first
                             MessageBubble(m, previewCache, dpCache, onMedia, onShare, onDownload,
@@ -2844,7 +2858,7 @@ private fun ChatDetail(
                                 selMode = selMode, selected = m.id != null && m.id in selIds,
                                 onToggleSelect = { mm -> mm.id?.let { if (it in selIds) selIds.remove(it) else selIds.add(it); if (selIds.isEmpty()) onExitSel() } },
                                 onTranslate = { onTranslateMsg(it) },
-                                onLongClick = { reactMsg = it })
+                                onLongClick = { reactAnchor = itemBounds; reactMsg = it })
                         } else {
                             AlbumBubble(msgs = g, previewCache = previewCache, dpCache = dpCache,
                                 onMedia = onMedia,
@@ -2852,7 +2866,7 @@ private fun ChatDetail(
                                 selMode = selMode,
                                 isSelected = { mm -> mm.id != null && mm.id in selIds },
                                 onToggleSelect = { mm -> mm.id?.let { if (it in selIds) selIds.remove(it) else selIds.add(it); if (selIds.isEmpty()) onExitSel() } },
-                                onLongClick = { reactMsg = it })
+                                onLongClick = { reactAnchor = itemBounds; reactMsg = it })
                         }
                     }
                 }
@@ -3083,9 +3097,18 @@ private fun FontPickerDialog(ctx: Context, current: String, onDismiss: () -> Uni
 }
 
 // ===== Message long-press action sheet: dark glass, reactions + actions with icons =====
+// iOS-style selection (IosSelectionSettings, default ON): the chat behind
+// blurs (ChatDetail's menuBlur), the pressed message's copy floats AT the
+// message's own on-screen position over the blur (the anchor), the reaction
+// pill sits directly above it and the action box below — all popping in
+// with a short staggered scale/fade (260 ms; the reference plugin runs
+// 250 ms at x1 speed). Setting OFF → the plain centered sheet: no anchor,
+// no pop, no blur, exactly as before this change.
 @Composable
 private fun MessageActionSheet(
     m: GatewayClient.Msg,
+    anchor: androidx.compose.ui.geometry.Rect? = null,
+    previewCache: MutableMap<String, ImageBitmap?>? = null,
     onDismiss: () -> Unit,
     onReact: (String) -> Unit,
     onEdit: () -> Unit,
@@ -3101,15 +3124,48 @@ private fun MessageActionSheet(
     val dark = isSystemInDarkTheme()
     val spec = bubbleSpec(m.fromMe, dark)
     val side = if (m.fromMe) Alignment.End else Alignment.Start
-    // Full-screen blurred-backdrop context menu (iOS / Telegram style): reaction pill + the floating
-    // message + the action box, all hugging the message's own side (sent → right, received → left).
+    val ios = IosSelectionSettings.enabled.value
+    val anchored = ios && anchor != null
+    // pop-in progress, staggered pill → copy → menu
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { shown = true }
+    val popRaw by animateFloatAsState(if (shown) 1f else 0f, animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing), label = "iosPop")
+    val pop = if (ios) popRaw else 1f
+    fun stag(start: Float, end: Float): Float = ((pop - start) / (end - start)).coerceIn(0f, 1f)
+    val pillP = stag(0f, 0.55f)
+    val copyP = stag(0.12f, 0.78f)
+    val menuP = stag(0.3f, 1f)
+    val originX = if (m.fromMe) 1f else 0f
+    // media thumbnail for the floating copy — the bubble's own preview pipeline
+    val ctx = LocalContext.current
+    val mediaName = m.mediaName
+    LaunchedEffect(mediaName) { if (mediaName != null && previewCache != null && !previewCache.containsKey(mediaName)) previewCache[mediaName] = loadPreview(ctx, m) }
+    val copyPreview = (mediaName?.let { previewCache?.get(it) }) ?: remember(m.thumb) { decodeThumb(m.thumb) }
+    val showMedia = copyPreview != null && m.mediaType != null && m.mediaType != "audio" && !m.deleted
+    // vertical lift: a top spacer sized so the copy lands where the real
+    // bubble sits (anchor top − status bar − pill height − the 10.dp gap)
+    val density = LocalDensity.current
+    // start from the pill's known height (42.dp emoji + 8.dp padding) so the
+    // spacer is right on frame one; onGloballyPositioned corrects it live
+    var pillHPx by remember { mutableStateOf(with(density) { 50.dp.roundToPx() }) }
+    val liftSpacer = if (anchored && anchor != null) {
+        val want = with(density) { anchor.top.toDp() } -
+            with(density) { WindowInsets.statusBars.getTop(this).toDp() } -
+            with(density) { pillHPx.toDp() } - 10.dp
+        want.coerceAtLeast(4.dp)
+    } else {
+        0.dp
+    }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(Modifier.fillMaxSize().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
+        Box(Modifier.fillMaxSize().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = if (anchored) Alignment.TopCenter else Alignment.Center) {
             Column(Modifier.fillMaxWidth().statusBarsPadding().navigationBarsPadding().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()),
                 horizontalAlignment = side) {
+                if (anchored) Spacer(Modifier.height(liftSpacer))
                 // reaction pill
                 StyledSurface(shape = uiShapeFor(28), color = dialogBg().copy(alpha = 0.98f), shadowElevation = 10.dp,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, onSurf.copy(alpha = 0.08f))) {
+                    border = androidx.compose.foundation.BorderStroke(1.dp, onSurf.copy(alpha = 0.08f)),
+                    modifier = Modifier.onGloballyPositioned { pillHPx = it.size.height }
+                        .graphicsLayer { scaleX = 0.7f + 0.3f * pillP; scaleY = 0.7f + 0.3f * pillP; alpha = pillP; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(originX, 1f) }) {
                     Row(Modifier.padding(horizontal = 6.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                         listOf("👍", "❤️", "😂", "😮", "😢", "🙏").forEach { e ->
                             Box(Modifier.size(42.dp).clip(CircleShape).clickable { onReact(e) }, contentAlignment = Alignment.Center) {
@@ -3119,17 +3175,32 @@ private fun MessageActionSheet(
                     }
                 }
                 Spacer(Modifier.height(10.dp))
-                // floating copy of the long-pressed message
-                Surface(color = spec.first, shape = spec.third, shadowElevation = 8.dp, modifier = Modifier.widthIn(max = 300.dp)) {
-                    val preview = when { m.deleted -> "This message was deleted"; m.text.isNotBlank() -> m.text; m.mediaType == "sticker" -> "Sticker"; m.mediaType != null -> "[${m.mediaType}]"; else -> "" }
-                    Text(preview, color = spec.second, style = MaterialTheme.typography.bodyLarge, maxLines = 10, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+                // floating copy of the long-pressed message — now with the
+                // media thumbnail, like the real bubble (it was text-only)
+                Surface(color = spec.first, shape = spec.third, shadowElevation = 8.dp,
+                    modifier = Modifier.widthIn(max = 300.dp)
+                        .graphicsLayer { scaleX = 0.92f + 0.08f * copyP; scaleY = 0.92f + 0.08f * copyP; alpha = copyP; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(originX, 0.5f) }) {
+                    Column(Modifier.clip(spec.third)) {
+                        if (showMedia) {
+                            if (m.mediaType == "sticker") {
+                                Image(copyPreview!!, "sticker", Modifier.size(160.dp).align(Alignment.CenterHorizontally), contentScale = ContentScale.Fit)
+                            } else {
+                                Image(copyPreview!!, "message media", Modifier.widthIn(min = 200.dp, max = 300.dp).heightIn(max = 260.dp), contentScale = ContentScale.Crop)
+                            }
+                        }
+                        val preview = when { m.deleted -> "This message was deleted"; m.text.isNotBlank() -> m.text; showMedia -> ""; m.mediaType == "sticker" -> "Sticker"; m.mediaType != null -> "[${m.mediaType}]"; else -> "" }
+                        if (preview.isNotBlank()) {
+                            Text(preview, color = spec.second, style = MaterialTheme.typography.bodyLarge, maxLines = 10, overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+                        }
+                    }
                 }
                 Spacer(Modifier.height(10.dp))
                 // action box — same side as the message
                 StyledSurface(shape = uiShapeFor(20), color = dialogBg().copy(alpha = 0.98f), shadowElevation = 12.dp,
                     border = androidx.compose.foundation.BorderStroke(1.dp, onSurf.copy(alpha = 0.08f)),
-                    modifier = Modifier.widthIn(min = 230.dp, max = 300.dp)) {
+                    modifier = Modifier.widthIn(min = 230.dp, max = 300.dp)
+                        .graphicsLayer { scaleX = 0.75f + 0.25f * menuP; scaleY = 0.75f + 0.25f * menuP; alpha = menuP; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(originX, 0f) }) {
                     Column(Modifier.padding(vertical = 6.dp)) {
                         val canEdit = m.fromMe && m.text.isNotBlank() && !m.deleted
                         val canCopy = m.text.isNotBlank() && !m.deleted
@@ -4631,6 +4702,17 @@ private fun ChatSettings(onOpenWallpaper: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
+
+    SettingsGroup("Message menu") {
+        UiToggleRow(
+            icon = Icons.Filled.Gesture,
+            tint = Color(0xFF82AAFF),
+            title = "iOS-style selection",
+            desc = "Long-press a message: blurred chat, message floats in place, pop-in menu",
+            checked = IosSelectionSettings.enabled.value,
+            onChange = { IosSelectionSettings.setEnabled(it) },
+        )
+    }
 }
 
 // horizontal swatch picker; first swatch (0) = follow the bubble-style default
@@ -4654,43 +4736,59 @@ private fun BubbleColorRow(selected: Int, onPick: (Int) -> Unit) {
     }
 }
 
+// Theme mode options. The standalone "Dark" option was removed (user
+// request, 2026-10-21) — a stored "dark" value migrates to AMOLED in
+// ThemeStore.init, so this list never has to render it. Shared by the
+// Appearance page and the Accent Color page so the two selectors can
+// never drift apart.
+private val THEME_MODES = listOf(
+    "system" to "System", "light" to "Light", "amoled" to "AMOLED"
+)
+
 @Composable
-private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -> Unit, onOpenIconStyle: () -> Unit, onOpenAccentColor: () -> Unit, onOpenBlurAnim: () -> Unit) {
+private fun ThemeModeGrid() {
     val mode = ThemeStore.mode.value
-    val accent = ThemeStore.accent.value
-    val modes = listOf(
-        "system" to "System", "light" to "Light", "dark" to "Dark", "amoled" to "AMOLED"
-    )
-    val accentPair = ThemeStore.accents.firstOrNull { it.first == accent }
-    SettingsGroup("Theme") {
-        Column(Modifier.padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            // 2x2 grid of theme options — cleaner than a cramped chip row.
-            for (row in modes.chunked(2)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    for ((k, lbl) in row) {
-                        val sel = mode == k
-                        StyledSurface(
-                            onClick = { ThemeStore.setMode(k) },
-                            shape = uiShapeFor(16),
-                            color = if (sel) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
-                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Box(Modifier.size(10.dp).clip(CircleShape)
-                                    .background(if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)))
-                                Spacer(Modifier.width(10.dp))
-                                Text(lbl, style = MaterialTheme.typography.bodyLarge,
-                                    fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal,
-                                    color = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
-                            }
+    Column(Modifier.padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        // grid of theme options — cleaner than a cramped chip row.
+        for (row in THEME_MODES.chunked(2)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                for ((k, lbl) in row) {
+                    val sel = mode == k
+                    StyledSurface(
+                        onClick = { ThemeStore.setMode(k) },
+                        shape = uiShapeFor(16),
+                        color = if (sel) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(10.dp).clip(CircleShape)
+                                .background(if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)))
+                            Spacer(Modifier.width(10.dp))
+                            Text(lbl, style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
                         }
                     }
-                    // Keep the grid aligned when the row has one item.
-                    if (row.size == 1) Spacer(Modifier.weight(1f))
                 }
+                // Keep the grid aligned when the row has one item.
+                if (row.size == 1) Spacer(Modifier.weight(1f))
             }
         }
+    }
+}
+
+private fun accentDisplayName(key: String): String = when (key) {
+    "deeppurple" -> "Deep Purple"
+    else -> key.replaceFirstChar { it.uppercase() }
+}
+
+@Composable
+private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -> Unit, onOpenIconStyle: () -> Unit, onOpenAccentColor: () -> Unit, onOpenBlurAnim: () -> Unit) {
+    val accent = ThemeStore.accent.value
+    val accentPair = ThemeStore.accents.firstOrNull { it.first == accent }
+    SettingsGroup("Theme") {
+        ThemeModeGrid()
     }
     SettingsGroup("Accent color") {
         // The picker itself lives on its own page now (same pattern as
@@ -4715,7 +4813,7 @@ private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -
                 )
             }
             Text(
-                accentPair?.first?.replaceFirstChar { it.uppercase() } ?: "",
+                accentPair?.first?.let { accentDisplayName(it) } ?: "",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -4771,30 +4869,87 @@ private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -
 }
 
 // Settings → Appearance → Accent Color (opened from the Appearance page).
-// The picker is the one that used to sit inline on the Appearance page —
-// same swatches, same instant ThemeStore.setAccent apply + persist.
+// Overhauled 2026-10-21 (user: the old single swatch row clipped at the
+// right edge — last circle half-cut — and the page was nearly empty):
+// the theme-mode selector also lives here now (same ThemeStore prefs),
+// the swatches are a proper grid with names so nothing can clip, and a
+// live preview shows the accent on sample chat UI. Accent changes still
+// apply instantly via ThemeStore.setAccent, exactly as before.
 @Composable
 private fun AccentColorSettingsPage() {
     val accent = ThemeStore.accent.value
+    SettingsGroup("Theme") {
+        ThemeModeGrid()
+    }
     SettingsGroup("Accent color") {
-        Column(Modifier.padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                ThemeStore.accents.forEach { (key, color) ->
-                    val sel = accent == key
-                    Box(Modifier.size(44.dp).clip(CircleShape).background(color)
-                        .border(if (sel) 3.dp else 1.dp,
-                            if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
-                            CircleShape)
-                        .clickable { ThemeStore.setAccent(key) },
-                        contentAlignment = Alignment.Center) {
-                        if (sel) AyxIcon(Icons.Filled.Check, "selected", tint = Color.White, modifier = Modifier.size(20.dp))
+        Column(Modifier.padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            ThemeStore.accents.chunked(5).forEach { rowAccents ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    rowAccents.forEach { (key, color) ->
+                        AccentSwatch(key, color, selected = accent == key) { ThemeStore.setAccent(key) }
                     }
                 }
             }
         }
     }
+    SettingsGroup("Preview") {
+        AccentPreview()
+    }
     Text("Theme and accent apply instantly across the whole app.", style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp, top = 2.dp))
+}
+
+@Composable
+private fun AccentSwatch(key: String, color: Color, selected: Boolean, onClick: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.size(48.dp).clip(CircleShape).background(color)
+            .border(if (selected) 3.dp else 1.dp,
+                if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                CircleShape)
+            .clickable { onClick() },
+            contentAlignment = Alignment.Center) {
+            if (selected) AyxIcon(Icons.Filled.Check, "selected", tint = Color.White, modifier = Modifier.size(22.dp))
+        }
+        Spacer(Modifier.height(5.dp))
+        Text(accentDisplayName(key), style = MaterialTheme.typography.labelSmall,
+            color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1)
+    }
+}
+
+/** Live preview: sample chat UI rendered in the current accent (the
+ *  app's colorScheme primary IS the accent, so this updates the moment
+ *  a swatch is tapped — no apply step, same as everywhere else). */
+@Composable
+private fun AccentPreview() {
+    val scheme = MaterialTheme.colorScheme
+    Column(Modifier.padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+            Surface(color = scheme.surfaceVariant, shape = uiShapeFor(16)) {
+                Text("This accent looks good!", color = scheme.onSurface, style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            Surface(color = scheme.primary, shape = uiShapeFor(16)) {
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Trying it right now", color = scheme.onPrimary, style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.width(6.dp))
+                    AyxIcon(Icons.Filled.DoneAll, "read", tint = scheme.onPrimary, modifier = Modifier.size(16.dp))
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = scheme.primary, contentColor = scheme.onPrimary)) {
+                Text("Button")
+            }
+            Spacer(Modifier.weight(1f))
+            Text("Switch", style = MaterialTheme.typography.bodyMedium, color = scheme.onSurface)
+            Spacer(Modifier.width(8.dp))
+            Switch(checked = true, onCheckedChange = null,
+                colors = SwitchDefaults.colors(checkedTrackColor = scheme.primary, checkedThumbColor = scheme.onPrimary, checkedBorderColor = scheme.primary))
+        }
+    }
 }
 
 // Settings → Appearance → Blur & Animation (opened from the Appearance
