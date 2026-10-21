@@ -73,18 +73,30 @@ fun ayxDialogAlpha(baseAlpha: Float = 1f): Float =
  * input field's old text ghosting over the new chat ("garbled leftover
  * text"). Fade-only keeps exactly one chat visible at a time.
  */
+/**
+ * State-driven variant: the content lambda receives the state OF ITS OWN
+ * animation slot, not whatever the caller's live variable holds right now.
+ *
+ * This matters because AnimatedContent composes the outgoing AND incoming
+ * slots at the same time during a transition. A caller whose content reads
+ * a captured live variable (e.g. `storyView`) renders the SAME new content
+ * in both slots — for the status viewer that meant two viewers (two video
+ * players) stacked during every open, the hidden one ghosting/playing
+ * behind the visible one. Callers whose content depends on per-state data
+ * must use this variant; purely static content can keep the simple one.
+ */
 @Composable
-fun AyxAnimatedScreen(
-    screenKey: Any,
+fun <T> AyxAnimatedScreen(
+    targetState: T,
     isChat: Boolean = false,
-    content: @Composable () -> Unit,
+    content: @Composable (T) -> Unit,
 ) {
     val style = UiAnimationSettings.animationStyle.value
     val motionBlur = UiAnimationSettings.motionBlurEnabled.value && !isChat
     // Transient motion-blur: max radius at switch, decays to 0 over ~300ms.
     // Skipped for chat screens (see isChat) and for non-Zoom styles.
-    var blurActive by remember(screenKey) { mutableStateOf(motionBlur && style == AnimationStyle.ZOOM) }
-    LaunchedEffect(screenKey) {
+    var blurActive by remember(targetState) { mutableStateOf(motionBlur && style == AnimationStyle.ZOOM) }
+    LaunchedEffect(targetState) {
         if (motionBlur && style == AnimationStyle.ZOOM) {
             blurActive = true
             delay(300)
@@ -94,18 +106,27 @@ fun AyxAnimatedScreen(
         }
     }
     AnimatedContent(
-        targetState = screenKey,
+        targetState = targetState,
         transitionSpec = { ayxTransitionFor(if (isChat) AnimationStyle.FADE else style) },
         label = "ayxScreen",
-    ) {
+    ) { slotState ->
         Box(
             Modifier.then(
                 if (blurActive) Modifier.blur(AyxMotionBlurMaxRadius) else Modifier,
             ),
         ) {
-            content()
+            content(slotState)
         }
     }
+}
+
+@Composable
+fun AyxAnimatedScreen(
+    screenKey: Any,
+    isChat: Boolean = false,
+    content: @Composable () -> Unit,
+) {
+    AyxAnimatedScreen(targetState = screenKey, isChat = isChat) { content() }
 }
 
 private fun ayxTransitionFor(style: AnimationStyle) =
