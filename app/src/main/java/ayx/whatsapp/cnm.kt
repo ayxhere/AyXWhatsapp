@@ -204,7 +204,7 @@ private fun MemCard(c: GatewayClient.MemContact, expanded: Boolean, onToggle: ()
                     }
                     Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                Icon(Icons.Filled.KeyboardArrowDown, "expand", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.rotate(arrow))
+                AyxIcon(Icons.Filled.KeyboardArrowDown, "expand", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.rotate(arrow))
             }
             AnimatedVisibility(expanded, enter = fadeIn(tween(180)) + expandVertically(tween(200)), exit = fadeOut(tween(140)) + shrinkVertically(tween(180))) {
                 Column {
@@ -454,12 +454,12 @@ private fun VoiceRow(v: VoiceOpt, isSelected: Boolean, isPlaying: Boolean, isLoa
                 Text(v.sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (isSelected) {
-                Icon(Icons.Filled.Check, "selected", tint = MaterialTheme.colorScheme.primary)
+                AyxIcon(Icons.Filled.Check, "selected", tint = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.width(4.dp))
             }
             IconButton(onClick = onPlay) {
                 if (isLoading) CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
-                else Icon(if (isPlaying) Icons.Filled.Stop else Icons.Filled.PlayArrow, "demo", tint = MaterialTheme.colorScheme.primary)
+                else AyxIcon(if (isPlaying) Icons.Filled.Stop else Icons.Filled.PlayArrow, "demo", tint = MaterialTheme.colorScheme.primary)
             }
         }
     }

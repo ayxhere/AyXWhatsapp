@@ -62,7 +62,7 @@ fun AyxAppearanceScreen(onBack: () -> Unit) {
                 title = { Text("Appearance", color = activeTheme.colors.onBackground) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, "Back", tint = activeTheme.colors.onBackground)
+                        AyxIcon(Icons.Default.ArrowBack, "Back", tint = activeTheme.colors.onBackground)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -109,7 +109,7 @@ fun AyxAppearanceScreen(onBack: () -> Unit) {
                                         .background(activeTheme.colors.primary),
                                     contentAlignment = Alignment.Center,
                                 ) {
-                                    Icon(
+                                    AyxIcon(
                                         Icons.Default.Check, "Selected",
                                         tint = activeTheme.colors.onPrimary,
                                         modifier = Modifier.size(18.dp),

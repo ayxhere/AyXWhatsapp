@@ -112,7 +112,7 @@ fun StatusViewersSheet(statusIds: List<String>, dpCache: MutableMap<String, Imag
                     Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 14.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("Viewed by" + " " + viewers.size, color = Color.White, fontWeight = FontWeight.Medium, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
                         Box {
-                            IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "more", tint = Color.White) }
+                            IconButton(onClick = { menu = true }) { AyxIcon(Icons.Filled.MoreVert, "more", tint = Color.White) }
                             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                                 DropdownMenuItem(text = { Text("Refresh") }, onClick = { menu = false; reload++ })
                             }

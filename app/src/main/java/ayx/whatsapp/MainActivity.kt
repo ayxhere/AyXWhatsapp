@@ -412,6 +412,7 @@ class MainActivity : ComponentActivity() {
         ThemeStore.init(applicationContext)
         TextAnimSettings.init(applicationContext)
         MessageMotionSettings.init(applicationContext)
+        IconStyleSettings.init(applicationContext)
         UiStyleStore.init(applicationContext)
         ayx.whatsapp.ui.UiAnimationSettings.init(applicationContext)
         ChatStyle.init(applicationContext)
@@ -711,7 +712,7 @@ fun PrivacyGate(onAgree: () -> Unit) {
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Spacer(Modifier.height(26.dp))
         Box(Modifier.size(64.dp).clip(uiShapeFor(20)).background(AYX_GREEN.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
-            Icon(Icons.Filled.Shield, null, tint = AYX_GREEN, modifier = Modifier.size(34.dp))
+            AyxIcon(Icons.Filled.Shield, null, tint = AYX_GREEN, modifier = Modifier.size(34.dp))
         }
         Spacer(Modifier.height(12.dp))
         Text("Privacy Policy", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -724,7 +725,7 @@ fun PrivacyGate(onAgree: () -> Unit) {
         }
         Spacer(Modifier.height(16.dp))
         Button(onClick = onAgree, modifier = Modifier.fillMaxWidth().height(52.dp), shape = uiShapeFor(14)) {
-            Icon(Icons.Filled.CheckCircle, null, modifier = Modifier.size(19.dp)); Spacer(Modifier.width(8.dp)); Text("I Agree & Continue", fontWeight = FontWeight.SemiBold)
+            AyxIcon(Icons.Filled.CheckCircle, null, modifier = Modifier.size(19.dp)); Spacer(Modifier.width(8.dp)); Text("I Agree & Continue", fontWeight = FontWeight.SemiBold)
         }
         Spacer(Modifier.height(18.dp))
     }
@@ -1311,7 +1312,7 @@ fun GatewayApp() {
             onDismissRequest = { textStatusDlg = false },
             containerColor = dialogBg().copy(alpha = ayxDialogAlpha()),
             shape = uiShapeFor(24),
-            icon = { Icon(Icons.Filled.TextFields, null, tint = AYX_GREEN) },
+            icon = { AyxIcon(Icons.Filled.TextFields, null, tint = AYX_GREEN) },
             title = { Text("Text status") },
             text = {
                 Column {
@@ -1521,15 +1522,15 @@ fun GatewayApp() {
         floatingActionButton = {
             if (status.registered && openChat == null && screen == "chats") {
                 if (chatsPage == 1) Box {
-                    FloatingActionButton(onClick = { statusFabMenu = true }) { Icon(Icons.Filled.PhotoCamera, "add status") }
+                    FloatingActionButton(onClick = { statusFabMenu = true }) { AyxIcon(Icons.Filled.PhotoCamera, "add status") }
                     DropdownMenu(expanded = statusFabMenu, onDismissRequest = { statusFabMenu = false }) {
-                        DropdownMenuItem(text = { Text("Photo / Video") }, leadingIcon = { Icon(Icons.Filled.PhotoCamera, null) },
+                        DropdownMenuItem(text = { Text("Photo / Video") }, leadingIcon = { AyxIcon(Icons.Filled.PhotoCamera, null) },
                             onClick = { statusFabMenu = false; ensureContacts(); statusPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) })
-                        DropdownMenuItem(text = { Text("Text status") }, leadingIcon = { Icon(Icons.Filled.TextFields, null) },
+                        DropdownMenuItem(text = { Text("Text status") }, leadingIcon = { AyxIcon(Icons.Filled.TextFields, null) },
                             onClick = { statusFabMenu = false; ensureContacts(); textStatusDlg = true })
                     }
                 }
-                else FloatingActionButton(onClick = { screen = "newchat"; ensureContacts() }) { Icon(Icons.Filled.Add, "new chat") }
+                else FloatingActionButton(onClick = { screen = "newchat"; ensureContacts() }) { AyxIcon(Icons.Filled.Add, "new chat") }
             }
         },
         bottomBar = {},   // Home/Status nav is a FLOATING rounded glass bar overlaid on the content (see below)
@@ -1547,11 +1548,11 @@ fun GatewayApp() {
                                 singleLine = true, shape = uiShapeFor(24),
                                 containerColor = MaterialTheme.colorScheme.surfaceVariant,
                                 borderColor = Color.Transparent, focusedBorderColor = Color.Transparent,
-                                leadingIcon = { Icon(Icons.Filled.Search, null, tint = IOS_BLUE) },
+                                leadingIcon = { AyxIcon(Icons.Filled.Search, null, tint = IOS_BLUE) },
                                 modifier = Modifier.fillMaxWidth())
                         } else {
                             OutlinedTextField(searchQuery, { searchQuery = it }, placeholder = { Text("Search chats") },
-                                leadingIcon = { Icon(Icons.Filled.Search, null, tint = IOS_BLUE) }, singleLine = true, shape = uiShapeFor(24),
+                                leadingIcon = { AyxIcon(Icons.Filled.Search, null, tint = IOS_BLUE) }, singleLine = true, shape = uiShapeFor(24),
                                 colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent,
                                     focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant, unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant),
                                 modifier = Modifier.fillMaxWidth())
@@ -1592,7 +1593,7 @@ fun GatewayApp() {
                     if (openChat != null || screen == "settings" || screen == "newchat" || screen == "profile")
                         IconButton(onClick = { if (openChat != null) openChat = null else if (screen == "settings" && settingsPage != "home") settingsPage = settingsParent(settingsPage) else screen = "chats" },
                             modifier = Modifier.padding(start = 6.dp).clip(CircleShape).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "back")
+                            AyxIcon(Icons.AutoMirrored.Filled.ArrowBack, "back")
                         }
                     else if (status.registered && myJid != null)
                         Box(Modifier.padding(start = 10.dp).clip(CircleShape).clickable { screen = "profile" }) { Avatar(myJid!!, "Me", dpCache, 34.dp) }
@@ -1600,11 +1601,11 @@ fun GatewayApp() {
                 actions = {
                     if (status.registered && openChat == null && screen == "chats") {
                         if (searchMode) {
-                            IconButton(onClick = { searchMode = false; searchQuery = "" }) { Icon(Icons.Filled.Close, "close") }
+                            IconButton(onClick = { searchMode = false; searchQuery = "" }) { AyxIcon(Icons.Filled.Close, "close") }
                         } else {
                             Row(Modifier.padding(end = 4.dp).clip(uiShapeFor(22)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))) {
-                                IconButton(onClick = { searchMode = true }) { Icon(Icons.Filled.Search, "search") }
-                                IconButton(onClick = { settingsPage = "home"; screen = "settings" }) { Icon(Icons.Filled.Settings, "settings") }
+                                IconButton(onClick = { searchMode = true }) { AyxIcon(Icons.Filled.Search, "search") }
+                                IconButton(onClick = { settingsPage = "home"; screen = "settings" }) { AyxIcon(Icons.Filled.Settings, "settings") }
                             }
                         }
                     }
@@ -1613,8 +1614,8 @@ fun GatewayApp() {
                         val ocb = openChat
                         val isBlocked = ocb != null && ocb in blockedJids
                         Row(Modifier.padding(end = 4.dp).clip(uiShapeFor(22)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))) {
-                            IconButton(onClick = { showSetName = true }) { Icon(Icons.Filled.Edit, "set name") }
-                            IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "menu") }
+                            IconButton(onClick = { showSetName = true }) { AyxIcon(Icons.Filled.Edit, "set name") }
+                            IconButton(onClick = { menu = true }) { AyxIcon(Icons.Filled.MoreVert, "menu") }
                         }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, containerColor = MaterialTheme.colorScheme.surface.copy(alpha = ayxMenuAlpha())) {
                             DropdownMenuItem(text = { Text("Change wallpaper") }, onClick = { menu = false; chatWallpaperPicker.launch("image/*") })
@@ -1924,11 +1925,11 @@ fun GatewayApp() {
                     modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 12.dp)) {
                     Row(Modifier.padding(horizontal = 6.dp).height(60.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.width(104.dp).fillMaxHeight().clip(uiShapeFor(24)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { chatsPage = 0 }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                            Icon(Icons.Filled.Home, "Home", tint = if (chatsPage == 0) selC else dimC, modifier = Modifier.size(22.dp))
+                            AyxIcon(Icons.Filled.Home, "Home", tint = if (chatsPage == 0) selC else dimC, modifier = Modifier.size(22.dp))
                             Spacer(Modifier.height(2.dp)); Text("Home", color = if (chatsPage == 0) selC else dimC, style = MaterialTheme.typography.labelSmall, fontWeight = if (chatsPage == 0) FontWeight.SemiBold else FontWeight.Normal)
                         }
                         Column(Modifier.width(104.dp).fillMaxHeight().clip(uiShapeFor(24)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { chatsPage = 1 }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                            Icon(Icons.Filled.DonutLarge, "Status", tint = if (chatsPage == 1) selC else dimC, modifier = Modifier.size(22.dp))
+                            AyxIcon(Icons.Filled.DonutLarge, "Status", tint = if (chatsPage == 1) selC else dimC, modifier = Modifier.size(22.dp))
                             Spacer(Modifier.height(2.dp)); Text("Status", color = if (chatsPage == 1) selC else dimC, style = MaterialTheme.typography.labelSmall, fontWeight = if (chatsPage == 1) FontWeight.SemiBold else FontWeight.Normal)
                         }
                     }
@@ -1951,7 +1952,7 @@ fun GatewayApp() {
                     onDismissRequest = { showSetName = false },
                     containerColor = dialogBg().copy(alpha = ayxDialogAlpha()),
                     shape = uiShapeFor(24),
-                    icon = { Icon(Icons.Filled.Edit, null, tint = AYX_GREEN) },
+                    icon = { AyxIcon(Icons.Filled.Edit, null, tint = AYX_GREEN) },
                     title = { Text("Set name") },
                     text = {
                         Column {
@@ -1960,7 +1961,7 @@ fun GatewayApp() {
                             Spacer(Modifier.height(12.dp))
                             OutlinedTextField(nameInput, { nameInput = it }, singleLine = true,
                                 placeholder = { Text("Custom name") }, shape = uiShapeFor(14),
-                                trailingIcon = { if (nameInput.isNotEmpty()) IconButton(onClick = { nameInput = "" }) { Icon(Icons.Filled.Clear, "clear") } },
+                                trailingIcon = { if (nameInput.isNotEmpty()) IconButton(onClick = { nameInput = "" }) { AyxIcon(Icons.Filled.Clear, "clear") } },
                                 modifier = Modifier.fillMaxWidth())
                         }
                     },
@@ -2043,19 +2044,19 @@ private fun ForwardPicker(messages: List<GatewayClient.Msg>, dpCache: MutableMap
             modifier = Modifier.fillMaxWidth(0.94f).fillMaxHeight(0.8f)) {
             Column(Modifier.fillMaxSize().padding(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowForward, null, tint = AYX_GREEN)
+                    AyxIcon(Icons.AutoMirrored.Filled.ArrowForward, null, tint = AYX_GREEN)
                     Spacer(Modifier.width(10.dp))
                     Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.weight(1f))
-                    IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, "close") }
+                    IconButton(onClick = onDismiss) { AyxIcon(Icons.Filled.Close, "close") }
                 }
                 Spacer(Modifier.height(10.dp))
                 if (TextAnimSettings.enabled.value) {
                     AnimatedOutlinedField(query, { query = it }, placeholderText = "Search chats", singleLine = true,
-                        shape = uiShapeFor(24), leadingIcon = { Icon(Icons.Filled.Search, null) }, modifier = Modifier.fillMaxWidth())
+                        shape = uiShapeFor(24), leadingIcon = { AyxIcon(Icons.Filled.Search, null) }, modifier = Modifier.fillMaxWidth())
                 } else {
                     OutlinedTextField(query, { query = it }, placeholder = { Text("Search chats") }, singleLine = true,
-                        leadingIcon = { Icon(Icons.Filled.Search, null) }, shape = uiShapeFor(24), modifier = Modifier.fillMaxWidth())
+                        leadingIcon = { AyxIcon(Icons.Filled.Search, null) }, shape = uiShapeFor(24), modifier = Modifier.fillMaxWidth())
                 }
                 Spacer(Modifier.height(8.dp))
                 LazyColumn(Modifier.weight(1f)) {
@@ -2069,7 +2070,7 @@ private fun ForwardPicker(messages: List<GatewayClient.Msg>, dpCache: MutableMap
                             Spacer(Modifier.width(12.dp))
                             Text(name, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             if (isSel) Box(Modifier.size(24.dp).clip(CircleShape).background(AYX_GREEN), contentAlignment = Alignment.Center) {
-                                Icon(Icons.Filled.Done, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                AyxIcon(Icons.Filled.Done, null, tint = Color.White, modifier = Modifier.size(16.dp))
                             } else Box(Modifier.size(24.dp).clip(CircleShape).border(2.dp, MaterialTheme.colorScheme.outline, CircleShape))
                         }
                     }
@@ -2077,7 +2078,7 @@ private fun ForwardPicker(messages: List<GatewayClient.Msg>, dpCache: MutableMap
                 Button(onClick = { onForward(selected.toList()) }, enabled = selected.isNotEmpty(),
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = AYX_GREEN)) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowForward, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
+                    AyxIcon(Icons.AutoMirrored.Filled.ArrowForward, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
                     Text(if (selected.isEmpty()) "Select chats" else "$action ${selected.size}")
                 }
             }
@@ -2131,21 +2132,21 @@ private fun ProfilePhotoViewer(jid: String, name: String, onDownload: () -> Unit
                     full != null -> Image(full!!, "profile photo", Modifier.fillMaxWidth().aspectRatio(1f), contentScale = ContentScale.Fit)
                     loading -> CircularProgressIndicator(color = Color.White)
                     else -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Filled.Person, null, tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(72.dp))
+                        AyxIcon(Icons.Filled.Person, null, tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(72.dp))
                         Spacer(Modifier.height(10.dp)); Text("No profile photo", color = Color.White.copy(alpha = 0.7f))
                     }
                 }
             }
             // top bar: name + close
             Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "close", tint = Color.White) }
+                IconButton(onClick = onClose) { AyxIcon(Icons.AutoMirrored.Filled.ArrowBack, "close", tint = Color.White) }
                 Spacer(Modifier.width(4.dp))
                 Text(name, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             // download FAB
             if (full != null) FloatingActionButton(onClick = onDownload, containerColor = AYX_GREEN,
                 modifier = Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(20.dp)) {
-                Icon(Icons.Filled.Download, "download", tint = Color.White)
+                AyxIcon(Icons.Filled.Download, "download", tint = Color.White)
             }
         }
     }
@@ -2155,7 +2156,7 @@ private fun ProfilePhotoViewer(jid: String, name: String, onDownload: () -> Unit
 @Composable
 private fun HiddenReveal(label: String, revealed: Boolean, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().clickable { onClick() }.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(if (revealed) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+        AyxIcon(if (revealed) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(14.dp))
         Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
     }
@@ -2267,7 +2268,7 @@ private fun ChatList(messages: List<GatewayClient.Msg>, chats: List<GatewayClien
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                             Text(name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, false))
-                            if (ChatFlags.isMuted(entry.jid) || entry.info?.muted == true) { Spacer(Modifier.width(5.dp)); Icon(Icons.Filled.NotificationsOff, "muted", modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+                            if (ChatFlags.isMuted(entry.jid) || entry.info?.muted == true) { Spacer(Modifier.width(5.dp)); AyxIcon(Icons.Filled.NotificationsOff, "muted", modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
                         }
                         // No-message chats have no time yet — show nothing,
                         // never a 1970 epoch date.
@@ -2386,7 +2387,7 @@ private fun MuteTimerDialog(onDismiss: () -> Unit, onPick: (Long) -> Unit) {
                 HorizontalDivider(color = onSurf.copy(alpha = 0.08f))
                 opts.forEach { (label, ms) ->
                     Row(Modifier.fillMaxWidth().clickable { onPick(ms) }.padding(horizontal = 18.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(if (ms >= ChatFlags.MUTE_FOREVER) Icons.Filled.NotificationsOff else Icons.Filled.Schedule, null, tint = AYX_GREEN, modifier = Modifier.size(20.dp))
+                        AyxIcon(if (ms >= ChatFlags.MUTE_FOREVER) Icons.Filled.NotificationsOff else Icons.Filled.Schedule, null, tint = AYX_GREEN, modifier = Modifier.size(20.dp))
                         Spacer(Modifier.width(16.dp))
                         Text(label, style = MaterialTheme.typography.bodyLarge)
                     }
@@ -2461,8 +2462,8 @@ private fun BatchThumb(uri: android.net.Uri, type: String) {
     }
     Box(Modifier.size(56.dp).clip(uiShapeFor(10)).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
         if (bmp != null) Image(bmp, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-        else if (type != "video") Icon(Icons.Filled.Image, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (type == "video") Icon(Icons.Filled.PlayArrow, "video", tint = Color.White, modifier = Modifier.size(22.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape))
+        else if (type != "video") AyxIcon(Icons.Filled.Image, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (type == "video") AyxIcon(Icons.Filled.PlayArrow, "video", tint = Color.White, modifier = Modifier.size(22.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape))
     }
 }
 
@@ -2773,11 +2774,11 @@ private fun ChatDetail(
                             singleLine = true, shape = uiShapeFor(24),
                             containerColor = MaterialTheme.colorScheme.surfaceVariant,
                             borderColor = Color.Transparent, focusedBorderColor = Color.Transparent,
-                            leadingIcon = { Icon(Icons.Filled.Search, null, tint = IOS_BLUE) },
+                            leadingIcon = { AyxIcon(Icons.Filled.Search, null, tint = IOS_BLUE) },
                             modifier = Modifier.fillMaxWidth())
                     } else {
                         OutlinedTextField(searchQuery, { searchQuery = it }, placeholder = { Text("Search messages") },
-                            leadingIcon = { Icon(Icons.Filled.Search, null, tint = IOS_BLUE) }, singleLine = true, shape = uiShapeFor(24),
+                            leadingIcon = { AyxIcon(Icons.Filled.Search, null, tint = IOS_BLUE) }, singleLine = true, shape = uiShapeFor(24),
                             colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent,
                                 focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant, unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant),
                             modifier = Modifier.fillMaxWidth())
@@ -2787,11 +2788,11 @@ private fun ChatDetail(
                     Text(if (searchMatches.isEmpty()) "0/0" else "${searchPos + 1}/${searchMatches.size}",
                         style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 6.dp))
                     IconButton(onClick = { if (searchPos < searchMatches.size - 1) { searchPos++; jumpToRow(searchMatches[searchPos]) } },
-                        enabled = searchPos < searchMatches.size - 1) { Icon(Icons.Filled.KeyboardArrowUp, "older match") }
+                        enabled = searchPos < searchMatches.size - 1) { AyxIcon(Icons.Filled.KeyboardArrowUp, "older match") }
                     IconButton(onClick = { if (searchPos > 0) { searchPos--; jumpToRow(searchMatches[searchPos]) } },
-                        enabled = searchPos > 0) { Icon(Icons.Filled.KeyboardArrowDown, "newer match") }
+                        enabled = searchPos > 0) { AyxIcon(Icons.Filled.KeyboardArrowDown, "newer match") }
                 }
-                IconButton(onClick = { onSearchOpenChange(false); searchQuery = ""; searchPos = 0 }) { Icon(Icons.Filled.Close, "close search") }
+                IconButton(onClick = { onSearchOpenChange(false); searchQuery = ""; searchPos = 0 }) { AyxIcon(Icons.Filled.Close, "close search") }
             }
         }
         LazyColumn(state = listState, reverseLayout = true, modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp),
@@ -2805,7 +2806,7 @@ private fun ChatDetail(
                     Box(Modifier.width(200.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
                         // Thumbnail (video: first frame via coil? use placeholder + icon for now)
                         Box(Modifier.fillMaxWidth().height(140.dp).background(Color.Black.copy(alpha = 0.7f)), contentAlignment = Alignment.Center) {
-                            Icon(
+                            AyxIcon(
                                 if (up.type == "video") Icons.Filled.Videocam else Icons.Filled.Image,
                                 "uploading", tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(40.dp)
                             )
@@ -2874,7 +2875,7 @@ private fun ChatDetail(
                     Text(if (rt.fromMe) "You" else rt.name.ifBlank { "Reply" }, style = MaterialTheme.typography.labelMedium, color = IOS_BLUE, maxLines = 1)
                     Text(rt.text.ifBlank { "\uD83D\uDCCE media" }, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                IconButton(onClick = { replyTo = null }) { Icon(Icons.Filled.Close, "cancel reply") }
+                IconButton(onClick = { replyTo = null }) { AyxIcon(Icons.Filled.Close, "cancel reply") }
             }
         }
         // ===== Composer: ONE rounded floating card (Claude-style). The attachment preview lives INSIDE it and the box grows as you type =====
@@ -2886,12 +2887,12 @@ private fun ChatDetail(
         var playPreview by remember(pendingMedia) { mutableStateOf(false) }
         val plusButton: @Composable () -> Unit = {
             Box {
-                IconButton(onClick = { attachMenu = true }) { Icon(Icons.Filled.Add, "add") }
+                IconButton(onClick = { attachMenu = true }) { AyxIcon(Icons.Filled.Add, "add") }
                 DropdownMenu(expanded = attachMenu, onDismissRequest = { attachMenu = false }, containerColor = MaterialTheme.colorScheme.surface.copy(alpha = ayxMenuAlpha())) {
-                    DropdownMenuItem(text = { Text("Camera") }, leadingIcon = { Icon(Icons.Filled.PhotoCamera, null) }, onClick = { attachMenu = false; onCamera() })
-                    DropdownMenuItem(text = { Text("Photos & Videos") }, leadingIcon = { Icon(Icons.Filled.Image, null) }, onClick = { attachMenu = false; onPickChatPhoto() })
-                    DropdownMenuItem(text = { Text("Videos") }, leadingIcon = { Icon(Icons.Filled.VideoFile, null) }, onClick = { attachMenu = false; onPickChatVideo() })
-                    DropdownMenuItem(text = { Text("Files") }, leadingIcon = { Icon(Icons.Filled.AttachFile, null) }, onClick = { attachMenu = false; onAttach() })
+                    DropdownMenuItem(text = { Text("Camera") }, leadingIcon = { AyxIcon(Icons.Filled.PhotoCamera, null) }, onClick = { attachMenu = false; onCamera() })
+                    DropdownMenuItem(text = { Text("Photos & Videos") }, leadingIcon = { AyxIcon(Icons.Filled.Image, null) }, onClick = { attachMenu = false; onPickChatPhoto() })
+                    DropdownMenuItem(text = { Text("Videos") }, leadingIcon = { AyxIcon(Icons.Filled.VideoFile, null) }, onClick = { attachMenu = false; onPickChatVideo() })
+                    DropdownMenuItem(text = { Text("Files") }, leadingIcon = { AyxIcon(Icons.Filled.AttachFile, null) }, onClick = { attachMenu = false; onAttach() })
                 }
             }
         }
@@ -2911,7 +2912,7 @@ private fun ChatDetail(
             }, enabled = (input.isNotBlank() || pendingMedia != null || pendingBatch.isNotEmpty()) && canSend,
                 modifier = Modifier.onGloballyPositioned { lc ->
                     textAnimBus.sendTargetWindow = lc.positionInWindow() + Offset(lc.size.width / 2f, lc.size.height / 2f)
-                }) { Icon(Icons.AutoMirrored.Filled.Send, "send") }
+                }) { AyxIcon(Icons.AutoMirrored.Filled.Send, "send") }
         }
         // Composer text size: default bodyLarge is 16sp - user asked for a bigger type box (+3sp).
         val composerTextStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 19.sp)
@@ -2958,7 +2959,7 @@ private fun ChatDetail(
                     }
                     Spacer(Modifier.width(8.dp))
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        IconButton(onClick = onClearPendingBatch, modifier = Modifier.size(28.dp).background(Color.Black.copy(alpha = 0.55f), CircleShape)) { Icon(Icons.Filled.Close, "clear batch", tint = Color.White, modifier = Modifier.size(16.dp)) }
+                        IconButton(onClick = onClearPendingBatch, modifier = Modifier.size(28.dp).background(Color.Black.copy(alpha = 0.55f), CircleShape)) { AyxIcon(Icons.Filled.Close, "clear batch", tint = Color.White, modifier = Modifier.size(16.dp)) }
                         Text("${pendingBatch.size} items", style = MaterialTheme.typography.labelSmall)
                     }
                 }
@@ -2997,15 +2998,15 @@ private fun ChatDetail(
                             }.getOrNull()
                         }
                         if (pbmp != null) Image(pbmp, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                        if (pmtype == "video") Icon(Icons.Filled.PlayArrow, "play", tint = Color.White, modifier = Modifier.size(38.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape))
+                        if (pmtype == "video") AyxIcon(Icons.Filled.PlayArrow, "play", tint = Color.White, modifier = Modifier.size(38.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape))
                     } else {
                         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(6.dp)) {
-                            Icon(Icons.Filled.InsertDriveFile, null, Modifier.size(34.dp), tint = MaterialTheme.colorScheme.primary)
+                            AyxIcon(Icons.Filled.InsertDriveFile, null, Modifier.size(34.dp), tint = MaterialTheme.colorScheme.primary)
                             Text(queryName(ctx, puri) ?: pmtype, style = MaterialTheme.typography.labelSmall, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
                         }
                     }
                     IconButton(onClick = onClearPendingMedia, modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(28.dp)
-                        .background(Color.Black.copy(alpha = 0.55f), CircleShape)) { Icon(Icons.Filled.Close, "remove", tint = Color.White, modifier = Modifier.size(16.dp)) }
+                        .background(Color.Black.copy(alpha = 0.55f), CircleShape)) { AyxIcon(Icons.Filled.Close, "remove", tint = Color.White, modifier = Modifier.size(16.dp)) }
                 }
             }
             if (expanded) {
@@ -3041,7 +3042,7 @@ private fun TranslateLangDialog(onDismiss: () -> Unit, onPick: (String) -> Unit)
                 LazyColumn(Modifier.weight(1f)) {
                     items(langs) { l ->
                         Row(Modifier.fillMaxWidth().clickable { onPick(l) }.padding(horizontal = 18.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.Translate, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                            AyxIcon(Icons.Filled.Translate, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                             Spacer(Modifier.width(16.dp))
                             Text(l, style = MaterialTheme.typography.bodyLarge)
                         }
@@ -3072,7 +3073,7 @@ private fun FontPickerDialog(ctx: Context, current: String, onDismiss: () -> Uni
                         val fam = FontStore.family(ctx, name)
                         Row(Modifier.fillMaxWidth().clickable { onPick(name) }.padding(horizontal = 18.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(name, Modifier.weight(1f), fontFamily = fam, style = MaterialTheme.typography.bodyLarge)
-                            if (name == current) Icon(Icons.Filled.CheckCircle, "selected", tint = AYX_GREEN)
+                            if (name == current) AyxIcon(Icons.Filled.CheckCircle, "selected", tint = AYX_GREEN)
                         }
                     }
                 }
@@ -3151,7 +3152,7 @@ private fun MessageActionSheet(
 @Composable
 private fun ActionSheetItem(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, tint: Color, onClick: () -> Unit, destructive: Boolean = false) {
     Row(Modifier.fillMaxWidth().clickable { onClick() }.padding(horizontal = 18.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, null, tint = tint, modifier = Modifier.size(22.dp))
+        AyxIcon(icon, null, tint = tint, modifier = Modifier.size(22.dp))
         Spacer(Modifier.width(18.dp))
         Text(label, style = MaterialTheme.typography.bodyLarge, color = if (destructive) tint else MaterialTheme.colorScheme.onSurface)
     }
@@ -3165,14 +3166,14 @@ private fun EditMessageDialog(m: GatewayClient.Msg, onDismiss: () -> Unit, onSav
         onDismissRequest = onDismiss,
         containerColor = dialogBg(),
         shape = uiShapeFor(24),
-        icon = { Icon(Icons.Filled.Edit, null, tint = AYX_GREEN) },
+        icon = { AyxIcon(Icons.Filled.Edit, null, tint = AYX_GREEN) },
         title = { Text("Edit message") },
         text = {
             Column {
                 OutlinedTextField(
                     newText, { newText = it }, modifier = Modifier.fillMaxWidth(),
                     placeholder = { Text("Message") }, shape = uiShapeFor(14), maxLines = 6,
-                    trailingIcon = { if (newText.isNotEmpty()) IconButton(onClick = { newText = "" }) { Icon(Icons.Filled.Clear, "clear") } }
+                    trailingIcon = { if (newText.isNotEmpty()) IconButton(onClick = { newText = "" }) { AyxIcon(Icons.Filled.Clear, "clear") } }
                 )
                 Text("${newText.length} chars", style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.align(Alignment.End).padding(top = 4.dp, end = 4.dp))
@@ -3197,7 +3198,7 @@ private fun MessageInfoDialog(m: GatewayClient.Msg, onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         containerColor = dialogBg(),
         shape = uiShapeFor(24),
-        icon = { Icon(Icons.Filled.Info, null, tint = AYX_GREEN) },
+        icon = { AyxIcon(Icons.Filled.Info, null, tint = AYX_GREEN) },
         title = { Text("Message info") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -3263,13 +3264,13 @@ private fun ChatGlassHeader(
         Box(Modifier.fillMaxWidth().clip(pillShape).background(pill).border(1.dp, borderCol, pillShape)) {
             Row(Modifier.padding(start = 2.dp, end = 2.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (selCount > 0) {
-                    IconButton(onClick = onExitSel) { Icon(Icons.Filled.Close, "Cancel", tint = onPill) }
+                    IconButton(onClick = onExitSel) { AyxIcon(Icons.Filled.Close, "Cancel", tint = onPill) }
                     Text("%1\$d selected".format(selCount), maxLines = 1, fontWeight = FontWeight.Bold, color = onPill,
                         style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f).padding(start = 4.dp))
-                    IconButton(onClick = onSelectAll) { Icon(Icons.Filled.Checklist, "Select all", tint = onPill) }
-                    IconButton(onClick = onDeleteSel) { Icon(Icons.Filled.Delete, "Delete", tint = AYX_RED) }
+                    IconButton(onClick = onSelectAll) { AyxIcon(Icons.Filled.Checklist, "Select all", tint = onPill) }
+                    IconButton(onClick = onDeleteSel) { AyxIcon(Icons.Filled.Delete, "Delete", tint = AYX_RED) }
                 } else {
-                IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "back", tint = onPill) }
+                IconButton(onClick = onBack) { AyxIcon(Icons.AutoMirrored.Filled.ArrowBack, "back", tint = onPill) }
                 Box(Modifier.clip(CircleShape).clickable { onAvatarClick() }) { Avatar(jid, name, dpCache, 38.dp, CircleShape) }
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
@@ -3279,10 +3280,10 @@ private fun ChatGlassHeader(
                     if (sub.isNotEmpty()) Text(sub, style = MaterialTheme.typography.labelSmall, color = onPill.copy(alpha = 0.7f), maxLines = 1)
                 }
                 Box {
-                    IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "menu", tint = onPill) }
+                    IconButton(onClick = { menu = true }) { AyxIcon(Icons.Filled.MoreVert, "menu", tint = onPill) }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(text = { Text("Search") }, leadingIcon = { Icon(Icons.Filled.Search, null) }, onClick = { menu = false; onSearch() })
-                        DropdownMenuItem(text = { Text("Set name") }, leadingIcon = { Icon(Icons.Filled.Edit, null) }, onClick = { menu = false; onEdit() })
+                        DropdownMenuItem(text = { Text("Search") }, leadingIcon = { AyxIcon(Icons.Filled.Search, null) }, onClick = { menu = false; onSearch() })
+                        DropdownMenuItem(text = { Text("Set name") }, leadingIcon = { AyxIcon(Icons.Filled.Edit, null) }, onClick = { menu = false; onEdit() })
                         DropdownMenuItem(text = { Text("Change wallpaper") }, onClick = { menu = false; onWallpaper() })
                         if (!isBlocked) DropdownMenuItem(text = { Text("Block contact") }, onClick = { menu = false; onBlock() })
                         else DropdownMenuItem(text = { Text("Unblock contact") }, onClick = { menu = false; onUnblock() })
@@ -3333,7 +3334,7 @@ private fun AudioPlayer(url: String, tint: Color) {
             else { wantPlay = true }   // not prepared yet → start automatically once ready
         }, contentAlignment = Alignment.Center) {
             if (!ready && wantPlay) CircularProgressIndicator(Modifier.size(20.dp), color = tint, strokeWidth = 2.dp)
-            else Icon(if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "play", tint = tint, modifier = Modifier.size(24.dp))
+            else AyxIcon(if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "play", tint = tint, modifier = Modifier.size(24.dp))
         }
         LinearProgressIndicator(progress = { progress }, modifier = Modifier.weight(1f).height(4.dp), color = tint, trackColor = tint.copy(alpha = 0.3f))
     }
@@ -3395,15 +3396,15 @@ private fun ViewerTopBar(
             .padding(horizontal = 10.dp, vertical = 8.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            ViewerRoundBtn(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "back", tint = Color.White) }
+            ViewerRoundBtn(onBack) { AyxIcon(Icons.AutoMirrored.Filled.ArrowBack, "back", tint = Color.White) }
             Spacer(Modifier.width(10.dp))
             Text(title, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            ViewerRoundBtn(onDownload) { Icon(Icons.Filled.Download, "download", tint = Color.White) }
+            ViewerRoundBtn(onDownload) { AyxIcon(Icons.Filled.Download, "download", tint = Color.White) }
             Spacer(Modifier.width(8.dp))
-            ViewerRoundBtn(onShare) { Icon(Icons.Filled.Share, "share", tint = Color.White) }
+            ViewerRoundBtn(onShare) { AyxIcon(Icons.Filled.Share, "share", tint = Color.White) }
             Spacer(Modifier.width(8.dp))
             Box {
-                ViewerRoundBtn({ menu = true }) { Icon(Icons.Filled.MoreVert, "menu", tint = Color.White) }
+                ViewerRoundBtn({ menu = true }) { AyxIcon(Icons.Filled.MoreVert, "menu", tint = Color.White) }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     DropdownMenuItem(text = { Text("Forward") }, onClick = { menu = false; onForward() })
                     if (caption.isNotBlank()) DropdownMenuItem(text = { Text("Copy caption") }, onClick = {
@@ -3427,10 +3428,10 @@ private fun ViewerTopBar(
 private fun MsgTicks(status: Int, base: Color) {
     val c = base.copy(alpha = 0.75f)
     when {
-        status <= 1 -> Icon(Icons.Filled.Schedule, "sending", modifier = Modifier.size(12.dp), tint = base.copy(alpha = 0.55f))
-        status == 2 -> Icon(Icons.Filled.Done, "sent", modifier = Modifier.size(15.dp), tint = c)
-        status == 3 -> Icon(Icons.Filled.DoneAll, "delivered", modifier = Modifier.size(15.dp), tint = c)
-        else -> Icon(Icons.Filled.DoneAll, "read", modifier = Modifier.size(15.dp), tint = Color(0xFF34B7F1))
+        status <= 1 -> AyxIcon(Icons.Filled.Schedule, "sending", modifier = Modifier.size(12.dp), tint = base.copy(alpha = 0.55f))
+        status == 2 -> AyxIcon(Icons.Filled.Done, "sent", modifier = Modifier.size(15.dp), tint = c)
+        status == 3 -> AyxIcon(Icons.Filled.DoneAll, "delivered", modifier = Modifier.size(15.dp), tint = c)
+        else -> AyxIcon(Icons.Filled.DoneAll, "read", modifier = Modifier.size(15.dp), tint = Color(0xFF34B7F1))
     }
 }
 
@@ -3515,7 +3516,7 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = if (m.fromMe) Arrangement.End else Arrangement.Start) {
         if (selMode) {
-            Icon(if (selected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked, null,
+            AyxIcon(if (selected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked, null,
                 tint = if (selected) AYX_GREEN else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                 modifier = Modifier.padding(start = 4.dp, end = 6.dp).size(22.dp))
         }
@@ -3528,7 +3529,7 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
             Column(Modifier.padding(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 if (m.forwarded && !m.deleted && ChatStyle.showForwardTag.value) {
                     Row(Modifier.padding(start = 8.dp, end = 8.dp, top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowForward, null, modifier = Modifier.size(13.dp),
+                        AyxIcon(Icons.AutoMirrored.Filled.ArrowForward, null, modifier = Modifier.size(13.dp),
                             tint = if (m.fromMe) Color.White.copy(alpha = 0.7f) else textColor.copy(alpha = 0.55f))
                         Spacer(Modifier.width(4.dp))
                         Text("Forwarded", style = MaterialTheme.typography.labelSmall, fontStyle = FontStyle.Italic,
@@ -3561,7 +3562,7 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                     Box(Modifier.size(150.dp).clip(uiShapeFor(14)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
                         contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Filled.EmojiEmotions, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(44.dp))
+                            AyxIcon(Icons.Filled.EmojiEmotions, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(44.dp))
                             Text("Sticker", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
@@ -3569,7 +3570,7 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                     Box(Modifier.clip(uiShapeFor(14)).clickable { onMedia(m) }, contentAlignment = Alignment.Center) {
                         Image(preview, "media", Modifier.widthIn(min = 220.dp, max = 280.dp).heightIn(max = 340.dp), contentScale = ContentScale.Crop)
                         if (isVideo) Box(Modifier.size(52.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape), contentAlignment = Alignment.Center) {
-                            Icon(Icons.Filled.PlayArrow, "play", tint = Color.White, modifier = Modifier.size(34.dp))
+                            AyxIcon(Icons.Filled.PlayArrow, "play", tint = Color.White, modifier = Modifier.size(34.dp))
                         }
                     }
                 }
@@ -3581,7 +3582,7 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                     // U3: deleted placeholder — WhatsApp style italic gray with blocked icon.
                     if (m.deleted) {
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
-                            Icon(Icons.Filled.Block, null, modifier = Modifier.size(16.dp), tint = textColor.copy(alpha = 0.55f))
+                            AyxIcon(Icons.Filled.Block, null, modifier = Modifier.size(16.dp), tint = textColor.copy(alpha = 0.55f))
                             Spacer(Modifier.width(6.dp))
                             Text("This message was deleted", color = textColor.copy(alpha = 0.6f),
                                 style = MaterialTheme.typography.bodyMedium, fontStyle = FontStyle.Italic)
@@ -3605,7 +3606,7 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                     if (!tr.isNullOrBlank()) {
                         Box(Modifier.padding(top = 3.dp).fillMaxWidth().height(1.dp).background((if (m.fromMe) Color.White else textColor).copy(alpha = 0.2f)))
                         Row(Modifier.padding(top = 3.dp), verticalAlignment = Alignment.Top) {
-                            Icon(Icons.Filled.Translate, "translated", modifier = Modifier.size(13.dp).padding(top = 2.dp), tint = if (m.fromMe) Color.White.copy(alpha = 0.8f) else IOS_BLUE)
+                            AyxIcon(Icons.Filled.Translate, "translated", modifier = Modifier.size(13.dp).padding(top = 2.dp), tint = if (m.fromMe) Color.White.copy(alpha = 0.8f) else IOS_BLUE)
                             Spacer(Modifier.width(4.dp))
                             Text(tr, color = textColor.copy(alpha = 0.92f), style = MaterialTheme.typography.bodyMedium, fontStyle = FontStyle.Italic)
                         }
@@ -3622,10 +3623,10 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                             color = if (m.fromMe) Color.White.copy(alpha = 0.6f) else textColor.copy(alpha = 0.55f))
                         if (m.mediaName != null) {
                             IconButton(onClick = { onDownload(m) }, modifier = Modifier.size(22.dp)) {
-                                Icon(Icons.Filled.Download, "download", modifier = Modifier.size(15.dp), tint = if (m.fromMe) Color.White else textColor)
+                                AyxIcon(Icons.Filled.Download, "download", modifier = Modifier.size(15.dp), tint = if (m.fromMe) Color.White else textColor)
                             }
                             IconButton(onClick = { onShare(m) }, modifier = Modifier.size(22.dp)) {
-                                Icon(Icons.Filled.Share, "share", modifier = Modifier.size(15.dp), tint = if (m.fromMe) Color.White else textColor)
+                                AyxIcon(Icons.Filled.Share, "share", modifier = Modifier.size(15.dp), tint = if (m.fromMe) Color.White else textColor)
                             }
                         }
                     }
@@ -3657,9 +3658,9 @@ private fun AlbumCell(
         .combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick, onLongClick = onLongClick),
         contentAlignment = Alignment.Center) {
         if (preview != null) Image(preview, "media", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-        else Icon(Icons.Filled.Image, null, tint = Color.White.copy(alpha = 0.7f))
+        else AyxIcon(Icons.Filled.Image, null, tint = Color.White.copy(alpha = 0.7f))
         if (item.mediaType == "video") Box(Modifier.size(34.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape), contentAlignment = Alignment.Center) {
-            Icon(Icons.Filled.PlayArrow, "play", tint = Color.White, modifier = Modifier.size(22.dp))
+            AyxIcon(Icons.Filled.PlayArrow, "play", tint = Color.White, modifier = Modifier.size(22.dp))
         }
         if (plusCount > 0) {
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)), contentAlignment = Alignment.Center) {
@@ -3668,7 +3669,7 @@ private fun AlbumCell(
         }
         if (selected) {
             Box(Modifier.fillMaxSize().background(AYX_GREEN.copy(alpha = 0.35f)), contentAlignment = Alignment.TopEnd) {
-                Icon(Icons.Filled.CheckCircle, "selected", tint = AYX_GREEN, modifier = Modifier.padding(4.dp).size(20.dp).background(Color.White, CircleShape))
+                AyxIcon(Icons.Filled.CheckCircle, "selected", tint = AYX_GREEN, modifier = Modifier.padding(4.dp).size(20.dp).background(Color.White, CircleShape))
             }
         }
     }
@@ -3768,10 +3769,10 @@ private fun AlbumBubble(
 private fun settingsTitle(page: String): String = when (page) {
     "general" -> "General"; "autoreply" -> "Auto-reply"; "ai" -> "AI Assistant"; "chat" -> "Chat Settings"
     "imageai" -> "Image AI"; "aimemory" -> "AI Memory"; "voice" -> "AI Voice"; "font" -> "App font"; "emoji" -> "Emoji"
-    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "textanim" -> "Text Animation"; "msgmotion" -> "Message Motion"; "about" -> "About"; "support" -> "Support Development"; else -> "Settings"
+    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "textanim" -> "Text Animation"; "msgmotion" -> "Message Motion"; "iconstyle" -> "Icon Style"; "about" -> "About"; "support" -> "Support Development"; else -> "Settings"
 }
 // parent page for nested back (Wallpaper under Chat Settings; Image AI / AI Memory / Voice under AI Assistant; Font under General)
-private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "general"; "emoji" -> "general"; "textanim" -> "appearance"; "msgmotion" -> "appearance"; else -> "home" }
+private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "general"; "emoji" -> "general"; "textanim" -> "appearance"; "msgmotion" -> "appearance"; "iconstyle" -> "appearance"; else -> "home" }
 
 @Composable
 private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient.Settings, page: String, onPage: (String) -> Unit, wallpaperVersion: Int,
@@ -3792,9 +3793,10 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
             "voice" -> VoicePickerScreen(settings, onToggle, ctx)
             "chat" -> SettingsSubPage { ChatSettings(onOpenWallpaper = { onPage("wallpaper") }) }
             "wallpaper" -> SettingsSubPage { WallpaperSettings(ctx, wallpaperVersion, onPickWallpaper, onRemoveWallpaper) }
-            "appearance" -> SettingsSubPage { AppearanceSettings(onOpenTextAnim = { onPage("textanim") }, onOpenMsgMotion = { onPage("msgmotion") }) }
+            "appearance" -> SettingsSubPage { AppearanceSettings(onOpenTextAnim = { onPage("textanim") }, onOpenMsgMotion = { onPage("msgmotion") }, onOpenIconStyle = { onPage("iconstyle") }) }
             "textanim" -> SettingsSubPage { TextAnimationSettings() }
             "msgmotion" -> SettingsSubPage { MessageMotionSettingsPage() }
+            "iconstyle" -> SettingsSubPage { IconStyleSettingsPage() }
             "about" -> SettingsSubPage { AboutSettings(ctx, onLogout) }
             "support" -> SettingsSubPage { SupportSettings(ctx) }
             else -> SettingsHome(status) { onPage(it) }
@@ -3869,7 +3871,7 @@ private fun CategoryCard(icon: androidx.compose.ui.graphics.vector.ImageVector, 
                 Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
                 Text(desc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            AyxIcon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -3877,7 +3879,7 @@ private fun CategoryCard(icon: androidx.compose.ui.graphics.vector.ImageVector, 
 @Composable
 private fun IconChip(icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color) {
     Box(Modifier.size(40.dp).clip(uiShapeFor(12)).background(tint.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
-        Icon(icon, null, tint = tint, modifier = Modifier.size(21.dp))
+        AyxIcon(icon, null, tint = tint, modifier = Modifier.size(21.dp))
     }
 }
 
@@ -3938,12 +3940,12 @@ private fun FontSettings(ctx: Context) {
             val fam = FontStore.family(ctx, name)
             Row(Modifier.fillMaxWidth().clip(uiShapeFor(12)).clickable { FontStore.chooseFont(name); current = name }.padding(horizontal = 6.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(name, Modifier.weight(1f), fontFamily = fam, style = MaterialTheme.typography.bodyLarge)
-                if (name == current) Icon(Icons.Filled.CheckCircle, "selected", tint = AYX_GREEN)
+                if (name == current) AyxIcon(Icons.Filled.CheckCircle, "selected", tint = AYX_GREEN)
             }
         }
         Spacer(Modifier.height(6.dp))
         OutlinedButton(onClick = { fontPicker.launch("*/*") }, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Filled.Add, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Upload custom font (.ttf / .otf)")
+            AyxIcon(Icons.Filled.Add, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Upload custom font (.ttf / .otf)")
         }
     }
 }
@@ -4005,9 +4007,9 @@ private fun EmojiStyleRow(name: String, sub: String, selectedNow: Boolean, downl
         }
         when {
             loading -> CircularProgressIndicator(Modifier.size(22.dp), color = AYX_GREEN, strokeWidth = 2.5.dp)
-            selectedNow -> Icon(Icons.Filled.CheckCircle, "selected", tint = AYX_GREEN)
-            downloaded -> Icon(Icons.Filled.CheckCircle, "downloaded", tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f))
-            else -> Icon(Icons.Filled.Download, "download", tint = IOS_BLUE)
+            selectedNow -> AyxIcon(Icons.Filled.CheckCircle, "selected", tint = AYX_GREEN)
+            downloaded -> AyxIcon(Icons.Filled.CheckCircle, "downloaded", tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f))
+            else -> AyxIcon(Icons.Filled.Download, "download", tint = IOS_BLUE)
         }
     }
 }
@@ -4098,7 +4100,7 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
             onDismissRequest = { confirmClearData = false },
             containerColor = dialogBg(),
             shape = uiShapeFor(24),
-            icon = { Icon(Icons.Filled.Delete, null, tint = ERR_RED) },
+            icon = { AyxIcon(Icons.Filled.Delete, null, tint = ERR_RED) },
             title = { Text("Clear app data?") },
             text = {
                 Text("This removes WhatsAyX local data — chats, statuses, cached media, names, wallpaper, settings and the login/session. Your account is not deleted, but you'll need to link this device again with QR or pairing code. The app will restart.",
@@ -4132,7 +4134,7 @@ private fun StorageRow(icon: androidx.compose.ui.graphics.vector.ImageVector, ti
         Spacer(Modifier.width(14.dp))
         Text(title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
         Text(size, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        IconButton(onClick = onClean, enabled = enabled) { Icon(Icons.Filled.DeleteOutline, "clean", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+        IconButton(onClick = onClean, enabled = enabled) { AyxIcon(Icons.Filled.DeleteOutline, "clean", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
 }
 
@@ -4146,7 +4148,7 @@ private fun ActionRow(icon: androidx.compose.ui.graphics.vector.ImageVector, tin
             Text(title, style = MaterialTheme.typography.bodyLarge)
             if (desc != null) Text(desc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        AyxIcon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -4154,7 +4156,7 @@ private fun ActionRow(icon: androidx.compose.ui.graphics.vector.ImageVector, tin
 private fun EmptyState(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, desc: String) {
     Column(Modifier.fillMaxWidth().padding(vertical = 26.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Box(Modifier.size(56.dp).clip(uiShapeFor(16)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)), contentAlignment = Alignment.Center) {
-            Icon(icon, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(26.dp))
+            AyxIcon(icon, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(26.dp))
         }
         Text(title, style = MaterialTheme.typography.titleSmall)
         Text(desc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
@@ -4186,7 +4188,7 @@ private fun AutoReplySection(settings: GatewayClient.Settings, onToggle: (JSONOb
                         }
                         Text("→ " + r.reply, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
-                    IconButton(onClick = { onRules(settings.rules.toMutableList().also { it.removeAt(i) }) }) { Icon(Icons.Filled.Delete, "delete", tint = ERR_RED) }
+                    IconButton(onClick = { onRules(settings.rules.toMutableList().also { it.removeAt(i) }) }) { AyxIcon(Icons.Filled.Delete, "delete", tint = ERR_RED) }
                 }
             }
         }
@@ -4267,7 +4269,7 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
                     Avatar(jid, chatTitleOf(messages, jid), dpCache, 38.dp)
                     Spacer(Modifier.width(12.dp))
                     Text(chatTitleOf(messages, jid), Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    IconButton(onClick = { setExcludes(settings.aiExcludeJids - jid) }) { Icon(Icons.Filled.Close, "remove", tint = AYX_RED) }
+                    IconButton(onClick = { setExcludes(settings.aiExcludeJids - jid) }) { AyxIcon(Icons.Filled.Close, "remove", tint = AYX_RED) }
                 }
             }
         }
@@ -4301,7 +4303,7 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
             OutlinedTextField(url, { url = it }, label = { Text("API URL (text/voice)") }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
             OutlinedTextField(key, { key = it }, label = { Text("API key") }, singleLine = true, shape = uiShapeFor(14),
                 visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
-                trailingIcon = { IconButton(onClick = { showKey = !showKey }) { Icon(if (showKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, "toggle key") } },
+                trailingIcon = { IconButton(onClick = { showKey = !showKey }) { AyxIcon(if (showKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, "toggle key") } },
                 modifier = Modifier.fillMaxWidth())
             OutlinedTextField(model, { model = it }, label = { Text("Model (text)") }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
             OutlinedTextField(sys, { sys = it }, label = { Text("System prompt (optional)") }, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
@@ -4366,7 +4368,7 @@ private fun AiLyricsSettings(settings: GatewayClient.Settings, onToggle: (JSONOb
                     Text("model: ${api.model.ifBlank { "—" }} · key: ${if (api.key.isNotBlank()) "•••••• set" else "MISSING"}",
                         style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                IconButton(onClick = { save(apis.filterIndexed { j, _ -> j != i }) }) { Icon(Icons.Filled.Delete, "remove", tint = AYX_RED) }
+                IconButton(onClick = { save(apis.filterIndexed { j, _ -> j != i }) }) { AyxIcon(Icons.Filled.Delete, "remove", tint = AYX_RED) }
             }
             if (i < apis.size - 1) HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
         }
@@ -4507,7 +4509,7 @@ private fun ImageAiSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
             OutlinedTextField(visionUrl, { visionUrl = it }, label = { Text("Vision API URL") }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
             OutlinedTextField(visionKey, { visionKey = it }, label = { Text("Vision API key") }, singleLine = true, shape = uiShapeFor(14),
                 visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
-                trailingIcon = { IconButton(onClick = { showKey = !showKey }) { Icon(if (showKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, "toggle key") } },
+                trailingIcon = { IconButton(onClick = { showKey = !showKey }) { AyxIcon(if (showKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, "toggle key") } },
                 modifier = Modifier.fillMaxWidth())
 
             HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
@@ -4576,7 +4578,7 @@ private fun ChatSettings(onOpenWallpaper: () -> Unit) {
                 Text("Chat Wallpaper", style = MaterialTheme.typography.bodyLarge)
                 Text("Set or remove chat background", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            AyxIcon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 
@@ -4644,14 +4646,14 @@ private fun BubbleColorRow(selected: Int, onPick: (Int) -> Unit) {
                 contentAlignment = Alignment.Center
             ) {
                 if (argb == 0) Text("A", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                else if (isSel) Icon(Icons.Filled.Done, "selected", tint = ChatStyle.textOn(argb), modifier = Modifier.size(18.dp))
+                else if (isSel) AyxIcon(Icons.Filled.Done, "selected", tint = ChatStyle.textOn(argb), modifier = Modifier.size(18.dp))
             }
         }
     }
 }
 
 @Composable
-private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -> Unit) {
+private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -> Unit, onOpenIconStyle: () -> Unit) {
     val mode = ThemeStore.mode.value
     val accent = ThemeStore.accent.value
     val modes = listOf(
@@ -4706,7 +4708,7 @@ private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -
                             CircleShape)
                         .clickable { ThemeStore.setAccent(key) },
                         contentAlignment = Alignment.Center) {
-                        if (sel) Icon(Icons.Filled.Check, "selected", tint = Color.White, modifier = Modifier.size(20.dp))
+                        if (sel) AyxIcon(Icons.Filled.Check, "selected", tint = Color.White, modifier = Modifier.size(20.dp))
                     }
                 }
             }
@@ -4780,6 +4782,17 @@ private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -
             desc = "Entrance animation for chat messages",
             value = if (MessageMotionSettings.enabled.value) "On" else "Off",
             onClick = onOpenMsgMotion,
+        )
+    }
+
+    SettingsGroup("Icons") {
+        UiNavRow(
+            icon = Icons.Filled.Category,
+            tint = Color(0xFF82AAFF),
+            title = "Icon Style",
+            desc = "Icons across chats, composer and menus",
+            value = IconStyleSettings.STYLE_LABELS[IconStyleSettings.style.value],
+            onClick = onOpenIconStyle,
         )
     }
 
@@ -4877,6 +4890,99 @@ private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -
                 TextButton(onClick = { showStyleDialog = false }) { Text("Cancel") }
             },
         )
+    }
+}
+
+// Representative icons shown as the live preview strip on the Icon Style
+// page: (Material vector, Nothing glyph name) pairs.
+private val ICON_STYLE_PREVIEW: List<Pair<androidx.compose.ui.graphics.vector.ImageVector, String>> = listOf(
+    Icons.AutoMirrored.Filled.ArrowBack to "back",
+    Icons.AutoMirrored.Filled.Reply to "reply",
+    Icons.AutoMirrored.Filled.ArrowForward to "forward",
+    Icons.Filled.DoneAll to "seen",
+    Icons.Filled.Mic to "mic",
+    Icons.Filled.AttachFile to "attach",
+    Icons.Filled.Delete to "delete",
+)
+
+// Settings → Appearance → Icon Style (opened from the Appearance page).
+// Each style is a card with a preview strip of its REAL icons; tapping a
+// card writes straight into IconStyleSettings, so the whole app (and this
+// page's own chrome) re-renders in the picked style immediately.
+@Composable
+private fun IconStyleSettingsPage() {
+    val cur by IconStyleSettings.style
+    SettingsGroup("Icon style") {
+        Column(Modifier.padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            IconStyleCard(
+                styleId = IconStyleSettings.DEFAULT,
+                name = "Default",
+                desc = "The app's original Material icons",
+                selected = cur == IconStyleSettings.DEFAULT,
+                onClick = { IconStyleSettings.setStyle(IconStyleSettings.DEFAULT) },
+            )
+            IconStyleCard(
+                styleId = IconStyleSettings.NOTHING,
+                name = "Nothing",
+                desc = "Dot-matrix glyphs from the NOTHING pack — dots take the theme color, red accents stay red",
+                selected = cur == IconStyleSettings.NOTHING,
+                onClick = { IconStyleSettings.setStyle(IconStyleSettings.NOTHING) },
+            )
+        }
+    }
+    Text(
+        "Icons without a Nothing match (like Pause or Check-circle) keep their original look in both styles.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 6.dp, top = 2.dp),
+    )
+}
+
+@Composable
+private fun IconStyleCard(styleId: Int, name: String, desc: String, selected: Boolean, onClick: () -> Unit) {
+    val tint = MaterialTheme.colorScheme.onSurface
+    StyledSurface(
+        onClick = onClick,
+        shape = uiShapeFor(16),
+        color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f),
+                )
+                if (selected) {
+                    Box(
+                        Modifier.size(26.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        AyxIcon(Icons.Filled.Check, "Selected", tint = Color.White, modifier = Modifier.size(16.dp))
+                    }
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(desc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(12.dp))
+            // Preview strip — this card always shows ITS OWN style: the
+            // Nothing card renders the pack's actual glyphs, the Default
+            // card renders raw Material icons (bypassing AyxIcon on
+            // purpose, so an active Nothing style can't leak into it).
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                ICON_STYLE_PREVIEW.forEach { (vector, glyph) ->
+                    if (styleId == IconStyleSettings.NOTHING) {
+                        NothingGlyph(glyph, null, modifier = Modifier.size(24.dp), tint = tint)
+                    } else {
+                        Icon(vector, null, tint = tint, modifier = Modifier.size(24.dp))
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -5253,7 +5359,7 @@ private fun UiToggleRow(
                 .background(tint.copy(alpha = 0.16f)),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icon, null, tint = tint, modifier = Modifier.size(21.dp))
+            AyxIcon(icon, null, tint = tint, modifier = Modifier.size(21.dp))
         }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
@@ -5283,7 +5389,7 @@ private fun UiNavRow(
                 .background(tint.copy(alpha = 0.16f)),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icon, null, tint = tint, modifier = Modifier.size(21.dp))
+            AyxIcon(icon, null, tint = tint, modifier = Modifier.size(21.dp))
         }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
@@ -5294,7 +5400,7 @@ private fun UiNavRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Icon(
+        AyxIcon(
             Icons.AutoMirrored.Filled.KeyboardArrowRight, null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -5365,7 +5471,7 @@ private fun SupportSettings(ctx: Context) {
                 Text("Binance — Pay directly", style = MaterialTheme.typography.bodyLarge)
                 Text("Opens the Binance app to pay instantly", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            AyxIcon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 
@@ -5392,12 +5498,12 @@ private fun PayCard(title: String, subtitle: String, qrContent: String, address:
             StyledSurface(shape = uiShapeFor(16), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f), modifier = Modifier.fillMaxWidth()) {
                 Row(Modifier.padding(start = 14.dp, end = 4.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(address, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f), maxLines = 3, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
-                    IconButton(onClick = onCopy) { Icon(Icons.Filled.ContentCopy, "copy", tint = MaterialTheme.colorScheme.primary) }
+                    IconButton(onClick = onCopy) { AyxIcon(Icons.Filled.ContentCopy, "copy", tint = MaterialTheme.colorScheme.primary) }
                 }
             }
             if (actionLabel != null && onAction != null) {
                 Button(onClick = onAction, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = AYX_GREEN)) {
-                    Icon(Icons.AutoMirrored.Filled.Send, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(actionLabel)
+                    AyxIcon(Icons.AutoMirrored.Filled.Send, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(actionLabel)
                 }
             }
         }
@@ -5414,7 +5520,7 @@ private fun LinkRow(icon: androidx.compose.ui.graphics.vector.ImageVector, tint:
                 Text(title, style = MaterialTheme.typography.bodyLarge)
                 if (sub != null) Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            AyxIcon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -5430,7 +5536,7 @@ private fun LinkRowSlot(leading: @Composable () -> Unit, title: String, sub: Str
                 Text(title, style = MaterialTheme.typography.bodyLarge)
                 if (sub != null) Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            AyxIcon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -5514,13 +5620,13 @@ private fun AboutSettings(ctx: Context, onLogout: () -> Unit) {
     OutlinedButton(onClick = { confirm = true }, modifier = Modifier.fillMaxWidth(),
         colors = ButtonDefaults.outlinedButtonColors(contentColor = ERR_RED),
         border = androidx.compose.foundation.BorderStroke(1.dp, ERR_RED.copy(alpha = 0.6f))) {
-        Icon(Icons.AutoMirrored.Filled.Logout, null); Spacer(Modifier.width(8.dp)); Text("Unlink / reset")
+        AyxIcon(Icons.AutoMirrored.Filled.Logout, null); Spacer(Modifier.width(8.dp)); Text("Unlink / reset")
     }
     if (showPrivacy) {
         AlertDialog(onDismissRequest = { showPrivacy = false },
             containerColor = dialogBg(),
             shape = uiShapeFor(22),
-            icon = { Icon(Icons.Filled.Shield, null, tint = AYX_GREEN) },
+            icon = { AyxIcon(Icons.Filled.Shield, null, tint = AYX_GREEN) },
             title = { Text("Privacy Policy") },
             text = { Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) { Text(PRIVACY_TEXT, style = MaterialTheme.typography.bodySmall) } },
             confirmButton = { TextButton(onClick = { showPrivacy = false }) { Text("Close", color = AYX_GREEN) } })
@@ -5528,7 +5634,7 @@ private fun AboutSettings(ctx: Context, onLogout: () -> Unit) {
     if (confirm) {
         AlertDialog(onDismissRequest = { confirm = false },
             containerColor = dialogBg(),
-            icon = { Icon(Icons.AutoMirrored.Filled.Logout, null, tint = ERR_RED) },
+            icon = { AyxIcon(Icons.AutoMirrored.Filled.Logout, null, tint = ERR_RED) },
             title = { Text("Unlink this device?") },
             text = { Text("This logs out the WhatsApp session and clears local data (chats, statuses, media cache). You'll need to link again with QR or pairing code.") },
             confirmButton = { TextButton(onClick = { confirm = false; onLogout() }) { Text("Unlink", color = ERR_RED) } },
@@ -5549,7 +5655,7 @@ private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Spacer(Modifier.height(44.dp))
         Box(Modifier.size(76.dp).clip(uiShapeFor(22)).background(Brush.linearGradient(listOf(AYX_GREEN, IOS_BLUE))), contentAlignment = Alignment.Center) {
-            Icon(Icons.Filled.QrCode2, null, tint = Color.White, modifier = Modifier.size(40.dp))
+            AyxIcon(Icons.Filled.QrCode2, null, tint = Color.White, modifier = Modifier.size(40.dp))
         }
         Spacer(Modifier.height(16.dp))
         Text(APP_NAME, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -5606,11 +5712,11 @@ private fun NewChatScreen(contacts: List<DeviceContact>, loading: Boolean, dpCac
                 singleLine = true, shape = uiShapeFor(28),
                 containerColor = MaterialTheme.colorScheme.surfaceVariant,
                 borderColor = Color.Transparent, focusedBorderColor = Color.Transparent,
-                leadingIcon = { Icon(Icons.Filled.Search, null, tint = IOS_BLUE) },
+                leadingIcon = { AyxIcon(Icons.Filled.Search, null, tint = IOS_BLUE) },
                 modifier = Modifier.fillMaxWidth())
         } else {
             OutlinedTextField(q, { q = it }, placeholder = { Text("Search name or number") },
-                leadingIcon = { Icon(Icons.Filled.Search, null, tint = IOS_BLUE) },
+                leadingIcon = { AyxIcon(Icons.Filled.Search, null, tint = IOS_BLUE) },
                 singleLine = true, shape = uiShapeFor(28),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent,
@@ -5783,8 +5889,8 @@ private fun StatusRow(sender: String, list: List<GatewayClient.StatusItem>, seen
                 Text(ContactStore.nameFor(sender) ?: latest.name.ifBlank { "Status" }, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(list.size.toString() + " update(s) · " + fmt(latest.ts), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            if (StatusFlags.isMuted(sender)) Icon(Icons.Filled.VisibilityOff, "muted", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
-            if (StatusFlags.isLocked(sender)) { Spacer(Modifier.width(6.dp)); Icon(Icons.Filled.Lock, "locked", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp)) }
+            if (StatusFlags.isMuted(sender)) AyxIcon(Icons.Filled.VisibilityOff, "muted", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+            if (StatusFlags.isLocked(sender)) { Spacer(Modifier.width(6.dp)); AyxIcon(Icons.Filled.Lock, "locked", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp)) }
         }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             DropdownMenuItem(text = { Text(if (StatusFlags.isMuted(sender)) "Unmute status" else "Mute status") }, onClick = { menu = false; StatusFlags.toggleMuted(sender) })
@@ -5959,7 +6065,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                             if (bmp != null) Image(bmp, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit) else Text("Preview unavailable", color = Color.White)
                             // LEFT-side X: remove the photo (below the overlaid top bar).
                             IconButton(onClick = { mediaUri = null; editedBytes = null }, modifier = Modifier.align(Alignment.TopStart).padding(top = overlayTopPad, start = 8.dp)) {
-                                Icon(Icons.Filled.Close, "remove photo", tint = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(4.dp))
+                                AyxIcon(Icons.Filled.Close, "remove photo", tint = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(4.dp))
                             }
                             if (editedBytes != null) Text("Edited ✓", color = Color.White, style = MaterialTheme.typography.labelSmall,
                                 modifier = Modifier.align(Alignment.TopStart).padding(top = overlayTopPad + 54.dp, start = 12.dp).background(Color.Black.copy(alpha = 0.5f), uiShapeFor(8)).padding(horizontal = 8.dp, vertical = 4.dp))
@@ -6007,13 +6113,13 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                     }
                                 }
                             }, modifier = Modifier.align(Alignment.Center)) {
-                                Icon(if (videoPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, "play video", tint = Color.White,
+                                AyxIcon(if (videoPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, "play video", tint = Color.White,
                                     modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(12.dp))
                             }
                             // L: Trim moved to the header (icon).
                             // LEFT-side X: remove the video (below the overlaid top bar).
                             IconButton(onClick = { runCatching { exoPlayer?.stop() }; videoPlaying = false; mediaUri = null; videoDuration = 0L; vTrimStart = 0L; vTrimEnd = 0L; videoPos = 0L; videoTrimOpen = false }, modifier = Modifier.align(Alignment.TopStart).padding(top = overlayTopPad, start = 8.dp)) {
-                                Icon(Icons.Filled.Close, "remove video", tint = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(4.dp))
+                                AyxIcon(Icons.Filled.Close, "remove video", tint = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(4.dp))
                             }
                         }
                     if (displayLyrics.isNotEmpty()) {
@@ -6052,16 +6158,16 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                     .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent)))
                     .statusBarsPadding()) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = onCancel) { Icon(Icons.Filled.Close, "close", tint = Color.White) }
+                        IconButton(onClick = onCancel) { AyxIcon(Icons.Filled.Close, "close", tint = Color.White) }
                         Text("New status", color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f).padding(start = 4.dp))
                         // L: actions as header ICONS (no text chips): Crop for photos, Trim for videos, Music for both.
                         if (mediaType == "image" && mediaUri != null) {
-                            IconButton(onClick = { cropOpen = true }) { Icon(Icons.Filled.Crop, "crop", tint = Color.White) }
+                            IconButton(onClick = { cropOpen = true }) { AyxIcon(Icons.Filled.Crop, "crop", tint = Color.White) }
                         }
                         if (mediaType == "video" && mediaUri != null) {
-                            IconButton(onClick = { videoTrimOpen = !videoTrimOpen }) { Icon(Icons.Filled.ContentCut, "trim", tint = if (videoTrimOpen) AYX_GREEN else Color.White) }
+                            IconButton(onClick = { videoTrimOpen = !videoTrimOpen }) { AyxIcon(Icons.Filled.ContentCut, "trim", tint = if (videoTrimOpen) AYX_GREEN else Color.White) }
                         }
-                        IconButton(onClick = { musicOpen = true }) { Icon(Icons.Filled.MusicNote, "add music", tint = if (song != null) AYX_GREEN else Color.White) }
+                        IconButton(onClick = { musicOpen = true }) { AyxIcon(Icons.Filled.MusicNote, "add music", tint = if (song != null) AYX_GREEN else Color.White) }
                         TextButton(onClick = { pickAudience = true }) { Text(audLabel, color = IOS_BLUE) }
                     }
                 }
@@ -6112,18 +6218,18 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                             player.setOnErrorListener { _, _, _ -> playing = false; true }
                                             player.prepareAsync()
                                         }
-                                    }) { Icon(if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "play", tint = Color.White) }
+                                    }) { AyxIcon(if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "play", tint = Color.White) }
                                     Column(Modifier.weight(1f)) {
                                         Text("♪ " + sg.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         Text(sg.artist, color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
                                     if (songLyrics.isNotEmpty()) Text("© lyrics", color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(end = 4.dp))
-                                    IconButton(onClick = { musicOpen = true }) { Icon(Icons.Filled.Refresh, "Replace song", tint = Color.White) }
+                                    IconButton(onClick = { musicOpen = true }) { AyxIcon(Icons.Filled.Refresh, "Replace song", tint = Color.White) }
                                     IconButton(onClick = {
                                         runCatching { player.reset() }; playing = false
                                         song = null; songLyrics = emptyList(); translatedLyrics = null; translatedActive = false
                                         trimStart = 0L; trimEnd = 15000L; showTranslateRow = false
-                                    }) { Icon(Icons.Filled.Delete, "Remove song", tint = Color.White) }
+                                    }) { AyxIcon(Icons.Filled.Delete, "Remove song", tint = Color.White) }
                                 }
                             }
                             // ---- AI Lyrics Translate: appears below the song row on song tap ----
@@ -6172,7 +6278,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                 Spacer(Modifier.width(8.dp))
                                 FilledIconButton(enabled = mediaUri != null,
                                     onClick = { onUpload(caption.trim(), audience, selected.toList(), song, trimStart, trimEnd, displayLyrics, lyricY, lyricScale, animStyle, romanize, editedBytes, vTrimStart, vTrimEnd, videoMuted, mediaUri, mediaType) },
-                                    modifier = Modifier.size(48.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = AYX_GREEN)) { Icon(Icons.AutoMirrored.Filled.Send, "upload", tint = Color.White) }
+                                    modifier = Modifier.size(48.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = AYX_GREEN)) { AyxIcon(Icons.AutoMirrored.Filled.Send, "upload", tint = Color.White) }
                             }
                         }
                     }
@@ -6679,7 +6785,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                     // voice status → play inline like a voice note
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
-                            Icon(Icons.Filled.GraphicEq, null, tint = Color.White, modifier = Modifier.size(56.dp))
+                            AyxIcon(Icons.Filled.GraphicEq, null, tint = Color.White, modifier = Modifier.size(56.dp))
                             Spacer(Modifier.height(18.dp))
                             AudioPlayer(GatewayClient.mediaUrl(st.mediaName!!), Color.White)
                         }
@@ -6711,7 +6817,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                         Box(Modifier.align(Alignment.Center).clip(CircleShape).background(Color.Black.copy(alpha = 0.55f))
                             .clickable { reloadKey++ }.padding(horizontal = 18.dp, vertical = 12.dp), contentAlignment = Alignment.Center) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Filled.Download, null, tint = Color.White); Spacer(Modifier.width(8.dp)); Text("Tap to load", color = Color.White)
+                                AyxIcon(Icons.Filled.Download, null, tint = Color.White); Spacer(Modifier.width(8.dp)); Text("Tap to load", color = Color.White)
                             }
                         }
                     }
@@ -6721,7 +6827,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                     // media missing (deleted / not downloaded yet) → tap to download instead of a blank screen
                     Box(Modifier.fillMaxSize().clickable { reloadKey++ }, contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Filled.Download, null, tint = Color.White, modifier = Modifier.size(44.dp))
+                            AyxIcon(Icons.Filled.Download, null, tint = Color.White, modifier = Modifier.size(44.dp))
                             Spacer(Modifier.height(8.dp)); Text("Tap to download", color = Color.White)
                         }
                     }
@@ -6777,7 +6883,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                         var viewerMenu by remember { mutableStateOf(false) }
                         val vctx = LocalContext.current
                         Box {
-                            IconButton(onClick = { viewerMenu = true }) { Icon(Icons.Filled.MoreVert, "menu", tint = Color.White) }
+                            IconButton(onClick = { viewerMenu = true }) { AyxIcon(Icons.Filled.MoreVert, "menu", tint = Color.White) }
                             DropdownMenu(expanded = viewerMenu, onDismissRequest = { viewerMenu = false }) {
                                 if (myMine) {
                                     // V1: My Status menu
@@ -6838,7 +6944,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                             Modifier.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { showViewers = true },
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Icon(Icons.Filled.KeyboardArrowUp, null, tint = Color.White)
+                            AyxIcon(Icons.Filled.KeyboardArrowUp, null, tint = Color.White)
                             Text("Viewed by", color = Color.White, style = MaterialTheme.typography.labelMedium)
                         }
                     } else {
@@ -6857,7 +6963,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                                     modifier = Modifier.weight(1f))
                             }
                             Spacer(Modifier.width(8.dp))
-                            FilledIconButton(onClick = { if (replyText.isNotBlank()) { onReply(group.first, replyText.trim()); replyText = "" } }, enabled = replyText.isNotBlank()) { Icon(Icons.AutoMirrored.Filled.Send, "send") }
+                            FilledIconButton(onClick = { if (replyText.isNotBlank()) { onReply(group.first, replyText.trim()); replyText = "" } }, enabled = replyText.isNotBlank()) { AyxIcon(Icons.AutoMirrored.Filled.Send, "send") }
                         }
                     }
                 }
@@ -6886,11 +6992,11 @@ private fun ProfileScreen(myJid: String?, dpCache: MutableMap<String, ImageBitma
             Box(Modifier.size(128.dp).clip(CircleShape).clickable { onPickPhoto() }) {
                 if (myJid != null) Avatar(myJid, "Me", dpCache, 128.dp)
                 else Box(Modifier.size(128.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Filled.Person, null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                    AyxIcon(Icons.Filled.Person, null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
                 }
             }
             Box(Modifier.size(38.dp).clip(CircleShape).background(AYX_GREEN).border(3.dp, MaterialTheme.colorScheme.surface, CircleShape).clickable { onPickPhoto() }, contentAlignment = Alignment.Center) {
-                Icon(Icons.Filled.PhotoCamera, "change photo", tint = Color.White, modifier = Modifier.size(19.dp))
+                AyxIcon(Icons.Filled.PhotoCamera, "change photo", tint = Color.White, modifier = Modifier.size(19.dp))
             }
         }
         Spacer(Modifier.height(12.dp))
@@ -6911,7 +7017,7 @@ private fun ProfileScreen(myJid: String?, dpCache: MutableMap<String, ImageBitma
         }
         Spacer(Modifier.height(18.dp))
         Button(onClick = { if (name.isNotBlank()) onSaveName(name.trim()) }, enabled = name.isNotBlank(), modifier = Modifier.fillMaxWidth().height(50.dp), shape = uiShapeFor(14)) {
-            Icon(Icons.Filled.CheckCircle, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Save name")
+            AyxIcon(Icons.Filled.CheckCircle, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Save name")
         }
     }
 }
@@ -6972,10 +7078,10 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
                                 Text("Add music", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                                 Text("tap ▶ to preview, tap song to use", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            IconButton(onClick = { runCatching { player.stop() }; onClose() }) { Icon(Icons.Filled.Close, "close") }
+                            IconButton(onClick = { runCatching { player.stop() }; onClose() }) { AyxIcon(Icons.Filled.Close, "close") }
                         }
                         Spacer(Modifier.height(8.dp))
-                        OutlinedTextField(q, { q = it }, placeholder = { Text("Search songs…") }, leadingIcon = { Icon(Icons.Filled.Search, null) }, singleLine = true, shape = uiShapeFor(16), modifier = Modifier.fillMaxWidth().focusRequester(searchFocus))
+                        OutlinedTextField(q, { q = it }, placeholder = { Text("Search songs…") }, leadingIcon = { AyxIcon(Icons.Filled.Search, null) }, singleLine = true, shape = uiShapeFor(16), modifier = Modifier.fillMaxWidth().focusRequester(searchFocus))
                         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
                         if (!loading && results.isEmpty() && q.trim().length >= 2) {
                             Text(if (error.isNotBlank()) "No songs (" + error.take(120) + ")" else "No results", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 8.dp))
@@ -6994,7 +7100,7 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
                                     player.setOnErrorListener { _, _, _ -> previewUrl = null; true }
                                     player.prepareAsync(); previewUrl = sg.url
                                 }
-                            }) { Icon(if (previewUrl == sg.url) Icons.Filled.Close else Icons.Filled.PlayArrow, "preview", tint = IOS_BLUE) }
+                            }) { AyxIcon(if (previewUrl == sg.url) Icons.Filled.Close else Icons.Filled.PlayArrow, "preview", tint = IOS_BLUE) }
                             Column(Modifier.weight(1f)) {
                                 Text(sg.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text(sg.artist, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -7064,7 +7170,7 @@ private fun AudioTrimmer(song: GatewayClient.Song, onDone: (Long, Long, List<Pai
         Surface(Modifier.fillMaxSize(), color = Color(0xFF0A0A0A)) {
             Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(16.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onCancel) { Icon(Icons.Filled.Close, "close", tint = Color.White) }
+                    IconButton(onClick = onCancel) { AyxIcon(Icons.Filled.Close, "close", tint = Color.White) }
                     Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(song.title, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(song.artist, color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -7097,7 +7203,7 @@ private fun AudioTrimmer(song: GatewayClient.Song, onDone: (Long, Long, List<Pai
                 }
                 Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { if (playing) { runCatching { player.pause() }; playing = false } else runCatching { player.seekTo(startMs.toInt()); player.start(); playing = true } }, enabled = ready) {
-                        Icon(if (playing) Icons.Filled.Close else Icons.Filled.PlayArrow, "play", tint = IOS_BLUE)
+                        AyxIcon(if (playing) Icons.Filled.Close else Icons.Filled.PlayArrow, "play", tint = IOS_BLUE)
                     }
                     Text(fmtMs(posMs - startMs) + " / " + fmtMs(endMs - startMs), color = Color.White, style = MaterialTheme.typography.labelMedium)
                 }
