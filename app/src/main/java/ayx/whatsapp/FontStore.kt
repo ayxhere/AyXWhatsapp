@@ -157,6 +157,28 @@ object FontStore {
 
     fun appFamily(ctx: Context): FontFamily? = family(ctx, appFont)
 
+    /**
+     * The app-selected font as an android [Typeface] (bold), for Canvas
+     * rendering (the status bake in MediaTools.drawComposite). The editor
+     * preview draws lyrics through Compose with this same selected font
+     * (via the app Typography), but the bake used to hardcode
+     * Typeface.DEFAULT_BOLD — so a photo status posted with e.g. Lobster
+     * selected previewed in Lobster and uploaded in the system font.
+     * Resolution mirrors [family]: bundled name → asset, user font → its
+     * file, "Default" (or any failure) → the platform default, which for
+     * "Default" makes this exactly Typeface.DEFAULT_BOLD — unchanged
+     * behaviour for users who never picked a font.
+     */
+    fun appTypeface(ctx: Context): Typeface {
+        val path = fonts[appFont] ?: ""
+        val base = when {
+            path.isBlank() -> Typeface.DEFAULT
+            path.startsWith("/") -> runCatching { Typeface.createFromFile(path) }.getOrNull()
+            else -> runCatching { Typeface.createFromAsset(ctx.assets, path) }.getOrNull()
+        } ?: Typeface.DEFAULT
+        return runCatching { Typeface.create(base, Typeface.BOLD) }.getOrNull() ?: Typeface.DEFAULT_BOLD
+    }
+
     // Build a Typography where every text style uses the chosen family (null = default Typography).
     fun typographyFor(fam: FontFamily?): Typography {
         val b = Typography()

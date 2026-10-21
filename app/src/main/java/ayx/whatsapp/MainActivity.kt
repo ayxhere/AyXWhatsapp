@@ -78,6 +78,9 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.offset
@@ -1264,7 +1267,7 @@ fun GatewayApp() {
                                     editedTmp = File(dir, "edited_$stamp.jpg").also { it.writeBytes(editedBytes) }
                                     imgUri = Uri.fromFile(editedTmp)
                                 }
-                                val ok = MediaTools.photosToVideo(ctx, listOf(imgUri), vFile, durMs, adjusted, lyricY, lyricScale, animStyle) { }
+                                val ok = MediaTools.photosToVideo(ctx, listOf(imgUri), vFile, durMs, adjusted, lyricY, lyricScale, animStyle, FontStore.appTypeface(ctx)) { }
                                 runCatching { editedTmp?.delete() }
                                 ok
                             } else if (vTrimActive || videoMuted) {
@@ -6278,6 +6281,21 @@ private suspend fun captureWindowRegion(win: android.view.Window, r: androidx.co
     }
 }
 
+/**
+ * Background tint of the editor's caption field: brighter while the
+ * keyboard is up. The IME inset is read in THIS leaf scope on purpose —
+ * it used to be read once at the top of StatusEditor's content tree,
+ * which made every frame of the keyboard animation recompose the whole
+ * editor (media, header, sheet, lyrics, trimmer) and the keyboard
+ * visibly lagged / opened late. Scoped here, an inset change
+ * re-evaluates only this color.
+ */
+@Composable
+private fun CaptionFieldTint(): Color {
+    val imeUp = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    return Color.White.copy(alpha = if (imeUp) 0.13f else 0.07f)
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, onUpload: (String, String, List<String>, GatewayClient.Song?, Long, Long, List<Pair<Long, String>>, Float, Float, Int, Boolean, ByteArray?, Long, Long, Boolean, Uri?, String, Boolean) -> Unit, onCancel: () -> Unit) {
@@ -6637,7 +6655,17 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
             Box(Modifier.fillMaxSize().blur(editorBlur)) {
                 val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
                 val overlayTopPad = statusTop + 64.dp   // corner buttons sit below the overlaid top bar
-                val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+                // NOTE: the IME inset is deliberately NOT read in this scope
+                // any more. It was read here — at the top of the editor's
+                // whole content tree (media + header + sheet + lyrics +
+                // trimmer) — only to tint the caption field, so EVERY frame
+                // of the keyboard's open/close animation invalidated and
+                // recomposed the entire editor: the visible "keyboard /
+                // panel opens late and lags" the user reported (the same
+                // storm also ran under the auto-focusing music sheet).
+                // The tint now reads the inset inside its own leaf scope
+                // (CaptionFieldTint below); the sheet's rise stays
+                // imePadding, a layout-phase read that never recomposed.
                 // ---- Media layer: full-bleed, no crop (ContentScale.Fit — preview matches the uncropped upload) ----
                 // E3: tapping the media/background hides the keyboard (clears focus).
                 Box(Modifier.fillMaxSize().background(Color.Black).clickable(
@@ -6757,7 +6785,60 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                         // tap on the preview, so with lyrics showing, the
                         // video underneath could never be tapped to play.)
                         var lyricAreaH by remember { mutableStateOf(0) }
-                        Box(Modifier.fillMaxSize().onGloballyPositioned { lyricAreaH = it.size.height }) {
+                        Box(Modifier.fillMaxSize().onGloballyPositioned { lyricAreaH = it.size.height }.pointerInput(Unit) {
+                            // TWO-FINGER pinch for the lyrics, tracked at the
+                            // WHOLE preview area. It used to live only on the
+                            // lyric-lines box below — a box barely one line
+                            // tall, so a natural pinch (fingers centimetres
+                            // apart) almost always put the second finger
+                            // OUTSIDE the box's bounds, that pointer was never
+                            // delivered to it, and the transform gesture never
+                            // formed: pinch-to-resize simply did not exist on
+                            // the photo path the user tried (same shared
+                            // overlay serves video). This tracker stays out
+                            // of the way until a second finger lands: taps,
+                            // single-finger drags and the video centre tap
+                            // pass through unconsumed exactly as before, and
+                            // when a pinch starts ON the lyric box, that
+                            // box's own transform detector consumes the moves
+                            // first (it sits deeper in the hit order) — this
+                            // one then sees the changes consumed and skips,
+                            // so the zoom is never applied twice. The state
+                            // written here (lyricScale / lyricY) is the same
+                            // state the box detector writes and the send /
+                            // bake path reads: preview == posted.
+                            awaitEachGesture {
+                                val first = awaitFirstDown(requireUnconsumed = false)
+                                var second: androidx.compose.ui.input.pointer.PointerInputChange? = null
+                                var firstGone = false
+                                withTimeoutOrNull(300L) {
+                                    while (second == null && !firstGone) {
+                                        val ev = awaitPointerEvent()
+                                        second = ev.changes.firstOrNull { it.id != first.id && it.pressed }
+                                        if (ev.changes.firstOrNull { it.id == first.id }?.pressed != true) firstGone = true
+                                    }
+                                }
+                                val s0 = second ?: return@awaitEachGesture
+                                var prevDist = (s0.position - first.position).getDistance()
+                                var prevCy = (s0.position.y + first.position.y) / 2f
+                                while (true) {
+                                    val ev = awaitPointerEvent()
+                                    val a = ev.changes.firstOrNull { it.id == first.id }
+                                    val b = ev.changes.firstOrNull { it.id == s0.id }
+                                    if (a == null || b == null || !a.pressed || !b.pressed) break
+                                    val dist = (b.position - a.position).getDistance()
+                                    val cy = (b.position.y + a.position.y) / 2f
+                                    if (!a.isConsumed && !b.isConsumed) {
+                                        if (prevDist > 1f && dist > 1f) {
+                                            lyricScale = (lyricScale * (dist / prevDist)).coerceIn(0.5f, 2.5f)
+                                            lyricY = (lyricY + (cy - prevCy) / size.height.toFloat()).coerceIn(0.06f, 0.9f)
+                                        }
+                                        ev.changes.forEach { runCatching { it.consume() } }
+                                    }
+                                    prevDist = dist; prevCy = cy
+                                }
+                            }
+                        }) {
                             if (line.isNotBlank()) {
                                 Box(Modifier.align(BiasAlignment(if (animStyle == LyricsStyleStore.REVEAL) -1f else 0f, lyricY * 2f - 1f))
                                     .fillMaxWidth(0.92f)
@@ -6766,7 +6847,9 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                             // Pan scales by the PREVIEW height, not this
                                             // box's height (the box is only as tall as
                                             // the lyric lines — dividing by it would
-                                            // fling lyricY across the screen).
+                                            // fling lyricY across the screen). The
+                                            // preview height is lyricAreaH, measured
+                                            // on the full-area overlay itself.
                                             val hPx = if (lyricAreaH > 0) lyricAreaH.toFloat() else size.height.toFloat()
                                             lyricY = (lyricY + pan.y / hPx).coerceIn(0.06f, 0.9f)
                                             lyricScale = (lyricScale * zoom).coerceIn(0.5f, 2.5f)
@@ -6993,7 +7076,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                             // keyboard opens; the overlay's imePadding() keeps the whole row just above the keyboard.
                             Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                                 // Keyboard open → SOLID background behind the caption/keyboard zone (the video used to bleed through the transparent gradient); keyboard closed keeps the gradient scrim over the full-bleed media.
-                                Box(Modifier.weight(1f).clip(uiShapeFor(24)).background(Color.White.copy(alpha = if (imeVisible) 0.13f else 0.07f))) {
+                                Box(Modifier.weight(1f).clip(uiShapeFor(24)).background(CaptionFieldTint())) {
                                     if (TextAnimSettings.enabled.value) {
                                         AnimatedOutlinedField(caption, { caption = it }, placeholderText = "Add a caption…", maxLines = 3, shape = uiShapeFor(24),
                                             textColor = Color.White, hintColor = Color.White.copy(alpha = 0.6f), accentColor = Color.White,
@@ -7453,6 +7536,68 @@ private fun AudRadio(label: String, selected: Boolean, onClick: () -> Unit) {
 
 
 @Composable
+/**
+ * One status progress segment drawn as a SQUIGGLY (wavy) track, after
+ * the music-player style the user picked: a faint sine wave for the
+ * unwatched part, the same wave in bright white up to the progress
+ * point, and a short vertical playhead bar standing at that point.
+ * While the segment's media is still loading, a bright chunk of wave
+ * sweeps across instead (the previous shimmer's timing). The wave's
+ * phase is derived from [frac] itself, so it crawls subtly as playback
+ * advances on the viewer's existing 40/80 ms progress updates — no
+ * extra clock, and the only allocation is one reused [Path].
+ */
+private fun SquigglyProgress(frac: Float, loading: Boolean, modifier: Modifier = Modifier) {
+    var sweep = -1f
+    if (loading) {
+        val s by rememberInfiniteTransition(label = "squigsweep").animateFloat(
+            initialValue = -0.45f, targetValue = 1.1f,
+            animationSpec = infiniteRepeatable(tween(1100, easing = LinearEasing), RepeatMode.Restart),
+            label = "squigsweep"
+        )
+        sweep = s
+    }
+    val wave = remember { Path() }
+    Canvas(modifier) {
+        val w = size.width
+        val midY = size.height / 2f
+        val amp = size.height * 0.24f
+        val waveLen = 13.dp.toPx().coerceAtLeast(1f)
+        val trackW = 2.dp.toPx()
+        val phase = frac * 5.5f   // progress itself drags the wave: a subtle crawl with no extra clock
+        fun buildWave(x0: Float, x1: Float) {
+            wave.rewind()
+            var x = x0
+            wave.moveTo(x, midY + amp * kotlin.math.sin((x / waveLen) * 6.28318f + phase))
+            while (x < x1) {
+                x = minOf(x + waveLen / 6f, x1)
+                wave.lineTo(x, midY + amp * kotlin.math.sin((x / waveLen) * 6.28318f + phase))
+            }
+        }
+        // faint full track
+        buildWave(0f, w)
+        drawPath(wave, Color.White.copy(alpha = 0.35f), style = Stroke(width = trackW, cap = StrokeCap.Round))
+        if (loading) {
+            val x0 = (sweep * w).coerceIn(0f, w)
+            val x1 = ((sweep + 0.45f) * w).coerceIn(0f, w)
+            if (x1 > x0) {
+                buildWave(x0, x1)
+                drawPath(wave, Color.White, style = Stroke(width = trackW, cap = StrokeCap.Round))
+            }
+        } else if (frac > 0f) {
+            val fx = (frac * w).coerceIn(0f, w)
+            buildWave(0f, fx)
+            drawPath(wave, Color.White, style = Stroke(width = trackW + 0.5.dp.toPx(), cap = StrokeCap.Round))
+            // playhead: short vertical bar at the progress point
+            if (frac < 1f) {
+                val half = 4.5.dp.toPx()
+                drawLine(Color.White, Offset(fx, midY - half), Offset(fx, midY + half), strokeWidth = 2.5.dp.toPx(), cap = StrokeCap.Round)
+            }
+        }
+    }
+}
+
+@Composable
 private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: String, dpCache: MutableMap<String, ImageBitmap?>, onDownload: (GatewayClient.StatusItem) -> Unit, onDeleteStatus: (String) -> Unit, onReply: (String, String) -> Unit, onSeen: (GatewayClient.StatusItem) -> Unit, onForwardStatus: (String) -> Unit = {}, onClose: () -> Unit) {
     val groups = remember(statuses) {
         statuses.groupBy { it.sender }.entries
@@ -7642,7 +7787,15 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                         "video" -> !videoReady                 // buffering the clip
                         else -> imgLoading && bmp == null      // image still downloading (no thumb yet)
                     }
-                    // B6: clean custom segments — plain track + fill boxes, no M3 indicator (no dot/thumb artifacts).
+                    // Squiggly segments (user request — the music-player
+                    // "Squiggly" progress style): each segment is a wavy
+                    // track; the watched part is bright with a short
+                    // vertical playhead bar at the progress point, the
+                    // rest stays faint, and a loading segment sweeps a
+                    // bright chunk of wave (the old shimmer, same 1100ms
+                    // timing). Segmentation, fill fractions and the
+                    // tap/hold zones around this row are unchanged —
+                    // only the drawing changed.
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                         items.indices.forEach { idx ->
                             val fillFrac: Float = when {
@@ -7650,19 +7803,11 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                                 idx == ii && !activeLoading -> progress.coerceIn(0f, 1f)
                                 else -> 0f
                             }
-                            Box(Modifier.weight(1f).height(3.dp).clip(RoundedCornerShape(2.dp)).background(Color.White.copy(alpha = 0.35f))) {
-                                if (idx == ii && activeLoading) {
-                                    // loading shimmer: a white bar sweeping across the segment
-                                    val sweep by rememberInfiniteTransition(label = "segsweep").animateFloat(
-                                        initialValue = -0.6f, targetValue = 1.2f,
-                                        animationSpec = infiniteRepeatable(tween(1100, easing = LinearEasing), RepeatMode.Restart),
-                                        label = "segsweep"
-                                    )
-                                    Box(Modifier.fillMaxHeight().fillMaxWidth(0.45f).offset(x = (sweep * 120).dp).background(Color.White))
-                                } else if (fillFrac > 0f) {
-                                    Box(Modifier.fillMaxHeight().fillMaxWidth(fillFrac).background(Color.White))
-                                }
-                            }
+                            SquigglyProgress(
+                                frac = fillFrac,
+                                loading = idx == ii && activeLoading,
+                                modifier = Modifier.weight(1f).height(10.dp)
+                            )
                         }
                     }
                     Spacer(Modifier.height(8.dp))

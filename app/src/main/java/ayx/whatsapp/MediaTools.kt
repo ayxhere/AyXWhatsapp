@@ -33,8 +33,29 @@ object MediaTools {
 
     // ---------- public: PHOTO(S) -> silent MP4 ----------
     // animStyle (= LyricsStyleStore ids): 0=Plain, 1=Reveal, 2=Pop, 3=Slide up, 4=Typewriter, 5=Fade, 6=Blur, 7=Rotate
-    fun photosToVideo(ctx: Context, uris: List<Uri>, out: File, durationMs: Long, lyrics: List<Pair<Long, String>>, lyricY: Float = 0.80f, lyricScale: Float = 1f, animStyle: Int = 0, onProgress: (Float) -> Unit): Boolean {
-        val W = 720; val H = 1280; val FPS = 30; val BITRATE = 6_000_000
+    // [font]: the typeface lyrics are baked in — the caller passes the
+    // app-selected font (FontStore.appTypeface) so the posted status uses
+    // the SAME font as the editor preview. Null keeps the historical
+    // DEFAULT_BOLD behaviour.
+    fun photosToVideo(ctx: Context, uris: List<Uri>, out: File, durationMs: Long, lyrics: List<Pair<Long, String>>, lyricY: Float = 0.80f, lyricScale: Float = 1f, animStyle: Int = 0, font: android.graphics.Typeface? = null, onProgress: (Float) -> Unit): Boolean {
+        val W = 720
+        // The canvas follows the FIRST photo's own aspect (720 wide,
+        // proportional height, even, clamped) instead of a fixed 720x1280:
+        // a full-size phone screenshot (9:19.5+) letterboxed into a 9:16
+        // canvas came out shrunk between black side bars — the posted
+        // status no longer matched the full-bleed editor preview, and on
+        // fill-rendering viewers its edges were the first thing eaten.
+        // At its own aspect the photo fills the frame completely (the
+        // FIT in loadScaledFit then has nothing to pad and nothing can be
+        // cropped); a 9:16 photo still gets exactly 720x1280, as before.
+        val H = run {
+            val b = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            val first = uris.firstOrNull()
+            if (first != null) runCatching { ctx.contentResolver.openInputStream(first)?.use { android.graphics.BitmapFactory.decodeStream(it, null, b) } }
+            val raw = if (b.outWidth > 0 && b.outHeight > 0) (W * b.outHeight) / b.outWidth else 1280
+            (raw / 2 * 2).coerceIn(720, 1600)
+        }
+        val FPS = 30; val BITRATE = 6_000_000
         val bmps = uris.mapNotNull { runCatching { loadScaledFit(ctx, it, W, H) }.getOrNull() }
         if (bmps.isEmpty()) return false
         var encoder: MediaCodec? = null
@@ -49,7 +70,9 @@ object MediaTools {
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
                 try {
                     setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline)
-                    setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.AVCLevel31)
+                    // 720x1280 is exactly Level 3.1's frame-size ceiling; a
+                    // taller source-aspect canvas needs Level 4.1 headroom.
+                    setInteger(MediaFormat.KEY_LEVEL, if (H > 1280) MediaCodecInfo.CodecProfileLevel.AVCLevel41 else MediaCodecInfo.CodecProfileLevel.AVCLevel31)
                 } catch (_: Exception) {}
             }
             encoder = MediaCodec.createEncoderByType("video/avc")
@@ -113,7 +136,7 @@ object MediaTools {
                 val key = "$imgIdx|$lyric|$pq"
                 if (key != lastKey) {
                     composite?.recycle()
-                    composite = drawComposite(bmps[imgIdx], lyric, W, H, lyricY, lyricScale, animStyle, phase)
+                    composite = drawComposite(bmps[imgIdx], lyric, W, H, lyricY, lyricScale, animStyle, phase, font)
                     quad!!.uploadBitmap(composite!!)
                     lastKey = key
                 }
@@ -479,7 +502,12 @@ object MediaTools {
     private val LYRIC_ACCENT = android.graphics.Color.rgb(255, 72, 72)   // highlight word (#FF4848), like the AM template
 
     // animStyle: 0=Plain, 1=Reveal (word-by-word + two-tone + pop, the good one), 2=Pop, 3=Slide, 4=Type, 5=Fade, 6=Blur, 7=Rotate, 8=Text Motion (baked settled — see the when below)
-    private fun drawComposite(base: Bitmap, lyric: String, w: Int, h: Int, yFrac: Float, scale: Float, animStyle: Int = 0, phase: Float = 1f): Bitmap {
+    // [font]: the app-selected typeface the editor preview renders lyrics
+    // with. This bake used to ignore it entirely (DEFAULT_BOLD for the
+    // whole-line styles, SANS_SERIF bold for Reveal), so the uploaded
+    // status silently lost the selected TTF the preview showed. Null =
+    // the old faces, for any caller that doesn't pass one.
+    private fun drawComposite(base: Bitmap, lyric: String, w: Int, h: Int, yFrac: Float, scale: Float, animStyle: Int = 0, phase: Float = 1f, font: android.graphics.Typeface? = null): Bitmap {
         val bmp = base.copy(Bitmap.Config.ARGB_8888, true)
         if (lyric.isBlank()) return bmp
         val canvas = Canvas(bmp)
@@ -496,7 +524,7 @@ object MediaTools {
             if (words.isEmpty()) return bmp
             val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 textSize = h * 0.056f * scale.coerceIn(0.5f, 2.0f)
-                typeface = android.graphics.Typeface.create(android.graphics.Typeface.SANS_SERIF, android.graphics.Typeface.BOLD)
+                typeface = font ?: android.graphics.Typeface.create(android.graphics.Typeface.SANS_SERIF, android.graphics.Typeface.BOLD)
                 textAlign = Paint.Align.LEFT
             }
             val spaceW = paint.measureText(" ")
@@ -537,7 +565,7 @@ object MediaTools {
         }
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = android.graphics.Color.WHITE; textSize = baseSize * sc; textAlign = Paint.Align.CENTER
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            typeface = font ?: android.graphics.Typeface.DEFAULT_BOLD
             setShadowLayer(10f, 0f, 3f, android.graphics.Color.argb((200 * alpha).toInt().coerceIn(0, 255), 0, 0, 0))
             this.alpha = (255 * alpha).toInt().coerceIn(0, 255)
         }

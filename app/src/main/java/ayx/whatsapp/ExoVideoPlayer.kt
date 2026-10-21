@@ -118,6 +118,12 @@ fun ExoVideoPlayer(
             PlayerView(c).apply {
                 this.player = player
                 useController = showController
+                // FIT, explicitly: a video is letterboxed whole, never
+                // zoom-cropped. (The library default happens to be FIT
+                // today, but nothing in code pinned it — a status baked
+                // at 9:16 on a 9:19.5+ screen is exactly the case where a
+                // zoom/fill surface would eat the frame's edges.)
+                resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
             }
         },
         modifier = modifier,
