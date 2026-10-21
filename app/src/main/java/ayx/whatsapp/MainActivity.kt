@@ -9,6 +9,7 @@ import ayx.whatsapp.ui.UiAnimationSettings
 import ayx.whatsapp.ui.ayxDialogAlpha
 import ayx.whatsapp.ui.ayxGlassAlpha
 import ayx.whatsapp.ui.ayxMenuAlpha
+import ayx.whatsapp.ui.ayxBlurBackground
 import android.app.Activity
 import android.content.Context
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -6314,6 +6315,93 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
         val target = if (songDurMs > 0L) minOf(trimStart + vLen, songDurMs) else trimStart + vLen
         if (target > trimStart && target != trimEnd) trimEnd = target
     }
+    // videoPlaying is a MIRROR of the real player, never a free-running
+    // guess. ExoVideoPlayer can pause the player on its own — its internal
+    // ON_PAUSE lifecycle observer fires on any activity pause (picker,
+    // system overlay, interruptions while the song sheet/trimmer dialogs
+    // are up) — and before this listener existed, nothing ever wrote that
+    // pause back: the UI kept showing the pause glyph over a frozen frame,
+    // the trim-window loop polled a paused player forever, and no path
+    // re-asserted play (the 961bcff desync class, hit via video+song).
+    // The listener keeps the icon and the loop truthful from now on.
+    DisposableEffect(exoPlayer) {
+        val pl = exoPlayer
+        var listener: androidx.media3.common.Player.Listener? = null
+        if (pl != null) {
+            videoPlaying = pl.playWhenReady
+            listener = object : androidx.media3.common.Player.Listener {
+                override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) { videoPlaying = playWhenReady }
+            }
+            pl.addListener(listener)
+        }
+        onDispose { if (pl != null && listener != null) runCatching { pl.removeListener(listener) } }
+    }
+    // The song flow (search sheet / AudioTrimmer) must not strand the
+    // video: if the preview was playing when the flow opened, re-assert
+    // play when it closes — with a song attached the video plays exactly
+    // like it does without one. A deliberate pause before the flow is
+    // respected (nothing is force-played).
+    var resumeAfterSong by remember { mutableStateOf(false) }
+    val songFlowOpen = musicOpen || songToTrim != null
+    LaunchedEffect(songFlowOpen) {
+        if (songFlowOpen) {
+            if (exoPlayer?.playWhenReady == true) resumeAfterSong = true
+        } else if (resumeAfterSong) {
+            resumeAfterSong = false
+            runCatching { exoPlayer?.play() }
+        }
+    }
+    // Transient pause glyph flashed on a center-tap pause (WhatsApp-style);
+    // while the video is actually playing there is NO center icon at all.
+    var centerFlash by remember { mutableStateOf(false) }
+    LaunchedEffect(centerFlash) { if (centerFlash) { delay(600); centerFlash = false } }
+
+    // ---- Frosted-sheet backdrop (bottom controls panel) ----
+    // The video renders on a SurfaceView, OUTSIDE the Compose canvas, so a
+    // live backdrop blur of it is not possible. Closest real equivalent: a
+    // PixelCopy snapshot of the window region behind the panel (PixelCopy
+    // DOES capture SurfaceView pixels), downscaled + blurred, refreshed
+    // whenever the panel's layout changes (IME open/close, trimmer, song
+    // row). Any failure leaves the translucent scrim alone — still frosted,
+    // never a crash.
+    var sheetBackdrop by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var panelRect by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
+    var capturingSheet by remember { mutableStateOf(false) }
+    val sheetView = LocalView.current
+    LaunchedEffect(panelRect) {
+        val r = panelRect ?: return@LaunchedEffect
+        if (r.width < 10f || r.height < 10f) return@LaunchedEffect
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return@LaunchedEffect
+        var ctx: Context = sheetView.context
+        var hops = 0
+        while (ctx is android.content.ContextWrapper && ctx !is Activity && hops < 5) { ctx = ctx.baseContext; hops++ }
+        val win = (ctx as? Activity)?.window ?: return@LaunchedEffect
+        delay(180)
+        capturingSheet = true
+        try {
+            androidx.compose.runtime.withFrameNanos { }
+            androidx.compose.runtime.withFrameNanos { }
+            delay(40)
+            val src = android.graphics.Rect(r.left.toInt(), r.top.toInt(), r.right.toInt(), r.bottom.toInt())
+            val bmp = kotlinx.coroutines.suspendCancellableCoroutine<android.graphics.Bitmap?> { cont ->
+                try {
+                    val b = android.graphics.Bitmap.createBitmap(
+                        (src.width() / 6).coerceAtLeast(1), (src.height() / 6).coerceAtLeast(1),
+                        android.graphics.Bitmap.Config.ARGB_8888)
+                    android.view.PixelCopy.request(win, src, b,
+                        android.view.PixelCopy.OnPixelCopyFinishedListener { res ->
+                            if (cont.isActive) cont.resume(if (res == android.view.PixelCopy.SUCCESS) b else null)
+                        },
+                        android.os.Handler(android.os.Looper.getMainLooper()))
+                } catch (e: Exception) { if (cont.isActive) cont.resume(null) }
+            }
+            if (bmp != null) sheetBackdrop = bmp
+        } catch (e: Exception) {
+            // Snapshot is best-effort decoration; the scrim carries the look.
+        } finally {
+            capturingSheet = false
+        }
+    }
     // when music isn't playing, gently scrub through the lyric window so the lines are visible live in the preview
     LaunchedEffect(displayLyrics, playing, trimStart, trimEnd) {
         if (playing || displayLyrics.isEmpty()) return@LaunchedEffect
@@ -6378,23 +6466,42 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                     onPlayer = { exoPlayer = it; runCatching { it.seekTo(vTrimStart) } },
                                     // V1: surface preview errors instead of showing a grey/blank view silently.
                                     onError = { msg ->
+                                        runCatching { exoPlayer?.pause() }
                                         videoPlaying = false
                                         runCatching { Toast.makeText(ctx, "Video preview failed — try re-selecting the video", Toast.LENGTH_LONG).show() }
                                     },
                                     // E1: on natural completion, reset to trim start
                                     // so replay always works (no stuck end screen).
+                                    // Pause BEFORE the seek: with playWhenReady left
+                                    // true, a seek out of STATE_ENDED silently resumes
+                                    // playback — state said paused while the video
+                                    // looped on past the trim window.
                                     onCompletion = {
-                                        runCatching { exoPlayer?.seekTo(vTrimStart) }
+                                        runCatching { exoPlayer?.pause(); exoPlayer?.seekTo(vTrimStart) }
                                         videoPlaying = false
                                         videoPos = vTrimStart
                                     },
                                 )
                             }
-                            IconButton(onClick = {
+                            // Center tap layer (WhatsApp-style): the WHOLE video
+                            // area toggles play/pause directly — previously only
+                            // the small center button did, and taps on the video
+                            // body merely dismissed the keyboard over a frozen
+                            // frame. The toggle reads the player's REAL state
+                            // (playWhenReady); the glyph follows the player
+                            // mirror (videoPlaying): playing → NO icon at all;
+                            // tap-to-pause → pause glyph flashes briefly, then
+                            // the steady play glyph; paused → play glyph, and
+                            // tapping hides it as playback resumes.
+                            Box(Modifier.fillMaxSize().clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) {
+                                focusManager.clearFocus()
                                 val pl = exoPlayer
                                 if (pl != null) {
                                     runCatching {
-                                        if (pl.playWhenReady) { pl.pause(); videoPlaying = false }
+                                        if (pl.playWhenReady) { pl.pause(); videoPlaying = false; centerFlash = true }
                                         else {
                                             // Recover a player that never prepared (or was reset):
                                             // reload + prepare instead of flipping UI state blindly.
@@ -6408,9 +6515,15 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                         }
                                     }
                                 }
-                            }, modifier = Modifier.align(Alignment.Center)) {
-                                AyxIcon(if (videoPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, "play video", tint = Color.White,
-                                    modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(12.dp))
+                            }, contentAlignment = Alignment.Center) {
+                                val flashAlpha by animateFloatAsState(if (centerFlash) 1f else 0f, animationSpec = tween(280), label = "centerFlashAlpha")
+                                if (flashAlpha > 0.03f) {
+                                    AyxIcon(Icons.Filled.Pause, "pause video", tint = Color.White.copy(alpha = flashAlpha),
+                                        modifier = Modifier.background(Color.Black.copy(alpha = 0.5f * flashAlpha), CircleShape).padding(12.dp))
+                                } else if (!videoPlaying) {
+                                    AyxIcon(Icons.Filled.PlayArrow, "play video", tint = Color.White,
+                                        modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(12.dp))
+                                }
                             }
                             // L: Trim moved to the header (icon).
                             // LEFT-side X: remove the video (below the overlaid top bar).
@@ -6475,12 +6588,35 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                         TextButton(onClick = { pickAudience = true }) { Text(audLabel, color = IOS_BLUE) }
                     }
                 }
-                // ---- Bottom controls overlay: always visible (no collapse), readability scrim ----
+                // ---- Bottom controls: rounded FROSTED SHEET over the media ----
+                // Sheet look: large rounded top corners + the blurred snapshot
+                // of the video behind the panel (captured above) under a
+                // translucent dark scrim — the app's frosted pattern (see
+                // BlurHelper). Same treatment with the IME open or closed:
+                // no more flat opaque black slab behind the caption box.
+                val sheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
                 Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-                    .then(if (imeVisible) Modifier.background(Color.Black) else Modifier.background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.78f)))))
-                    // L: real IME inset (+ small gap) — only this row rises, the media stays fixed.
-                    .navigationBarsPadding().imePadding().padding(bottom = 10.dp)) {
-                    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+                    .onGloballyPositioned { panelRect = it.boundsInWindow() }
+                    .clip(sheetShape)) {
+                    // Frosted backdrop layers (hidden for the one frame a
+                    // capture runs, so the snapshot sees the video itself,
+                    // not the sheet's own rendering).
+                    Box(Modifier.matchParentSize().alpha(if (capturingSheet) 0f else 1f)) {
+                        val sb = sheetBackdrop
+                        if (sb != null) {
+                            Image(sb.asImageBitmap(), null,
+                                Modifier.fillMaxSize().ayxBlurBackground(true, 10.dp),
+                                contentScale = ContentScale.Crop)
+                        }
+                        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
+                            listOf(Color.Black.copy(alpha = 0.40f), Color.Black.copy(alpha = 0.58f)))))
+                        // Glass lip: a faint light line on the sheet's top edge.
+                        Box(Modifier.fillMaxWidth().height(1.dp).align(Alignment.TopCenter)
+                            .background(Color.White.copy(alpha = 0.10f)))
+                    }
+                    // L: real IME inset (+ small gap) — only this column rises, the media stays fixed.
+                    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
+                        .navigationBarsPadding().imePadding().padding(bottom = 10.dp)) {
                         Spacer(Modifier.height(10.dp))
                         // ---- Video trimmer panel (V3): toggled from the ✂ Trim button in the video header.
                         // Draggable left/right edges set the range; the selection itself IS the length (no Length slider).
