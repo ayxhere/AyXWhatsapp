@@ -216,6 +216,8 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -6360,60 +6362,100 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     // The video renders on a SurfaceView, OUTSIDE the Compose canvas, so a
     // live backdrop blur of it is not possible. Closest real equivalent: a
     // PixelCopy snapshot of the window region behind the panel (PixelCopy
-    // DOES capture SurfaceView pixels), downscaled + blurred, refreshed
-    // whenever the panel's layout changes (IME open/close, trimmer, song
-    // row). Any failure leaves the translucent scrim alone — still frosted,
-    // never a crash.
+    // DOES capture SurfaceView pixels), downscaled + blurred. Any failure
+    // leaves the translucent scrim alone — still frosted, never a crash.
+    //
+    // STABLE BY DESIGN (user: "blur permanently set kar — keyboard open
+    // rahe ya na rahe"): the snapshot is captured ONCE per media, when the
+    // sheet has first settled over it, and NEVER re-captured on layout
+    // changes. The old effect was keyed on panelRect, and the IME opening
+    // or closing moves the sheet (imePadding) → new rect → fresh capture:
+    // the backdrop layers hid for the capture frames and the new snapshot
+    // landed at a shifted crop — the sheet flashed and jumped ("disco
+    // dance") on every keyboard toggle. The one bitmap now stays put: the
+    // sheet draws it Crop-filled at whatever height/position the IME gives
+    // the sheet, with no hide-show cycle in the IME path. Only a media
+    // change (new photo/video picked) earns ONE fresh capture.
     var sheetBackdrop by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
     var panelRect by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
     var capturingSheet by remember { mutableStateOf(false) }
     val sheetView = LocalView.current
-    LaunchedEffect(panelRect) {
-        val r = panelRect ?: return@LaunchedEffect
-        if (r.width < 10f || r.height < 10f) return@LaunchedEffect
+    LaunchedEffect(mediaUri, mediaType) {
+        sheetBackdrop = null   // never show the previous media's snapshot behind this one
+        if (mediaUri == null) return@LaunchedEffect
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return@LaunchedEffect
         var ctx: Context = sheetView.context
         var hops = 0
         while (ctx is android.content.ContextWrapper && ctx !is Activity && hops < 5) { ctx = ctx.baseContext; hops++ }
         val win = (ctx as? Activity)?.window ?: return@LaunchedEffect
-        delay(180)
-        capturingSheet = true
-        try {
-            androidx.compose.runtime.withFrameNanos { }
-            androidx.compose.runtime.withFrameNanos { }
-            delay(40)
-            val src = android.graphics.Rect(r.left.toInt(), r.top.toInt(), r.right.toInt(), r.bottom.toInt())
-            val bmp = kotlinx.coroutines.suspendCancellableCoroutine<android.graphics.Bitmap?> { cont ->
-                try {
-                    val b = android.graphics.Bitmap.createBitmap(
-                        (src.width() / 6).coerceAtLeast(1), (src.height() / 6).coerceAtLeast(1),
-                        android.graphics.Bitmap.Config.ARGB_8888)
-                    android.view.PixelCopy.request(win, src, b,
-                        android.view.PixelCopy.OnPixelCopyFinishedListener { res ->
-                            // onCancellation: if the coroutine is cancelled and the
-                            // resume loses the race, bitmap b is never delivered —
-                            // recycle it instead of orphaning it. It never runs
-                            // when the value IS delivered, so no use-after-recycle.
-                            if (cont.isActive) cont.resume(if (res == android.view.PixelCopy.SUCCESS) b else null,
-                                onCancellation = { runCatching { b.recycle() } })
-                        },
-                        android.os.Handler(android.os.Looper.getMainLooper()))
-                } catch (e: Exception) { if (cont.isActive) cont.resume(null, onCancellation = {}) }
+        // Wait for the sheet's first settled layout (panelRect is fed by
+        // onGloballyPositioned in the sheet below). Rect changes AFTER this
+        // (IME, trimmer, song row) are deliberately ignored — this effect
+        // is keyed on the media only and does not restart for them.
+        var settled = panelRect
+        var tries = 0
+        while ((settled == null || settled.width < 10f || settled.height < 10f) && tries < 24) { delay(50); settled = panelRect; tries++ }
+        val settledRect = settled ?: return@LaunchedEffect
+        if (settledRect.width < 10f || settledRect.height < 10f) return@LaunchedEffect
+        delay(300)   // let the media render real frames behind the sheet first
+        var attempt = 0
+        while (attempt < 2 && sheetBackdrop == null) {
+            attempt++
+            capturingSheet = true
+            try {
+                androidx.compose.runtime.withFrameNanos { }
+                androidx.compose.runtime.withFrameNanos { }
+                delay(40)
+                // Freshest rect at capture time (the sheet may have grown
+                // since settle, e.g. a song row appeared). After this ONE
+                // capture the bitmap is fixed for this media.
+                val r = panelRect ?: settledRect
+                val src = android.graphics.Rect(r.left.toInt(), r.top.toInt(), r.right.toInt(), r.bottom.toInt())
+                val bmp = kotlinx.coroutines.suspendCancellableCoroutine<android.graphics.Bitmap?> { cont ->
+                    try {
+                        val b = android.graphics.Bitmap.createBitmap(
+                            (src.width() / 6).coerceAtLeast(1), (src.height() / 6).coerceAtLeast(1),
+                            android.graphics.Bitmap.Config.ARGB_8888)
+                        android.view.PixelCopy.request(win, src, b,
+                            android.view.PixelCopy.OnPixelCopyFinishedListener { res ->
+                                // onCancellation: if the coroutine is cancelled and the
+                                // resume loses the race, bitmap b is never delivered —
+                                // recycle it instead of orphaning it. It never runs
+                                // when the value IS delivered, so no use-after-recycle.
+                                if (cont.isActive) cont.resume(if (res == android.view.PixelCopy.SUCCESS) b else null,
+                                    onCancellation = { runCatching { b.recycle() } })
+                            },
+                            android.os.Handler(android.os.Looper.getMainLooper()))
+                    } catch (e: Exception) { if (cont.isActive) cont.resume(null, onCancellation = {}) }
+                }
+                if (bmp != null) sheetBackdrop = bmp else if (attempt < 2) delay(400)
+            } catch (e: Exception) {
+                // Snapshot is best-effort decoration; the scrim carries the look.
+                if (attempt < 2) delay(400)
+            } finally {
+                capturingSheet = false
             }
-            if (bmp != null) sheetBackdrop = bmp
-        } catch (e: Exception) {
-            // Snapshot is best-effort decoration; the scrim carries the look.
-        } finally {
-            capturingSheet = false
         }
     }
-    // when music isn't playing, gently scrub through the lyric window so the lines are visible live in the preview
-    LaunchedEffect(displayLyrics, playing, trimStart, trimEnd) {
-        if (playing || displayLyrics.isEmpty()) return@LaunchedEffect
-        val from = trimStart
-        val to = if (trimEnd > trimStart) trimEnd else (from + 15000L)
-        previewPos = from
-        while (!playing) { delay(140); previewPos += 240; if (previewPos > to) previewPos = from }
+    // LYRICS CLOCK = REAL PLAYBACK ONLY — never a free-running timer.
+    // Drivers: (1) the song-preview MediaPlayer poll above (photo statuses,
+    // and video statuses while the song preview itself is playing);
+    // (2) THIS binding for video statuses: the lyric position follows the
+    // VIDEO player's real position, mapped into the song window. videoPos
+    // advances only while the video actually plays (the preview-loop poll
+    // stops when paused; trimmer seeks also move it, so scrubbing the
+    // trimmer moves the lyric line too) — a paused/frozen video freezes
+    // the lyrics on the current line.
+    // DELETED here: the old auto-scrub loop that advanced previewPos on a
+    // timer whenever the song preview wasn't playing. It animated the
+    // lyrics on their own with nothing playing at all (user: "song off ha
+    // uske baad bhi lyrics chalta hai") and, on video statuses, ran them
+    // at a made-up pace unrelated to the video. Song removed → the remove
+    // handler clears songLyrics, the overlay unmounts, and no driver is
+    // left with anything to advance.
+    LaunchedEffect(videoPos, mediaType, song, playing) {
+        if (mediaType != "video" || song == null || playing) return@LaunchedEffect
+        previewPos = (trimStart + (videoPos - vTrimStart)).coerceIn(trimStart, maxOf(trimStart, trimEnd))
     }
     val audLabel = when (audience) { "except" -> "Except " + selected.size; "only" -> "Only " + selected.size; else -> "My contacts" }
     // L: drawn as an overlay INSIDE the edge-to-edge activity window (not a Dialog). On some phones a Dialog window
@@ -6539,35 +6581,55 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                     if (displayLyrics.isNotEmpty() && !lyricsHidden) {
                         val active = displayLyrics.lastOrNull { it.first <= previewPos + 200L }
                         val line = active?.second ?: displayLyrics.firstOrNull { it.first in trimStart..trimEnd }?.second ?: ""
-                        Box(Modifier.fillMaxSize().pointerInput(Unit) {
-                            detectTransformGestures { _, pan, zoom, _ ->
-                                lyricY = (lyricY + pan.y / size.height.toFloat()).coerceIn(0.06f, 0.9f)
-                                lyricScale = (lyricScale * zoom).coerceIn(0.5f, 2.5f)
-                            }
-                        }.pointerInput(Unit) {
-                            // double-tap the preview -> lyrics style chooser
-                            detectTapGestures(onDoubleTap = { lyricsStyleOpen = true })
-                        }) {
+                        // NO full-screen gesture layer anymore: this container
+                        // hit-tests nothing itself, so taps outside the lyric
+                        // lines fall through to the video tap layer beneath
+                        // (play/pause works everywhere else again). ONLY the
+                        // lyric box — the lines' own bounds + grab padding —
+                        // owns drag / pinch / double-tap. (The old overlay was
+                        // one fillMaxSize pointerInput box: it swallowed every
+                        // tap on the preview, so with lyrics showing, the
+                        // video underneath could never be tapped to play.)
+                        var lyricAreaH by remember { mutableStateOf(0) }
+                        Box(Modifier.fillMaxSize().onGloballyPositioned { lyricAreaH = it.size.height }) {
                             if (line.isNotBlank()) {
-                                if (animStyle == LyricsStyleStore.REVEAL) {
-                                    // Reveal (the default style): words build left→right, newest word grey, UPPERCASE bold
-                                    val lineStart = active?.first ?: 0L
-                                    val nextStart = displayLyrics.firstOrNull { it.first > lineStart }?.first ?: (lineStart + 3000L)
-                                    val dur = (nextStart - lineStart).coerceIn(700L, 6000L)
-                                    val ph = ((previewPos - lineStart).toFloat() / (dur * 0.82f)).coerceIn(0f, 1f)
-                                    val words = line.trim().uppercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
-                                    val shown = kotlin.math.ceil(ph * words.size).toInt().coerceIn(1, words.size)
-                                    FlowRow(Modifier.align(BiasAlignment(-1f, lyricY * 2f - 1f)).fillMaxWidth(0.92f).padding(start = 16.dp, end = 8.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                                        for (i in 0 until shown) {
-                                            Text(words[i], color = if (i == shown - 1) Color(0xFFAAAAAA) else Color.White,
-                                                fontSize = (27f * lyricScale).sp, fontWeight = FontWeight.Black, lineHeight = (31f * lyricScale).sp)
+                                Box(Modifier.align(BiasAlignment(if (animStyle == LyricsStyleStore.REVEAL) -1f else 0f, lyricY * 2f - 1f))
+                                    .fillMaxWidth(0.92f)
+                                    .pointerInput(Unit) {
+                                        detectTransformGestures { _, pan, zoom, _ ->
+                                            // Pan scales by the PREVIEW height, not this
+                                            // box's height (the box is only as tall as
+                                            // the lyric lines — dividing by it would
+                                            // fling lyricY across the screen).
+                                            val hPx = if (lyricAreaH > 0) lyricAreaH.toFloat() else size.height.toFloat()
+                                            lyricY = (lyricY + pan.y / hPx).coerceIn(0.06f, 0.9f)
+                                            lyricScale = (lyricScale * zoom).coerceIn(0.5f, 2.5f)
                                         }
+                                    }.pointerInput(Unit) {
+                                        // double-tap the LYRICS -> style chooser
+                                        detectTapGestures(onDoubleTap = { lyricsStyleOpen = true })
                                     }
+                                    .padding(vertical = 12.dp)) {
+                                    if (animStyle == LyricsStyleStore.REVEAL) {
+                                        // Reveal (the default style): words build left→right, newest word grey, UPPERCASE bold
+                                        val lineStart = active?.first ?: 0L
+                                        val nextStart = displayLyrics.firstOrNull { it.first > lineStart }?.first ?: (lineStart + 3000L)
+                                        val dur = (nextStart - lineStart).coerceIn(700L, 6000L)
+                                        val ph = ((previewPos - lineStart).toFloat() / (dur * 0.82f)).coerceIn(0f, 1f)
+                                        val words = line.trim().uppercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
+                                        val shown = kotlin.math.ceil(ph * words.size).toInt().coerceIn(1, words.size)
+                                        FlowRow(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                                            for (i in 0 until shown) {
+                                                Text(words[i], color = if (i == shown - 1) Color(0xFFAAAAAA) else Color.White,
+                                                    fontSize = (27f * lyricScale).sp, fontWeight = FontWeight.Black, lineHeight = (31f * lyricScale).sp)
+                                            }
+                                        }
 
-                                } else {
-                                    StyledLyricLine(line, active?.first ?: 0L, previewPos, animStyle, lyricScale,
-                                        Modifier.align(BiasAlignment(0f, lyricY * 2f - 1f)).fillMaxWidth(0.92f).padding(horizontal = 8.dp))
+                                    } else {
+                                        StyledLyricLine(line, active?.first ?: 0L, previewPos, animStyle, lyricScale,
+                                            Modifier.fillMaxWidth().padding(horizontal = 8.dp))
+                                    }
                                 }
                             }
                             Text("drag • pinch to resize lyrics", color = Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.labelSmall,
@@ -6590,6 +6652,19 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                             IconButton(onClick = { videoTrimOpen = !videoTrimOpen }) { AyxIcon(Icons.Filled.ContentCut, "trim", tint = if (videoTrimOpen) AYX_GREEN else Color.White) }
                         }
                         IconButton(onClick = { musicOpen = true }) { AyxIcon(Icons.Filled.MusicNote, "add music", tint = if (song != null) AYX_GREEN else Color.White) }
+                        // Sound control lives HERE now (user: the bottom Sound
+                        // row "bekar lag raha ha"): a header speaker toggle,
+                        // routed through AyxIcon so icon themes apply. Same
+                        // behavior as the old row — instant volume flip on the
+                        // live preview; videoMuted still drives the real
+                        // track-drop mux at send time, unchanged.
+                        if (mediaType == "video" && mediaUri != null) {
+                            IconButton(onClick = {
+                                videoMuted = !videoMuted
+                                val v = if (videoMuted) 0f else 1f
+                                runCatching { exoPlayer?.volume = v }
+                            }) { AyxIcon(if (videoMuted) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp, "sound", tint = if (videoMuted) AYX_GREEN else Color.White) }
+                        }
                         TextButton(onClick = { pickAudience = true }) { Text(audLabel, color = IOS_BLUE) }
                     }
                 }
@@ -6649,9 +6724,20 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                             Spacer(Modifier.height(6.dp))
                         }
                         Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
-                            // ---- SONG row: tap toggles the AI Lyrics Translate button below. Actions are ICONS (no text).
-                            // X buttons anywhere in this flow are NAVIGATION only — never a remove action.
-                            Row(Modifier.fillMaxWidth().clickable { if (song != null) showTranslateRow = !showTranslateRow }, verticalAlignment = Alignment.CenterVertically) {
+                            // ---- SONG row gestures: SINGLE tap toggles the AI Lyrics
+                            // Translate button below (as before); DOUBLE-TAP the song
+                            // opens the song trimmer on the current (video-synced)
+                            // window — AudioTrimmer below reads trimStart/trimEnd via
+                            // its initialStart/initialEnd. The row's IconButtons
+                            // consume their own presses, which cancels these tap
+                            // detectors for button taps, so play/replace/remove are
+                            // untouched. (Was a plain clickable: single-tap only.)
+                            Row(Modifier.fillMaxWidth().pointerInput(song) {
+                                detectTapGestures(
+                                    onTap = { if (song != null) showTranslateRow = !showTranslateRow },
+                                    onDoubleTap = { val sg = song; if (sg != null) songToTrim = sg }
+                                )
+                            }, verticalAlignment = Alignment.CenterVertically) {
                                 val sg = song
                                 if (sg == null) {
                                     /* L: "Add music" is a header icon now */
@@ -6675,7 +6761,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                     IconButton(onClick = {
                                         runCatching { player.reset() }; playing = false
                                         song = null; songLyrics = emptyList(); translatedLyrics = null; translatedActive = false
-                                        trimStart = 0L; trimEnd = 15000L; showTranslateRow = false
+                                        trimStart = 0L; trimEnd = 15000L; previewPos = 0L; showTranslateRow = false
                                     }) { AyxIcon(Icons.Filled.Delete, "Remove song", tint = Color.White) }
                                 }
                             }
@@ -6700,18 +6786,10 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                 }
                             }
                             // (AI Edit now lives on the image header; AI Lyrics Translate toggles under the song row.)
-                            // ---- Video: mute (the trimmer now lives in its own toggleable panel above) ----
-                            if (mediaType == "video" && mediaUri != null) {
-                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                    TextButton(onClick = {
-                                        // E4: instant mute/unmute on the live preview — no dialog, no delay.
-                                        videoMuted = !videoMuted
-                                        val v = if (videoMuted) 0f else 1f
-                                        runCatching { exoPlayer?.volume = v }
-                                    }) { Text(if (videoMuted) "🔇 Muted" else "🔊 Sound", color = Color.White) }
-                                    Text(if (videoMuted) "Video audio will be off in the posted status" else "Video audio will be kept", color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall)
-                                }
-                            }
+                            // (Sound/mute is the header speaker icon now — the
+                            // bottom "Sound — Video audio will be kept" row was
+                            // removed on the user's word. videoMuted still
+                            // reaches onUpload and the send-time mux as before.)
                             if (mediaUri == null) Text("Add a photo or video to post", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
                             // Caption + send — ONE row: text field + green send button attached at its right end.
                             // Explicit Row (not trailingIcon) so the button can never detach or misalign when the
