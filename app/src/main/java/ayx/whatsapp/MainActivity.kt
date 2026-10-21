@@ -3769,10 +3769,10 @@ private fun AlbumBubble(
 private fun settingsTitle(page: String): String = when (page) {
     "general" -> "General"; "autoreply" -> "Auto-reply"; "ai" -> "AI Assistant"; "chat" -> "Chat Settings"
     "imageai" -> "Image AI"; "aimemory" -> "AI Memory"; "voice" -> "AI Voice"; "font" -> "App font"; "emoji" -> "Emoji"
-    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "textanim" -> "Text Animation"; "msgmotion" -> "Message Motion"; "iconstyle" -> "Icon Style"; "about" -> "About"; "support" -> "Support Development"; else -> "Settings"
+    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "accent" -> "Accent Color"; "bluranim" -> "Blur & Animation"; "textanim" -> "Text Animation"; "msgmotion" -> "Message Motion"; "iconstyle" -> "Icon Style"; "about" -> "About"; "support" -> "Support Development"; else -> "Settings"
 }
 // parent page for nested back (Wallpaper under Chat Settings; Image AI / AI Memory / Voice under AI Assistant; Font under General)
-private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "general"; "emoji" -> "general"; "textanim" -> "appearance"; "msgmotion" -> "appearance"; "iconstyle" -> "appearance"; else -> "home" }
+private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "general"; "emoji" -> "general"; "textanim" -> "appearance"; "msgmotion" -> "appearance"; "iconstyle" -> "appearance"; "accent" -> "appearance"; "bluranim" -> "appearance"; else -> "home" }
 
 @Composable
 private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient.Settings, page: String, onPage: (String) -> Unit, wallpaperVersion: Int,
@@ -3793,7 +3793,9 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
             "voice" -> VoicePickerScreen(settings, onToggle, ctx)
             "chat" -> SettingsSubPage { ChatSettings(onOpenWallpaper = { onPage("wallpaper") }) }
             "wallpaper" -> SettingsSubPage { WallpaperSettings(ctx, wallpaperVersion, onPickWallpaper, onRemoveWallpaper) }
-            "appearance" -> SettingsSubPage { AppearanceSettings(onOpenTextAnim = { onPage("textanim") }, onOpenMsgMotion = { onPage("msgmotion") }, onOpenIconStyle = { onPage("iconstyle") }) }
+            "appearance" -> SettingsSubPage { AppearanceSettings(onOpenTextAnim = { onPage("textanim") }, onOpenMsgMotion = { onPage("msgmotion") }, onOpenIconStyle = { onPage("iconstyle") }, onOpenAccentColor = { onPage("accent") }, onOpenBlurAnim = { onPage("bluranim") }) }
+            "accent" -> SettingsSubPage { AccentColorSettingsPage() }
+            "bluranim" -> SettingsSubPage { BlurAnimationSettingsPage() }
             "textanim" -> SettingsSubPage { TextAnimationSettings() }
             "msgmotion" -> SettingsSubPage { MessageMotionSettingsPage() }
             "iconstyle" -> SettingsSubPage { IconStyleSettingsPage() }
@@ -4653,20 +4655,13 @@ private fun BubbleColorRow(selected: Int, onPick: (Int) -> Unit) {
 }
 
 @Composable
-private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -> Unit, onOpenIconStyle: () -> Unit) {
+private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -> Unit, onOpenIconStyle: () -> Unit, onOpenAccentColor: () -> Unit, onOpenBlurAnim: () -> Unit) {
     val mode = ThemeStore.mode.value
     val accent = ThemeStore.accent.value
     val modes = listOf(
         "system" to "System", "light" to "Light", "dark" to "Dark", "amoled" to "AMOLED"
     )
-    // Blur / animation settings (moved here from the removed "User Interface" screen).
-    val blurEnabled by UiAnimationSettings.materialBlurEnabled
-    val blurElements by UiAnimationSettings.blurElements
-    val animStyle by UiAnimationSettings.animationStyle
-    val motionBlur by UiAnimationSettings.motionBlurEnabled
-    val scrollAnim by UiAnimationSettings.scrollAnimationEnabled
-    var showElementsDialog by remember { mutableStateOf(false) }
-    var showStyleDialog by remember { mutableStateOf(false) }
+    val accentPair = ThemeStore.accents.firstOrNull { it.first == accent }
     SettingsGroup("Theme") {
         Column(Modifier.padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             // 2x2 grid of theme options — cleaner than a cramped chip row.
@@ -4698,6 +4693,90 @@ private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -
         }
     }
     SettingsGroup("Accent color") {
+        // The picker itself lives on its own page now (same pattern as
+        // Icon Style / Message Motion); this row shows the current color.
+        Row(
+            Modifier.fillMaxWidth().clip(uiShapeFor(12)).clickable { onOpenAccentColor() }
+                .padding(vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier.size(40.dp).clip(CircleShape)
+                    .background(accentPair?.second ?: MaterialTheme.colorScheme.primary)
+                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f), CircleShape)
+            )
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Accent Color", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    "Theme and accent apply instantly across the whole app",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(
+                accentPair?.first?.replaceFirstChar { it.uppercase() } ?: "",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.width(6.dp))
+            AyxIcon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight, null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+    SettingsGroup("Effects") {
+        UiNavRow(
+            icon = Icons.Filled.BlurOn,
+            tint = Color(0xFF8B7CFF),
+            title = "Blur & Animation",
+            desc = "Material blur, animation style and motion",
+            value = if (UiAnimationSettings.materialBlurEnabled.value) "Blur on" else "Blur off",
+            onClick = onOpenBlurAnim,
+        )
+    }
+
+    SettingsGroup("Text") {
+        UiNavRow(
+            icon = Icons.Filled.Animation,
+            tint = Color(0xFF82AAFF),
+            title = "Text Animation",
+            desc = "Typing, delete and cursor effects",
+            value = if (TextAnimSettings.enabled.value) "On" else "Off",
+            onClick = onOpenTextAnim,
+        )
+        UiDivider()
+        UiNavRow(
+            icon = Icons.Filled.MotionPhotosOn,
+            tint = Color(0xFFE88BD0),
+            title = "Message Motion",
+            desc = "Entrance animation for chat messages",
+            value = if (MessageMotionSettings.enabled.value) "On" else "Off",
+            onClick = onOpenMsgMotion,
+        )
+    }
+
+    SettingsGroup("Icons") {
+        UiNavRow(
+            icon = Icons.Filled.Category,
+            tint = Color(0xFF82AAFF),
+            title = "Icon Style",
+            desc = "Icons across chats, composer and menus",
+            value = IconPackRegistry.nameOf(IconStyleSettings.style.value),
+            onClick = onOpenIconStyle,
+        )
+    }
+
+}
+
+// Settings → Appearance → Accent Color (opened from the Appearance page).
+// The picker is the one that used to sit inline on the Appearance page —
+// same swatches, same instant ThemeStore.setAccent apply + persist.
+@Composable
+private fun AccentColorSettingsPage() {
+    val accent = ThemeStore.accent.value
+    SettingsGroup("Accent color") {
         Column(Modifier.padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                 ThemeStore.accents.forEach { (key, color) ->
@@ -4716,6 +4795,20 @@ private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -
     }
     Text("Theme and accent apply instantly across the whole app.", style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp, top = 2.dp))
+}
+
+// Settings → Appearance → Blur & Animation (opened from the Appearance
+// page). Everything below moved verbatim from the Appearance page — same
+// UiAnimationSettings prefs keys, same chooser dialogs, no behavior change.
+@Composable
+private fun BlurAnimationSettingsPage() {
+    val blurEnabled by UiAnimationSettings.materialBlurEnabled
+    val blurElements by UiAnimationSettings.blurElements
+    val animStyle by UiAnimationSettings.animationStyle
+    val motionBlur by UiAnimationSettings.motionBlurEnabled
+    val scrollAnim by UiAnimationSettings.scrollAnimationEnabled
+    var showElementsDialog by remember { mutableStateOf(false) }
+    var showStyleDialog by remember { mutableStateOf(false) }
     SettingsGroup("Blur") {
         UiToggleRow(
             icon = Icons.Filled.BlurOn,
@@ -4762,37 +4855,6 @@ private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -
             desc = "Fade-in animation for list items as you scroll",
             checked = scrollAnim,
             onChange = { UiAnimationSettings.setScrollAnimation(it) },
-        )
-    }
-
-    SettingsGroup("Text") {
-        UiNavRow(
-            icon = Icons.Filled.Animation,
-            tint = Color(0xFF82AAFF),
-            title = "Text Animation",
-            desc = "Typing, delete and cursor effects",
-            value = if (TextAnimSettings.enabled.value) "On" else "Off",
-            onClick = onOpenTextAnim,
-        )
-        UiDivider()
-        UiNavRow(
-            icon = Icons.Filled.MotionPhotosOn,
-            tint = Color(0xFFE88BD0),
-            title = "Message Motion",
-            desc = "Entrance animation for chat messages",
-            value = if (MessageMotionSettings.enabled.value) "On" else "Off",
-            onClick = onOpenMsgMotion,
-        )
-    }
-
-    SettingsGroup("Icons") {
-        UiNavRow(
-            icon = Icons.Filled.Category,
-            tint = Color(0xFF82AAFF),
-            title = "Icon Style",
-            desc = "Icons across chats, composer and menus",
-            value = IconStyleSettings.STYLE_LABELS[IconStyleSettings.style.value],
-            onClick = onOpenIconStyle,
         )
     }
 
@@ -4894,7 +4956,9 @@ private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -
 }
 
 // Representative icons shown as the live preview strip on the Icon Style
-// page: (Material vector, Nothing glyph name) pairs.
+// page: (Material vector, AyX slot name) pairs. A pack card renders the
+// pack's own glyph for each slot it covers; slots the pack doesn't cover
+// show the Material vector even in the preview (no fake coverage).
 private val ICON_STYLE_PREVIEW: List<Pair<androidx.compose.ui.graphics.vector.ImageVector, String>> = listOf(
     Icons.AutoMirrored.Filled.ArrowBack to "back",
     Icons.AutoMirrored.Filled.Reply to "reply",
@@ -4906,9 +4970,10 @@ private val ICON_STYLE_PREVIEW: List<Pair<androidx.compose.ui.graphics.vector.Im
 )
 
 // Settings → Appearance → Icon Style (opened from the Appearance page).
-// Each style is a card with a preview strip of its REAL icons; tapping a
-// card writes straight into IconStyleSettings, so the whole app (and this
-// page's own chrome) re-renders in the picked style immediately.
+// One card per style — Default plus every pack in IconPackRegistry — each
+// with a preview strip of its REAL icons; tapping a card writes straight
+// into IconStyleSettings, so the whole app (and this page's own chrome)
+// re-renders in the picked style immediately.
 @Composable
 private fun IconStyleSettingsPage() {
     val cur by IconStyleSettings.style
@@ -4921,17 +4986,19 @@ private fun IconStyleSettingsPage() {
                 selected = cur == IconStyleSettings.DEFAULT,
                 onClick = { IconStyleSettings.setStyle(IconStyleSettings.DEFAULT) },
             )
-            IconStyleCard(
-                styleId = IconStyleSettings.NOTHING,
-                name = "Nothing",
-                desc = "Dot-matrix glyphs from the NOTHING pack — dots take the theme color, red accents stay red",
-                selected = cur == IconStyleSettings.NOTHING,
-                onClick = { IconStyleSettings.setStyle(IconStyleSettings.NOTHING) },
-            )
+            IconPackRegistry.styles.forEach { pack ->
+                IconStyleCard(
+                    styleId = pack.id,
+                    name = pack.displayName,
+                    desc = "${pack.description} · ${pack.glyphs.size} icons themed · pack by ${pack.author}",
+                    selected = cur == pack.id,
+                    onClick = { IconStyleSettings.setStyle(pack.id) },
+                )
+            }
         }
     }
     Text(
-        "Icons without a Nothing match (like Pause or Check-circle) keep their original look in both styles.",
+        "Every pack covers a different set of icons. Icons a pack doesn't cover keep their original Material look in that style.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(start = 6.dp, top = 2.dp),
@@ -4969,14 +5036,17 @@ private fun IconStyleCard(styleId: Int, name: String, desc: String, selected: Bo
             Spacer(Modifier.height(4.dp))
             Text(desc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(12.dp))
-            // Preview strip — this card always shows ITS OWN style: the
-            // Nothing card renders the pack's actual glyphs, the Default
-            // card renders raw Material icons (bypassing AyxIcon on
-            // purpose, so an active Nothing style can't leak into it).
+            // Preview strip — this card always shows ITS OWN style: a pack
+            // card renders the pack's actual glyphs for the slots it
+            // covers (slots it doesn't cover show the Material vector,
+            // exactly like in the app), and the Default card renders raw
+            // Material icons (bypassing AyxIcon on purpose, so an active
+            // pack style can't leak into it).
+            val pack = IconPackRegistry.pack(styleId)
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                ICON_STYLE_PREVIEW.forEach { (vector, glyph) ->
-                    if (styleId == IconStyleSettings.NOTHING) {
-                        NothingGlyph(glyph, null, modifier = Modifier.size(24.dp), tint = tint)
+                ICON_STYLE_PREVIEW.forEach { (vector, slot) ->
+                    if (pack != null && PackGlyphStore.bitmap(pack, slot) != null) {
+                        PackGlyph(pack, slot, null, modifier = Modifier.size(24.dp), tint = tint)
                     } else {
                         Icon(vector, null, tint = tint, modifier = Modifier.size(24.dp))
                     }
