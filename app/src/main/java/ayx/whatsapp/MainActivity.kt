@@ -6390,10 +6390,15 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                         android.graphics.Bitmap.Config.ARGB_8888)
                     android.view.PixelCopy.request(win, src, b,
                         android.view.PixelCopy.OnPixelCopyFinishedListener { res ->
-                            if (cont.isActive) cont.resume(if (res == android.view.PixelCopy.SUCCESS) b else null)
+                            // onCancellation: if the coroutine is cancelled and the
+                            // resume loses the race, bitmap b is never delivered —
+                            // recycle it instead of orphaning it. It never runs
+                            // when the value IS delivered, so no use-after-recycle.
+                            if (cont.isActive) cont.resume(if (res == android.view.PixelCopy.SUCCESS) b else null,
+                                onCancellation = { runCatching { b.recycle() } })
                         },
                         android.os.Handler(android.os.Looper.getMainLooper()))
-                } catch (e: Exception) { if (cont.isActive) cont.resume(null) }
+                } catch (e: Exception) { if (cont.isActive) cont.resume(null, onCancellation = {}) }
             }
             if (bmp != null) sheetBackdrop = bmp
         } catch (e: Exception) {
