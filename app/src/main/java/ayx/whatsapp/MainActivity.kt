@@ -90,6 +90,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.unit.IntOffset
+import kotlin.math.pow
 import kotlin.math.roundToInt
 import android.provider.ContactsContract
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -6179,7 +6180,7 @@ private fun StyledLyricLine(text: String, lineStart: Long, posMs: Long, style: I
                     alpha = (wp * 1.6f).coerceIn(0f, 1f)
                     val sc = if (wp <= 0f) 0.55f else {
                         val x = wp.toDouble(); val c = 1.70158
-                        (0.55 + 0.45 * (1.0 + (c + 1.0) * kotlin.math.pow(x - 1.0, 3.0) + c * kotlin.math.pow(x - 1.0, 2.0))).toFloat().coerceIn(0.3f, 1.25f)
+                        (0.55 + 0.45 * (1.0 + (c + 1.0) * (x - 1.0).pow(3.0) + c * (x - 1.0).pow(2.0))).toFloat().coerceIn(0.3f, 1.25f)
                     }
                     scaleX = sc; scaleY = sc
                 }
@@ -6192,6 +6193,7 @@ private fun StyledLyricLine(text: String, lineStart: Long, posMs: Long, style: I
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, onUpload: (String, String, List<String>, GatewayClient.Song?, Long, Long, List<Pair<Long, String>>, Float, Float, Int, Boolean, ByteArray?, Long, Long, Boolean, Uri?, String, Boolean) -> Unit, onCancel: () -> Unit) {
     val ctx = LocalContext.current
