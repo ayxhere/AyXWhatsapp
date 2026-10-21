@@ -478,7 +478,7 @@ object MediaTools {
 
     private val LYRIC_ACCENT = android.graphics.Color.rgb(255, 72, 72)   // highlight word (#FF4848), like the AM template
 
-    // animStyle: 0=Plain, 1=Reveal (word-by-word + two-tone + pop, the good one), 2=Pop, 3=Slide, 4=Type, 5=Fade, 6=Blur, 7=Rotate
+    // animStyle: 0=Plain, 1=Reveal (word-by-word + two-tone + pop, the good one), 2=Pop, 3=Slide, 4=Type, 5=Fade, 6=Blur, 7=Rotate, 8=Text Motion (baked settled — see the when below)
     private fun drawComposite(base: Bitmap, lyric: String, w: Int, h: Int, yFrac: Float, scale: Float, animStyle: Int = 0, phase: Float = 1f): Bitmap {
         val bmp = base.copy(Bitmap.Config.ARGB_8888, true)
         if (lyric.isBlank()) return bmp
@@ -531,8 +531,9 @@ object MediaTools {
             3 -> { alpha = ease; dy = (1f - ease) * baseSize * 1.1f }
             4 -> { charFrac = p }
             5 -> { alpha = ease }
-            6 -> { alpha = ease }   // Blur: softness via the white shadowLayer below (sharpens as the phase completes)
+            6 -> { alpha = ease }   // Blur: softness via the white shadowLayer below (sharpens as the phase completes — and the phase always completes within its 420 ms window, so the baked line ends sharp exactly like the fixed editor renderer)
             7 -> { alpha = ease }   // Rotate: tilt applied at draw time below
+            8 -> { }   // Text Motion: baked as its SETTLED end-state. The per-character glide is a live-preview motion (StyledLyricLine, TextAnimEasing); a baked frame has no per-character timeline, so the full line is drawn at once, sharp — the same end-state the preview settles into.
         }
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = android.graphics.Color.WHITE; textSize = baseSize * sc; textAlign = Paint.Align.CENTER

@@ -6166,12 +6166,46 @@ private fun LinkText(text: String, color: Color) {
  * Words enter staggered with the style's transform over ~450 ms from the
  * line's start — the same entrance window the send-time bake uses — in
  * the same UPPERCASE heavy type as Reveal, so only the motion differs.
+ * Text Motion (8) is the exception: it renders per CHARACTER on
+ * TextAnim's own easing family. Blur (6) and Text Motion both use a
+ * word/char-count-NORMALIZED stagger, so the entrance always completes —
+ * the active line always ends fully sharp (see the BLUR branch).
  */
 @Composable
 private fun StyledLyricLine(text: String, lineStart: Long, posMs: Long, style: Int, scale: Float, modifier: Modifier = Modifier) {
     val words = text.trim().uppercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
     if (words.isEmpty()) return
     val ph = ((posMs - lineStart).toFloat() / 450f).coerceIn(0f, 1f)
+    if (style == LyricsStyleStore.TEXT_MOTION) {
+        // Text Motion: per-CHARACTER glide-in on TextAnim's own easing
+        // family (TextAnimEasing curve 3 = backOut, the overshoot curve
+        // behind Settings → Appearance → Text Animation). Each letter
+        // rides up into place with a small bounce + fade, staggered
+        // across the same ~450 ms entrance window the word styles use.
+        // The stagger is normalized by the character count (same trick
+        // as the BLUR fix below), so the last character lands exactly
+        // at ph = 1 — the line always settles complete and sharp.
+        val totalChars = words.sumOf { it.length }.coerceAtLeast(1)
+        val cStep = 0.03f
+        var ci = 0
+        FlowRow(modifier, horizontalArrangement = Arrangement.spacedBy(7.dp, Alignment.CenterHorizontally)) {
+            words.forEach { w ->
+                Row {
+                    for (ch in w) {
+                        val cp = (ph * (1f + (totalChars - 1) * cStep) - ci * cStep).coerceIn(0f, 1f)
+                        ci++
+                        val e = TextAnimEasing.apply(3, cp)
+                        Text(ch.toString(), color = Color.White, fontSize = (27f * scale).sp, fontWeight = FontWeight.Black, lineHeight = (31f * scale).sp,
+                            modifier = Modifier.graphicsLayer {
+                                alpha = cp
+                                translationY = (1f - e) * 52f
+                            })
+                    }
+                }
+            }
+        }
+        return
+    }
     FlowRow(modifier, horizontalArrangement = Arrangement.spacedBy(7.dp, Alignment.CenterHorizontally)) {
         words.forEachIndexed { i, w ->
             val wp = if (style == LyricsStyleStore.PLAIN) 1f else (ph * 1.3f - i * 0.055f).coerceIn(0f, 1f)
@@ -6187,12 +6221,60 @@ private fun StyledLyricLine(text: String, lineStart: Long, posMs: Long, style: I
                     }
                     scaleX = sc; scaleY = sc
                 }
-                LyricsStyleStore.BLUR -> Modifier.graphicsLayer { alpha = wp }.blur(((1f - wp) * 9f).dp)
+                LyricsStyleStore.BLUR -> {
+                    // The stagger must COMPLETE. The shared wp formula
+                    // (ph * 1.3f - i * 0.055f) can never reach 1 for the
+                    // tail words of a long line — ph caps at 1 while the
+                    // per-word subtraction keeps growing with i — so on
+                    // long lines (the wrapped two-row chorus lines at
+                    // the end of a song are the worst) those words kept
+                    // a permanent blur + fade that never cleared: the
+                    // user's "last lines complete blur" screenshot.
+                    // bwp is the same stagger NORMALIZED by the word
+                    // count: identical step and window, but the last
+                    // word lands exactly at ph = 1, so the ACTIVE line
+                    // always ends fully sharp (blur 0, alpha 1) at
+                    // every position, the final lines included.
+                    val bwp = (ph * (1f + (words.size - 1) * 0.055f) - i * 0.055f).coerceIn(0f, 1f)
+                    Modifier.graphicsLayer { alpha = bwp }.blur(((1f - bwp) * 9f).dp)
+                }
                 LyricsStyleStore.ROTATE -> Modifier.graphicsLayer { alpha = wp; rotationZ = (1f - ease) * -8f; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 1f) }
                 else -> Modifier
             }
             Text(w, color = Color.White, fontSize = (27f * scale).sp, fontWeight = FontWeight.Black, lineHeight = (31f * scale).sp, modifier = m)
         }
+    }
+}
+
+/**
+ * ONE frozen PixelCopy snapshot of a window region, downscaled 6× (the
+ * caller blurs it into a frosted backdrop). PixelCopy is used because
+ * the status media renders on a SurfaceView, OUTSIDE the Compose
+ * canvas — a live backdrop blur of it is impossible, but PixelCopy
+ * DOES capture SurfaceView pixels. Any failure returns null and the
+ * caller falls back to its translucent scrim alone — never a crash.
+ * Shared by the editor's bottom sheet and top bar backdrops.
+ */
+private suspend fun captureWindowRegion(win: android.view.Window, r: androidx.compose.ui.geometry.Rect): android.graphics.Bitmap? {
+    val src = android.graphics.Rect(r.left.toInt(), r.top.toInt(), r.right.toInt(), r.bottom.toInt())
+    if (src.width() < 10 || src.height() < 10) return null
+    return kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+        try {
+            val b = android.graphics.Bitmap.createBitmap(
+                (src.width() / 6).coerceAtLeast(1), (src.height() / 6).coerceAtLeast(1),
+                android.graphics.Bitmap.Config.ARGB_8888)
+            android.view.PixelCopy.request(win, src, b,
+                android.view.PixelCopy.OnPixelCopyFinishedListener { res ->
+                    // onCancellation: if the coroutine is cancelled and
+                    // the resume loses the race, bitmap b is never
+                    // delivered — recycle it instead of orphaning it.
+                    // It never runs when the value IS delivered, so no
+                    // use-after-recycle. (See Build #460.)
+                    if (cont.isActive) cont.resume(if (res == android.view.PixelCopy.SUCCESS) b else null,
+                        onCancellation = { runCatching { b.recycle() } })
+                },
+                android.os.Handler(android.os.Looper.getMainLooper()))
+        } catch (e: Exception) { if (cont.isActive) cont.resume(null, onCancellation = {}) }
     }
 }
 
@@ -6291,6 +6373,16 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     val editorBlur by animateDpAsState(if (musicOpen) 18.dp else 0.dp, label = "editorblur")   // blur editor behind the music sheet
     val player = remember { MediaPlayer() }
     var playing by remember { mutableStateOf(false) }
+    // Song-preview prepare guard: a play press prepares ASYNC (remote
+    // URL), and its OnPreparedListener starts playback whenever it
+    // lands — including after the AudioTrimmer has opened over the
+    // editor (one more double-play path). The generation stamps each
+    // prepare; a new press / song removal / the trimmer opening bumps
+    // it, so a stale listener lands as a no-op. songPreviewPending
+    // remembers that a start was in flight, so the trimmer-close
+    // resume can redo it instead of losing the press.
+    var songPreviewGen by remember { mutableStateOf(0) }
+    var songPreviewPending by remember { mutableStateOf(false) }
     DisposableEffect(Unit) { onDispose { runCatching { player.release() }; runCatching { exoPlayer?.release() } } }
     // Pause the song preview when the app goes to background (user leaves WhatsAyX mid-preview).
     PauseOnBackground(player) { playing = false }
@@ -6353,6 +6445,50 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
             runCatching { exoPlayer?.play() }
         }
     }
+    // ---- AudioTrimmer audio exclusivity ----
+    // The trimmer runs its OWN MediaPlayer. Before this, opening it left
+    // the editor's players running underneath: the song preview kept
+    // playing (double / echo audio against the trimmer's own preview)
+    // and a video status kept sounding its own track under the dialog
+    // too. While the trimmer is open it owns the audio alone: both
+    // editor players pause on open, and what was playing is remembered
+    // so closing the trimmer hands control straight back — the video
+    // replays (here, or via the resumeAfterSong effect above; a double
+    // play() is harmless), and the song preview restarts on the —
+    // possibly re-trimmed — window, exactly like a fresh press of its
+    // play button. Cancel out of the trimmer returns to the music sheet
+    // (musicOpen): the flow is still open then, the sheet owns the
+    // audio, and nothing resumes early underneath it.
+    var trimPausedSong by remember { mutableStateOf(false) }
+    var trimPausedVideo by remember { mutableStateOf(false) }
+    LaunchedEffect(songToTrim != null) {
+        if (songToTrim != null) {
+            trimPausedSong = playing || songPreviewPending
+            songPreviewGen++   // a prepare landing mid-trimmer must not start the editor preview under it
+            songPreviewPending = false
+            if (playing) { runCatching { player.pause() }; playing = false }
+            trimPausedVideo = exoPlayer?.playWhenReady == true
+            if (trimPausedVideo) runCatching { exoPlayer?.pause() }
+        } else {
+            if (trimPausedVideo) {
+                trimPausedVideo = false
+                if (!musicOpen) runCatching { exoPlayer?.play() }
+            }
+            if (trimPausedSong) {
+                trimPausedSong = false
+                val sg = song
+                if (!musicOpen && sg != null) runCatching {
+                    player.reset(); player.setDataSource(sg.url)
+                    val gen = ++songPreviewGen
+                    songPreviewPending = true
+                    player.setOnPreparedListener { if (gen == songPreviewGen) { songPreviewPending = false; it.seekTo(trimStart.toInt()); it.start(); playing = true } }
+                    player.setOnCompletionListener { playing = false }
+                    player.setOnErrorListener { _, _, _ -> if (gen == songPreviewGen) songPreviewPending = false; playing = false; true }
+                    player.prepareAsync()
+                }
+            }
+        }
+    }
     // Transient pause glyph flashed on a center-tap pause (WhatsApp-style);
     // while the video is actually playing there is NO center icon at all.
     var centerFlash by remember { mutableStateOf(false) }
@@ -6379,6 +6515,13 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     var sheetBackdrop by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
     var panelRect by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
     var capturingSheet by remember { mutableStateOf(false) }
+    // Header frost: the top bar gets the SAME treatment as the sheet —
+    // its own frozen snapshot, captured with the same once-per-media
+    // discipline (see the header capture effect below), so the top of
+    // the screen can never disco either.
+    var headerBackdrop by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var headerRect by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
+    var capturingHeader by remember { mutableStateOf(false) }
     val sheetView = LocalView.current
     LaunchedEffect(mediaUri, mediaType) {
         sheetBackdrop = null   // never show the previous media's snapshot behind this one
@@ -6409,31 +6552,54 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                 // Freshest rect at capture time (the sheet may have grown
                 // since settle, e.g. a song row appeared). After this ONE
                 // capture the bitmap is fixed for this media.
-                val r = panelRect ?: settledRect
-                val src = android.graphics.Rect(r.left.toInt(), r.top.toInt(), r.right.toInt(), r.bottom.toInt())
-                val bmp = kotlinx.coroutines.suspendCancellableCoroutine<android.graphics.Bitmap?> { cont ->
-                    try {
-                        val b = android.graphics.Bitmap.createBitmap(
-                            (src.width() / 6).coerceAtLeast(1), (src.height() / 6).coerceAtLeast(1),
-                            android.graphics.Bitmap.Config.ARGB_8888)
-                        android.view.PixelCopy.request(win, src, b,
-                            android.view.PixelCopy.OnPixelCopyFinishedListener { res ->
-                                // onCancellation: if the coroutine is cancelled and the
-                                // resume loses the race, bitmap b is never delivered —
-                                // recycle it instead of orphaning it. It never runs
-                                // when the value IS delivered, so no use-after-recycle.
-                                if (cont.isActive) cont.resume(if (res == android.view.PixelCopy.SUCCESS) b else null,
-                                    onCancellation = { runCatching { b.recycle() } })
-                            },
-                            android.os.Handler(android.os.Looper.getMainLooper()))
-                    } catch (e: Exception) { if (cont.isActive) cont.resume(null, onCancellation = {}) }
-                }
+                val bmp = captureWindowRegion(win, panelRect ?: settledRect)
                 if (bmp != null) sheetBackdrop = bmp else if (attempt < 2) delay(400)
             } catch (e: Exception) {
                 // Snapshot is best-effort decoration; the scrim carries the look.
                 if (attempt < 2) delay(400)
             } finally {
                 capturingSheet = false
+            }
+        }
+    }
+    // ---- Frosted-header backdrop (top bar) ----
+    // Captured with the IDENTICAL discipline as the sheet's: once per
+    // media, after the bar's first settled layout, ONE retry on failure,
+    // and never re-captured on IME/layout changes (the effect is keyed
+    // on the media only). While a capture runs, the header's backdrop
+    // layers hide (capturingHeader), so the snapshot sees the media
+    // itself, not the bar's own rendering — same trick as the sheet.
+    LaunchedEffect(mediaUri, mediaType) {
+        headerBackdrop = null   // never show the previous media's snapshot behind this one
+        if (mediaUri == null) return@LaunchedEffect
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return@LaunchedEffect
+        var hctx: Context = sheetView.context
+        var hhops = 0
+        while (hctx is android.content.ContextWrapper && hctx !is Activity && hhops < 5) { hctx = hctx.baseContext; hhops++ }
+        val hwin = (hctx as? Activity)?.window ?: return@LaunchedEffect
+        // Wait for the header's first settled layout (headerRect is fed
+        // by onGloballyPositioned on the top bar below).
+        var hsettled = headerRect
+        var htries = 0
+        while ((hsettled == null || hsettled.width < 10f || hsettled.height < 10f) && htries < 24) { delay(50); hsettled = headerRect; htries++ }
+        val hsettledRect = hsettled ?: return@LaunchedEffect
+        if (hsettledRect.width < 10f || hsettledRect.height < 10f) return@LaunchedEffect
+        delay(300)   // let the media render real frames behind the header first
+        var hattempt = 0
+        while (hattempt < 2 && headerBackdrop == null) {
+            hattempt++
+            capturingHeader = true
+            try {
+                androidx.compose.runtime.withFrameNanos { }
+                androidx.compose.runtime.withFrameNanos { }
+                delay(40)
+                val hbmp = captureWindowRegion(hwin, headerRect ?: hsettledRect)
+                if (hbmp != null) headerBackdrop = hbmp else if (hattempt < 2) delay(400)
+            } catch (e: Exception) {
+                // Snapshot is best-effort decoration; the scrim carries the look.
+                if (hattempt < 2) delay(400)
+            } finally {
+                capturingHeader = false
             }
         }
     }
@@ -6637,10 +6803,37 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                         }
                     }
                 }   // media layer (full-bleed) done
-                // ---- Top bar overlay (readability scrim) ----
+                // ---- Top bar overlay: rounded FROSTED BAR ----
+                // The sheet's treatment, mirrored to the top of the
+                // screen (user: "header button ki pichhe same round
+                // style blur add krde"): 28dp rounding on the free
+                // (bottom) edge, the frozen header snapshot blurred
+                // under a translucent scrim, and the same glass lip —
+                // the header zone reads as one frosted bar over the
+                // media instead of buttons floating on a fading black
+                // gradient. Buttons, their order and behavior are
+                // unchanged; only the backdrop behind them is new.
+                val headerShape = RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp)
                 Box(Modifier.align(Alignment.TopCenter).fillMaxWidth()
-                    .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent)))
-                    .statusBarsPadding()) {
+                    .onGloballyPositioned { headerRect = it.boundsInWindow() }
+                    .clip(headerShape)) {
+                    // Frosted backdrop layers (hidden for the one frame
+                    // a capture runs, so the snapshot sees the media
+                    // itself, not the bar's own rendering).
+                    Box(Modifier.matchParentSize().alpha(if (capturingHeader) 0f else 1f)) {
+                        val hb = headerBackdrop
+                        if (hb != null) {
+                            Image(hb.asImageBitmap(), null,
+                                Modifier.fillMaxSize().ayxBlurBackground(true, 10.dp),
+                                contentScale = ContentScale.Crop)
+                        }
+                        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
+                            listOf(Color.Black.copy(alpha = 0.58f), Color.Black.copy(alpha = 0.40f)))))
+                        // Glass lip: a faint light line on the bar's bottom edge.
+                        Box(Modifier.fillMaxWidth().height(1.dp).align(Alignment.BottomCenter)
+                            .background(Color.White.copy(alpha = 0.10f)))
+                    }
+                    Box(Modifier.statusBarsPadding()) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = onCancel) { AyxIcon(Icons.Filled.Close, "close", tint = Color.White) }
                         Text("New status", color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f).padding(start = 4.dp))
@@ -6666,6 +6859,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                             }) { AyxIcon(if (videoMuted) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp, "sound", tint = if (videoMuted) AYX_GREEN else Color.White) }
                         }
                         TextButton(onClick = { pickAudience = true }) { Text(audLabel, color = IOS_BLUE) }
+                    }
                     }
                 }
                 // ---- Bottom controls: rounded FROSTED SHEET over the media ----
@@ -6746,9 +6940,11 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                         if (playing) { runCatching { player.pause() }; playing = false }
                                         else runCatching {
                                             player.reset(); player.setDataSource(sg.url)
-                                            player.setOnPreparedListener { it.seekTo(trimStart.toInt()); it.start(); playing = true }
+                                            val gen = ++songPreviewGen
+                                            songPreviewPending = true
+                                            player.setOnPreparedListener { if (gen == songPreviewGen) { songPreviewPending = false; it.seekTo(trimStart.toInt()); it.start(); playing = true } }
                                             player.setOnCompletionListener { playing = false }
-                                            player.setOnErrorListener { _, _, _ -> playing = false; true }
+                                            player.setOnErrorListener { _, _, _ -> if (gen == songPreviewGen) songPreviewPending = false; playing = false; true }
                                             player.prepareAsync()
                                         }
                                     }) { AyxIcon(if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "play", tint = Color.White) }
@@ -6760,6 +6956,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                     IconButton(onClick = { musicOpen = true }) { AyxIcon(Icons.Filled.Refresh, "Replace song", tint = Color.White) }
                                     IconButton(onClick = {
                                         runCatching { player.reset() }; playing = false
+                                        songPreviewGen++; songPreviewPending = false   // a pending prepare of the removed song must never start
                                         song = null; songLyrics = emptyList(); translatedLyrics = null; translatedActive = false
                                         trimStart = 0L; trimEnd = 15000L; previewPos = 0L; showTranslateRow = false
                                     }) { AyxIcon(Icons.Filled.Delete, "Remove song", tint = Color.White) }
@@ -7796,12 +7993,25 @@ private fun AudioTrimmer(song: GatewayClient.Song, initialStart: Long = 0L, init
                     }
                 }
                 Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { if (playing) { runCatching { player.pause() }; playing = false } else runCatching { player.seekTo(startMs.toInt()); player.start(); playing = true } }, enabled = ready) {
+                    IconButton(onClick = { if (playing) { runCatching { player.pause() }; playing = false } else runCatching { player.seekTo(startMs.toInt()); posMs = startMs; player.start(); playing = true } }, enabled = ready) {
                         AyxIcon(if (playing) Icons.Filled.Close else Icons.Filled.PlayArrow, "play", tint = IOS_BLUE)
                     }
                     Text(fmtMs(posMs - startMs) + " / " + fmtMs(endMs - startMs), color = Color.White, style = MaterialTheme.typography.labelMedium)
                 }
-                WaveformTrimmer(bars, durationMs, startMs, endMs, posMs) { ns, ne -> startMs = ns; endMs = ne }
+                WaveformTrimmer(bars, durationMs, startMs, endMs, posMs) { ns, ne ->
+                    startMs = ns; endMs = ne
+                    // The preview FOLLOWS the window the moment it moves:
+                    // seek the player onto the new window start and put
+                    // the playhead there with it — playing or paused.
+                    // (Before this, the player kept sounding from
+                    // wherever it happened to be: a window dragged ahead
+                    // of the playhead played out-of-window audio until
+                    // it drifted past the end, and the new trim point
+                    // only took effect after a manual pause→play cycle
+                    // — the user's report.) The poll loop above still
+                    // loops playback inside the window at its end.
+                    if (ready) { runCatching { player.seekTo(ns.toInt()) }; posMs = ns }
+                }
                 Spacer(Modifier.height(12.dp))
                 if (durationMs > 6000L) {
                     val selLen = (endMs - startMs).coerceIn(1000L, durationMs)
@@ -7812,6 +8022,10 @@ private fun AudioTrimmer(song: GatewayClient.Song, initialStart: Long = 0L, init
                             val newLen = nl.toLong().coerceIn(5000L, maxLen)
                             endMs = (startMs + newLen).coerceAtMost(durationMs)
                             if (endMs - startMs < newLen) startMs = (endMs - newLen).coerceAtLeast(0L)
+                            // Same follow rule as the waveform: a length
+                            // change can move the window start, and the
+                            // preview/playhead goes with it immediately.
+                            if (ready) { runCatching { player.seekTo(startMs.toInt()) }; posMs = startMs }
                         }, valueRange = 5000f..maxLen.toFloat(), modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
                         colors = SliderDefaults.colors(thumbColor = IOS_BLUE, activeTrackColor = IOS_BLUE))
                         Text(fmtMs(selLen), color = Color.White, style = MaterialTheme.typography.labelMedium)

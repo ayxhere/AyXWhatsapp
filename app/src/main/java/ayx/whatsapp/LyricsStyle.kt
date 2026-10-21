@@ -15,6 +15,10 @@ import androidx.compose.runtime.mutableStateOf
  *   0 Plain, 1 Reveal (the default), 2 Pop, 3 Slide Up, 5 Fade,
  *   6 Blur and 7 Rotate — the last two carry over the appear channels of
  *   Settings → Appearance → Text Animation (blur / rotate) to lyrics.
+ *   8 Text Motion (added later, additive): a per-CHARACTER glide-in on
+ *   TextAnim's own easing family — the photo bake draws its settled
+ *   end-state (full line, sharp), since a frame render has no live
+ *   per-character timeline.
  *
  * Scope, honestly: this only decides how an already-synced line is DRAWN.
  * The lyrics fetch / parse / sync / cache pipeline (the LYRICS LOCK) is
@@ -33,6 +37,7 @@ object LyricsStyleStore {
     const val FADE = 5
     const val BLUR = 6
     const val ROTATE = 7
+    const val TEXT_MOTION = 8
 
     data class Option(val id: Int, val label: String, val desc: String)
 
@@ -44,6 +49,7 @@ object LyricsStyleStore {
         Option(ROTATE, "Rotate", "Each line tilts in — Text Animation style"),
         Option(FADE, "Fade", "Each line fades in"),
         Option(PLAIN, "Plain", "Full line at once — no animation"),
+        Option(TEXT_MOTION, "Text Motion", "Letters glide in one by one with a bounce — Text Animation style"),
     )
 
     val style = mutableStateOf(REVEAL)
