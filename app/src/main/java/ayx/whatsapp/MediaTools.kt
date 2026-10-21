@@ -32,7 +32,7 @@ import java.nio.FloatBuffer
 object MediaTools {
 
     // ---------- public: PHOTO(S) -> silent MP4 ----------
-    // animStyle: 0=None, 1=Pop (scale+fade), 2=Slide up, 3=Typewriter, 4=Fade
+    // animStyle (= LyricsStyleStore ids): 0=Plain, 1=Reveal, 2=Pop, 3=Slide up, 4=Typewriter, 5=Fade, 6=Blur, 7=Rotate
     fun photosToVideo(ctx: Context, uris: List<Uri>, out: File, durationMs: Long, lyrics: List<Pair<Long, String>>, lyricY: Float = 0.80f, lyricScale: Float = 1f, animStyle: Int = 0, onProgress: (Float) -> Unit): Boolean {
         val W = 720; val H = 1280; val FPS = 30; val BITRATE = 6_000_000
         val bmps = uris.mapNotNull { runCatching { loadScaledFit(ctx, it, W, H) }.getOrNull() }
@@ -478,7 +478,7 @@ object MediaTools {
 
     private val LYRIC_ACCENT = android.graphics.Color.rgb(255, 72, 72)   // highlight word (#FF4848), like the AM template
 
-    // animStyle: 0=None, 1=Reveal (word-by-word + two-tone + pop, the good one), 2=Pop, 3=Slide, 4=Type, 5=Fade
+    // animStyle: 0=Plain, 1=Reveal (word-by-word + two-tone + pop, the good one), 2=Pop, 3=Slide, 4=Type, 5=Fade, 6=Blur, 7=Rotate
     private fun drawComposite(base: Bitmap, lyric: String, w: Int, h: Int, yFrac: Float, scale: Float, animStyle: Int = 0, phase: Float = 1f): Bitmap {
         val bmp = base.copy(Bitmap.Config.ARGB_8888, true)
         if (lyric.isBlank()) return bmp
@@ -531,6 +531,8 @@ object MediaTools {
             3 -> { alpha = ease; dy = (1f - ease) * baseSize * 1.1f }
             4 -> { charFrac = p }
             5 -> { alpha = ease }
+            6 -> { alpha = ease }   // Blur: softness via the white shadowLayer below (sharpens as the phase completes)
+            7 -> { alpha = ease }   // Rotate: tilt applied at draw time below
         }
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = android.graphics.Color.WHITE; textSize = baseSize * sc; textAlign = Paint.Align.CENTER
@@ -538,11 +540,17 @@ object MediaTools {
             setShadowLayer(10f, 0f, 3f, android.graphics.Color.argb((200 * alpha).toInt().coerceIn(0, 255), 0, 0, 0))
             this.alpha = (255 * alpha).toInt().coerceIn(0, 255)
         }
+        // Blur (6): while the line is still entering, swap the dark drop
+        // shadow for a wide white glow — the text reads as out-of-focus and
+        // sharpens into the normal shadow as the phase completes.
+        if (animStyle == 6 && p < 0.98f) paint.setShadowLayer(((1f - p) * 26f).coerceAtLeast(1f), 0f, 0f, android.graphics.Color.argb((225 * alpha).toInt().coerceIn(0, 255), 255, 255, 255))
         val showTxt = if (animStyle == 4) lyric.take((lyric.length * charFrac).toInt().coerceIn(0, lyric.length)) else lyric
         if (showTxt.isNotBlank()) {
             val lines = wrapText(showTxt, paint, maxW)
+            if (animStyle == 7) { canvas.save(); canvas.rotate((1f - ease) * -6f, cx, y) }
             var yy = y + dy
             for (line in lines.takeLast(3)) { canvas.drawText(line, cx, yy, paint); yy += paint.textSize * 1.3f }
+            if (animStyle == 7) canvas.restore()
         }
         return bmp
     }

@@ -83,7 +83,6 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.layout
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.CornerRadius
@@ -235,6 +234,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -417,6 +417,7 @@ class MainActivity : ComponentActivity() {
         MessageMotionSettings.init(applicationContext)
         IconStyleSettings.init(applicationContext)
         IosSelectionSettings.init(applicationContext)
+        LyricsStyleStore.init(applicationContext)
         UiStyleStore.init(applicationContext)
         ayx.whatsapp.ui.UiAnimationSettings.init(applicationContext)
         ChatStyle.init(applicationContext)
@@ -1177,7 +1178,7 @@ fun GatewayApp() {
 
 
     pendingStatus?.let { ps ->
-        StatusEditor(ps.first, ps.second, deviceContacts, onUpload = { caption, audience, jids, song, tStart, tEnd, lyrics, lyricY, lyricScale, animStyle, romanize, editedBytes, vTrimStart, vTrimEnd, videoMuted, mediaUri, mediaType ->
+        StatusEditor(ps.first, ps.second, deviceContacts, onUpload = { caption, audience, jids, song, tStart, tEnd, lyrics, lyricY, lyricScale, animStyle, romanize, editedBytes, vTrimStart, vTrimEnd, videoMuted, mediaUri, mediaType, lyricsOff ->
             val u = mediaUri
             val t = mediaType
             pendingStatus = null
@@ -1242,7 +1243,7 @@ fun GatewayApp() {
                             val aFile = File(dir, "ta_$stamp.m4a")
                             val outFile = File(dir, "final_$stamp.mp4")
                             val durMs = (tEnd - tStart).coerceAtLeast(3000L)
-                            val lyFetched = if (lyrics.isNotEmpty()) lyrics else getCachedLyrics(song.title, song.artist, song.durationSec)
+                            val lyFetched = if (lyricsOff) emptyList() else if (lyrics.isNotEmpty()) lyrics else getCachedLyrics(song.title, song.artist, song.durationSec)
                             // Safety net: romanize any Devanagari that slipped through (lyrics are normally romanized at fetch time).
                             val ly = romanizeLyricPairs(lyFetched)
                             val adjusted0 = ly.filter { it.first in tStart..tEnd }.map { ((it.first - tStart - 450L).coerceAtLeast(0L)) to it.second }
@@ -1405,9 +1406,13 @@ fun GatewayApp() {
     // Status viewer — wrapped in the chosen page-transition animation so the
     // Animation Style setting visibly applies when opening/closing a status.
     // K: zIndex wrapper — the status overlay must be drawn ABOVE the Scaffold / floating Home-Status bar.
+    // State-driven variant (targetState): each animation slot renders the
+    // sender OF ITS OWN slot. The old screenKey version read the live
+    // storyView in both slots during a transition → two StatusViewers (two
+    // video players) stacked, the hidden one playing/ghosting behind.
     Box(Modifier.zIndex(100f)) {
-    AyxAnimatedScreen(screenKey = "story|${storyView ?: "none"}") {
-        storyView?.let { sender ->
+    AyxAnimatedScreen(targetState = storyView) { shownSender ->
+        shownSender?.let { sender ->
             StatusViewer(
                 statuses = statuses,
                 startSender = sender,
@@ -6151,8 +6156,44 @@ private fun LinkText(text: String, color: Color) {
 
 
 @OptIn(ExperimentalLayoutApi::class)
+/**
+ * One synced lyrics line in a non-Reveal style (see [LyricsStyleStore]):
+ * the editor-side twin of MediaTools.drawComposite's whole-line styles.
+ * Words enter staggered with the style's transform over ~450 ms from the
+ * line's start — the same entrance window the send-time bake uses — in
+ * the same UPPERCASE heavy type as Reveal, so only the motion differs.
+ */
 @Composable
-private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, onUpload: (String, String, List<String>, GatewayClient.Song?, Long, Long, List<Pair<Long, String>>, Float, Float, Int, Boolean, ByteArray?, Long, Long, Boolean, Uri?, String) -> Unit, onCancel: () -> Unit) {
+private fun StyledLyricLine(text: String, lineStart: Long, posMs: Long, style: Int, scale: Float, modifier: Modifier = Modifier) {
+    val words = text.trim().uppercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
+    if (words.isEmpty()) return
+    val ph = ((posMs - lineStart).toFloat() / 450f).coerceIn(0f, 1f)
+    FlowRow(modifier, horizontalArrangement = Arrangement.spacedBy(7.dp, Alignment.CenterHorizontally)) {
+        words.forEachIndexed { i, w ->
+            val wp = if (style == LyricsStyleStore.PLAIN) 1f else (ph * 1.3f - i * 0.055f).coerceIn(0f, 1f)
+            val ease = 1f - (1f - wp) * (1f - wp) * (1f - wp)
+            val m = when (style) {
+                LyricsStyleStore.FADE -> Modifier.graphicsLayer { alpha = wp }
+                LyricsStyleStore.SLIDE -> Modifier.graphicsLayer { alpha = wp; translationY = (1f - ease) * 64f }
+                LyricsStyleStore.POP -> Modifier.graphicsLayer {
+                    alpha = (wp * 1.6f).coerceIn(0f, 1f)
+                    val sc = if (wp <= 0f) 0.55f else {
+                        val x = wp.toDouble(); val c = 1.70158
+                        (0.55 + 0.45 * (1.0 + (c + 1.0) * kotlin.math.pow(x - 1.0, 3.0) + c * kotlin.math.pow(x - 1.0, 2.0))).toFloat().coerceIn(0.3f, 1.25f)
+                    }
+                    scaleX = sc; scaleY = sc
+                }
+                LyricsStyleStore.BLUR -> Modifier.graphicsLayer { alpha = wp }.blur(((1f - wp) * 9f).dp)
+                LyricsStyleStore.ROTATE -> Modifier.graphicsLayer { alpha = wp; rotationZ = (1f - ease) * -8f; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 1f) }
+                else -> Modifier
+            }
+            Text(w, color = Color.White, fontSize = (27f * scale).sp, fontWeight = FontWeight.Black, lineHeight = (31f * scale).sp, modifier = m)
+        }
+    }
+}
+
+@Composable
+private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, onUpload: (String, String, List<String>, GatewayClient.Song?, Long, Long, List<Pair<Long, String>>, Float, Float, Int, Boolean, ByteArray?, Long, Long, Boolean, Uri?, String, Boolean) -> Unit, onCancel: () -> Unit) {
     val ctx = LocalContext.current
     var caption by remember { mutableStateOf("") }
     var audience by remember { mutableStateOf("all") }
@@ -6165,8 +6206,13 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     var songLyrics by remember { mutableStateOf<List<Pair<Long, String>>>(emptyList()) }
     var lyricY by remember { mutableStateOf(0.18f) }      // Instagram-style text sits near the top
     var lyricScale by remember { mutableStateOf(1f) }
-    // Lyrics animation is ALWAYS Reveal (the one built-in style) — no style selector.
-    val animStyle = 1
+    // Lyrics display style — chosen by double-tapping the preview (or the
+    // song panel's "Lyrics style" button), persisted in LyricsStyleStore,
+    // and the SAME style id drives the send-time render (MediaTools), so
+    // the editor preview matches what a photo status bakes in.
+    val animStyle = LyricsStyleStore.style.value
+    var lyricsHidden by remember { mutableStateOf(false) }   // per-post: lyrics off in the preview AND in the posted status
+    var lyricsStyleOpen by remember { mutableStateOf(false) }
     var previewPos by remember { mutableStateOf(0L) }
     // ---- Media (Image 2): re-pickable + removable inside the editor ----
     var mediaUri by remember { mutableStateOf<Uri?>(uri) }
@@ -6244,6 +6290,28 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     // Pause the song preview when the app goes to background (user leaves WhatsAyX mid-preview).
     PauseOnBackground(player) { playing = false }
     LaunchedEffect(playing) { while (playing) { previewPos = runCatching { player.currentPosition.toLong() }.getOrDefault(previewPos); if (trimEnd > 0 && previewPos >= trimEnd) { runCatching { player.seekTo(trimStart.toInt()) }; previewPos = trimStart }; delay(90) } }
+    // Song–video trim sync (Instagram/WhatsApp behaviour): with a video AND
+    // a song attached, the song window's LENGTH follows the video trim
+    // length — a 60 s video selection means 60 s of song, never a fixed
+    // 15 s. The song's START stays where the user put it (song trimmer /
+    // default); only the end moves, live, as the video trim changes. If
+    // start + video length runs past the song's own end, the end clamps to
+    // the song end — the song plays out its remainder, no looping is
+    // invented. The effect pauses while the song trimmer itself is open
+    // (its Done applies the same fit via this effect when it closes), and
+    // it fires on video (re)load too, so attaching a song to an already
+    // trimmed video fits immediately. Lyrics timing is untouched: preview
+    // and send both read the song position against the same absolute lyric
+    // timestamps — only the window LENGTH's source changes.
+    LaunchedEffect(vTrimStart, vTrimEnd, trimStart, song, mediaType, songToTrim) {
+        val sg = song ?: return@LaunchedEffect
+        if (mediaType != "video" || songToTrim != null) return@LaunchedEffect
+        val vLen = vTrimEnd - vTrimStart
+        if (vLen <= 0L) return@LaunchedEffect
+        val songDurMs = sg.durationSec.toLong() * 1000L
+        val target = if (songDurMs > 0L) minOf(trimStart + vLen, songDurMs) else trimStart + vLen
+        if (target > trimStart && target != trimEnd) trimEnd = target
+    }
     // when music isn't playing, gently scrub through the lyric window so the lines are visible live in the preview
     LaunchedEffect(displayLyrics, playing, trimStart, trimEnd) {
         if (playing || displayLyrics.isEmpty()) return@LaunchedEffect
@@ -6348,7 +6416,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                 AyxIcon(Icons.Filled.Close, "remove video", tint = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(4.dp))
                             }
                         }
-                    if (displayLyrics.isNotEmpty()) {
+                    if (displayLyrics.isNotEmpty() && !lyricsHidden) {
                         val active = displayLyrics.lastOrNull { it.first <= previewPos + 200L }
                         val line = active?.second ?: displayLyrics.firstOrNull { it.first in trimStart..trimEnd }?.second ?: ""
                         Box(Modifier.fillMaxSize().pointerInput(Unit) {
@@ -6356,9 +6424,13 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                 lyricY = (lyricY + pan.y / size.height.toFloat()).coerceIn(0.06f, 0.9f)
                                 lyricScale = (lyricScale * zoom).coerceIn(0.5f, 2.5f)
                             }
+                        }.pointerInput(Unit) {
+                            // double-tap the preview -> lyrics style chooser
+                            detectTapGestures(onDoubleTap = { lyricsStyleOpen = true })
                         }) {
                             if (line.isNotBlank()) {
-                                    // Reveal (the one built-in style): words build left→right, newest word grey, UPPERCASE bold
+                                if (animStyle == LyricsStyleStore.REVEAL) {
+                                    // Reveal (the default style): words build left→right, newest word grey, UPPERCASE bold
                                     val lineStart = active?.first ?: 0L
                                     val nextStart = displayLyrics.firstOrNull { it.first > lineStart }?.first ?: (lineStart + 3000L)
                                     val dur = (nextStart - lineStart).coerceIn(700L, 6000L)
@@ -6373,6 +6445,10 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                         }
                                     }
 
+                                } else {
+                                    StyledLyricLine(line, active?.first ?: 0L, previewPos, animStyle, lyricScale,
+                                        Modifier.align(BiasAlignment(0f, lyricY * 2f - 1f)).fillMaxWidth(0.92f).padding(horizontal = 8.dp))
+                                }
                             }
                             Text("drag • pinch to resize lyrics", color = Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.labelSmall,
                                 modifier = Modifier.align(Alignment.TopCenter).padding(top = 6.dp))
@@ -6402,32 +6478,34 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                     .then(if (imeVisible) Modifier.background(Color.Black) else Modifier.background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.78f)))))
                     // L: real IME inset (+ small gap) — only this row rises, the media stays fixed.
                     .navigationBarsPadding().imePadding().padding(bottom = 10.dp)) {
-                    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 10.dp)) {
-                            // ---- Video trimmer panel (V3): toggled from the ✂ Trim button in the video header.
-                            // Draggable left/right edges set the range; the selection itself IS the length (no Length slider).
-                            if (mediaType == "video" && mediaUri != null && videoDuration > 0L && videoTrimOpen) {
-                                // key(mediaUri): a different video always gets a FRESH
-                                // trimmer (frames + gesture state) — nothing stale survives.
-                                // The layout{} bleed cancels the column's 12dp side padding so
-                                // the strip runs screen-to-screen like WhatsApp's trimmer.
-                                key(mediaUri) {
-                                    Box(Modifier.layout { measurable, constraints ->
-                                        val bleed = 12.dp.roundToPx()
-                                        val w = constraints.maxWidth + bleed * 2
-                                        val p = measurable.measure(constraints.copy(minWidth = w, maxWidth = w))
-                                        layout(p.width, p.height) { p.place(-bleed, 0) }
-                                    }) {
-                                        VideoFilmstripTrimmer(ctx, mediaUri!!, videoDuration, vTrimStart, vTrimEnd, videoPos,
-                                            onChange = { ns, ne -> vTrimStart = ns; vTrimEnd = ne },
-                                            onSeek = { ms -> videoPos = ms; runCatching { exoPlayer?.seekTo(ms) } },
-                                            onScrubChange = { trimScrubbing = it })
-                                    }
-                                }
-                                val vSelSec = ((vTrimEnd - vTrimStart).coerceAtLeast(0L) / 1000L)
-                                Text(fmtMs(vTrimStart) + "  →  " + fmtMs(vTrimEnd) + "   •   (" + vSelSec + "s)", color = Color.White, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 4.dp))
-                                Text("drag the edges to trim, or drag the selection to move it", color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall)
-                                Spacer(Modifier.height(6.dp))
+                    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+                        Spacer(Modifier.height(10.dp))
+                        // ---- Video trimmer panel (V3): toggled from the ✂ Trim button in the video header.
+                        // Draggable left/right edges set the range; the selection itself IS the length (no Length slider).
+                        // FULL-WIDTH by structure: the strip is a direct child of this
+                        // UNPADDED column, so it spans exactly the preview's width,
+                        // edge to edge. (It used to sit inside the 12dp-padded column
+                        // behind a layout{} "bleed" hack — the -12dp placement
+                        // applied but the strip's measured width stayed the padded
+                        // width, so on device the strip stopped short of the right
+                        // edge and the frames/selection sat squeezed to the left
+                        // of the full-bleed preview. The padded rows now live in
+                        // the inner column below; the trimmer needs no hack.)
+                        if (mediaType == "video" && mediaUri != null && videoDuration > 0L && videoTrimOpen) {
+                            // key(mediaUri): a different video always gets a FRESH
+                            // trimmer (frames + gesture state) — nothing stale survives.
+                            key(mediaUri) {
+                                VideoFilmstripTrimmer(ctx, mediaUri!!, videoDuration, vTrimStart, vTrimEnd, videoPos,
+                                    onChange = { ns, ne -> vTrimStart = ns; vTrimEnd = ne },
+                                    onSeek = { ms -> videoPos = ms; runCatching { exoPlayer?.seekTo(ms) } },
+                                    onScrubChange = { trimScrubbing = it })
                             }
+                            val vSelSec = ((vTrimEnd - vTrimStart).coerceAtLeast(0L) / 1000L)
+                            Text(fmtMs(vTrimStart) + "  →  " + fmtMs(vTrimEnd) + "   •   (" + vSelSec + "s)", color = Color.White, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 12.dp).padding(top = 4.dp))
+                            Text("drag the edges to trim, or drag the selection to move it", color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 12.dp))
+                            Spacer(Modifier.height(6.dp))
+                        }
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
                             // ---- SONG row: tap toggles the AI Lyrics Translate button below. Actions are ICONS (no text).
                             // X buttons anywhere in this flow are NAVIGATION only — never a remove action.
                             Row(Modifier.fillMaxWidth().clickable { if (song != null) showTranslateRow = !showTranslateRow }, verticalAlignment = Alignment.CenterVertically) {
@@ -6468,6 +6546,16 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                 }
                                 if (translatedActive) Text("Translated ✓ — translated lyrics will be posted", color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 8.dp))
                             }
+                            // ---- Lyrics style + hide: the style button opens the same
+                            // chooser as double-tapping the preview; Hide drops the
+                            // lyrics from the preview AND from the posted status. ----
+                            if (song != null && songLyrics.isNotEmpty()) {
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    TextButton(onClick = { lyricsStyleOpen = true }) { Text("🎨 Lyrics style: " + LyricsStyleStore.label(animStyle), color = Color.White) }
+                                    Spacer(Modifier.weight(1f))
+                                    TextButton(onClick = { lyricsHidden = !lyricsHidden }) { Text(if (lyricsHidden) "👁 Show lyrics" else "🙈 Hide lyrics", color = if (lyricsHidden) AYX_GREEN else Color.White) }
+                                }
+                            }
                             // (AI Edit now lives on the image header; AI Lyrics Translate toggles under the song row.)
                             // ---- Video: mute (the trimmer now lives in its own toggleable panel above) ----
                             if (mediaType == "video" && mediaUri != null) {
@@ -6503,15 +6591,43 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                 }
                                 Spacer(Modifier.width(8.dp))
                                 FilledIconButton(enabled = mediaUri != null,
-                                    onClick = { onUpload(caption.trim(), audience, selected.toList(), song, trimStart, trimEnd, displayLyrics, lyricY, lyricScale, animStyle, romanize, editedBytes, vTrimStart, vTrimEnd, videoMuted, mediaUri, mediaType) },
+                                    onClick = { onUpload(caption.trim(), audience, selected.toList(), song, trimStart, trimEnd, if (lyricsHidden) emptyList() else displayLyrics, lyricY, lyricScale, animStyle, romanize, editedBytes, vTrimStart, vTrimEnd, videoMuted, mediaUri, mediaType, lyricsHidden) },
                                     modifier = Modifier.size(48.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = AYX_GREEN)) { AyxIcon(Icons.AutoMirrored.Filled.Send, "upload", tint = Color.White) }
                             }
                         }
+                        Spacer(Modifier.height(10.dp))
                     }
                 }
             }
         }
+    }
     if (pickAudience) AudienceSheet(contacts, audience, selected) { a, sset -> audience = a; selected = sset; pickAudience = false }
+    if (lyricsStyleOpen) {
+        AlertDialog(
+            onDismissRequest = { lyricsStyleOpen = false },
+            containerColor = dialogBg(),
+            shape = uiShapeFor(24),
+            title = { Text("Lyrics style") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Text("Applied to the editor preview and baked into photo statuses when posted. Double-tap the preview anytime to reopen this.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(8.dp))
+                    LyricsStyleStore.OPTIONS.forEach { opt ->
+                        Row(Modifier.fillMaxWidth().clip(uiShapeFor(12)).clickable { LyricsStyleStore.setStyle(opt.id); lyricsStyleOpen = false }
+                            .background(if (animStyle == opt.id) AYX_GREEN.copy(alpha = 0.16f) else Color.Transparent)
+                            .padding(horizontal = 10.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(opt.label, fontWeight = if (animStyle == opt.id) FontWeight.Bold else FontWeight.Normal)
+                                Text(opt.desc, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+                            }
+                            if (animStyle == opt.id) AyxIcon(Icons.Filled.Check, "selected", tint = AYX_GREEN)
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { lyricsStyleOpen = false }) { Text("Close") } }
+        )
+    }
     if (musicOpen) MusicSearchSheet(initialQuery = songQuery, autoFocus = true, onQueryChange = { songQuery = it }, onSelect = { songToTrim = it; musicOpen = false }, onClose = { musicOpen = false })
     if (aiEditOpen && mediaUri != null) AiImageEditSheet(ctx, mediaUri!!, onDone = { editedBytes = it; aiEditOpen = false }, onCancel = { aiEditOpen = false }, onOpenSettings = { aiEditOpen = false; showAiSettingsDlg = true })
     // V5: AI Edit temporarily paused — show the exact paused message.
@@ -6535,7 +6651,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
         onCancel = { translateOpen = false },
         onOpenApiSettings = { translateOpen = false; showGroqDlg = true })
     songToTrim?.let { sng ->
-        AudioTrimmer(sng, onDone = { st, en, ly -> song = sng; trimStart = st; trimEnd = en; songLyrics = ly; translatedLyrics = null; translatedActive = false; showTranslateRow = false; songToTrim = null }, onCancel = { songToTrim = null; musicOpen = true })
+        AudioTrimmer(sng, initialStart = trimStart, initialEnd = trimEnd, onDone = { st, en, ly -> song = sng; trimStart = st; trimEnd = en; songLyrics = ly; translatedLyrics = null; translatedActive = false; showTranslateRow = false; songToTrim = null }, onCancel = { songToTrim = null; musicOpen = true })
     }
 }
 /**
@@ -6927,8 +7043,18 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
     }
     if (groups.isEmpty()) { LaunchedEffect(Unit) { onClose() }; return }
     val target = startSender.substringBefore("@").substringBefore(":").filter { it.isDigit() }
-    var si by remember { mutableStateOf(groups.indexOfFirst { g -> g.first.substringBefore("@").substringBefore(":").filter { it.isDigit() } == target }.coerceAtLeast(0)) }
-    var ii by remember { mutableStateOf(0) }
+    val startGroup = groups.indexOfFirst { g -> g.first.substringBefore("@").substringBefore(":").filter { it.isDigit() } == target }.coerceAtLeast(0)
+    var si by remember { mutableStateOf(startGroup) }
+    // BUG3 fix: reopening a contact starts at their first UNSEEN status, not
+    // always at the first one. Uses StatusData's persistent seen-set — the
+    // same one that buckets the list into "Viewed updates". Null-id items
+    // count as seen here (same rule as StatusData.groupSeen, since they can
+    // never be marked); if everything is viewed, fall back to 0 (replay).
+    var ii by remember {
+        val startItems = groups.getOrNull(startGroup)?.second ?: emptyList()
+        val firstUnseen = startItems.indexOfFirst { it.id != null && !StatusData.isSeen(it.id) }
+        mutableStateOf(if (firstUnseen >= 0) firstUnseen else 0)
+    }
     val group = groups.getOrNull(si) ?: run { LaunchedEffect(Unit) { onClose() }; return }
     val items = group.second
     val st = items.getOrNull(ii) ?: run { LaunchedEffect(Unit) { onClose() }; return }
@@ -6937,9 +7063,24 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
     // send a "seen" receipt for each status actually viewed (gated by the Hide-status-view setting upstream)
     LaunchedEffect(st.id, si, ii) { if (!st.mine && !st.id.isNullOrBlank()) onSeen(st) }
     var replyText by remember { mutableStateOf("") }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    // BUG2a: moving to another status/person (tap, auto-advance, video end)
+    // must drop the reply keyboard — it used to stay open over the next
+    // status. The draft text itself is kept; only the keyboard/focus goes.
+    LaunchedEffect(si, ii) { keyboard?.hide(); focusManager.clearFocus() }
     var progress by remember(si, ii) { mutableStateOf(0f) }
     var videoReady by remember(st.mediaName, si, ii) { mutableStateOf(false) }   // video prepared → drive bar from real position
     var exoPlayer by remember(st.mediaName, si, ii) { mutableStateOf<androidx.media3.exoplayer.ExoPlayer?>(null) }
+    // BUG1 hardening: when this viewer leaves the composition (close, back,
+    // person switch), stop the current video outright — playback must never
+    // continue behind the status list or the next person's status, even if
+    // an outer transition keeps the outgoing screen alive a few frames.
+    DisposableEffect(exoPlayer) {
+        val pl = exoPlayer
+        onDispose { runCatching { pl?.stop() } }
+    }
     var confirmDelete by remember { mutableStateOf<String?>(null) }
     var showViewers by remember { mutableStateOf(false) }
     val myMine = items.first().mine
@@ -7065,9 +7206,15 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                             style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(28.dp))
                     }
                 }
+                // BUG2b: while the reply keyboard is up, a tap on the status
+                // dismisses ONLY the keyboard — it must not also navigate.
                 Row(Modifier.fillMaxSize()) {
-                    Box(Modifier.weight(1f).fillMaxHeight().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { goPrev() })
-                    Box(Modifier.weight(1.6f).fillMaxHeight().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { goNext() })
+                    Box(Modifier.weight(1f).fillMaxHeight().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                        if (imeVisible) { keyboard?.hide(); focusManager.clearFocus() } else goPrev()
+                    })
+                    Box(Modifier.weight(1.6f).fillMaxHeight().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                        if (imeVisible) { keyboard?.hide(); focusManager.clearFocus() } else goNext()
+                    })
                 }
                 // J: header block = solid black from the very top (notification bar) down to the user row.
                 Column(Modifier.fillMaxWidth().background(Color.Black).statusBarsPadding().padding(8.dp)) {
@@ -7347,13 +7494,13 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
 }
 
 @Composable
-private fun AudioTrimmer(song: GatewayClient.Song, onDone: (Long, Long, List<Pair<Long, String>>) -> Unit, onCancel: () -> Unit) {
+private fun AudioTrimmer(song: GatewayClient.Song, initialStart: Long = 0L, initialEnd: Long = 0L, onDone: (Long, Long, List<Pair<Long, String>>) -> Unit, onCancel: () -> Unit) {
     val player = remember { MediaPlayer() }
     val scope = rememberCoroutineScope()
     var durationMs by remember { mutableStateOf(0L) }
     var ready by remember { mutableStateOf(false) }
-    var startMs by remember { mutableStateOf(0L) }
-    var endMs by remember { mutableStateOf(15000L) }
+    var startMs by remember { mutableStateOf(initialStart) }
+    var endMs by remember { mutableStateOf(if (initialEnd > initialStart) initialEnd else 15000L) }
     var posMs by remember { mutableStateOf(0L) }
     var playing by remember { mutableStateOf(false) }
     // Pause the preview when the app goes to background (user leaves WhatsAyX mid-preview).
@@ -7366,7 +7513,7 @@ private fun AudioTrimmer(song: GatewayClient.Song, onDone: (Long, Long, List<Pai
     DisposableEffect(Unit) {
         runCatching {
             player.setDataSource(song.url)
-            player.setOnPreparedListener { durationMs = it.duration.toLong().coerceAtLeast(1000L); endMs = minOf(15000L, durationMs); ready = true }
+            player.setOnPreparedListener { durationMs = it.duration.toLong().coerceAtLeast(1000L); startMs = initialStart.coerceIn(0L, (durationMs - 1000L).coerceAtLeast(0L)); endMs = (if (initialEnd > initialStart) minOf(initialEnd, durationMs) else minOf(15000L, durationMs)).coerceIn(startMs + 500L, durationMs); ready = true }
             player.setOnCompletionListener { playing = false }
             player.setOnErrorListener { _, _, _ -> true }
             player.prepareAsync()
