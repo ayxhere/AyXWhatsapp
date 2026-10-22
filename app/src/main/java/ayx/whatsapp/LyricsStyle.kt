@@ -39,6 +39,30 @@ object LyricsStyleStore {
     const val ROTATE = 7
     const val TEXT_MOTION = 8
 
+    /**
+     * THE shared lyric size definition (editor preview ⇄ photo bake).
+     * The editor draws every style at [LYRIC_BASE_SP] sp (line height
+     * [LYRIC_LINE_SP] sp) times the pinch lyricScale (0.5–2.5×) on a
+     * full-screen-width preview, so a lyric's on-screen size is the
+     * FRACTION [baseFractionOfWidth] of the frame width. The send-time
+     * bake (MediaTools.drawComposite) takes the same fraction of its
+     * canvas width — the posted status then shows the SAME relative
+     * size the editor preview showed, locked at any lyricScale.
+     * (The bake previously keyed size off canvas HEIGHT — 0.052·h for
+     * whole-line styles, 0.056·h for Reveal — which inflated lyrics
+     * ~1.4–1.9× over the preview, worst on tall aspect canvases.)
+     */
+    const val LYRIC_BASE_SP = 27f
+    const val LYRIC_LINE_SP = 31f
+
+    /** Editor base text height as a fraction of the (full-screen) preview width, on THIS device. */
+    fun baseFractionOfWidth(ctx: Context): Float {
+        val dm = ctx.resources.displayMetrics
+        if (dm.widthPixels <= 0) return 0f
+        val basePx = android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP, LYRIC_BASE_SP, dm)
+        return basePx / dm.widthPixels.toFloat()
+    }
+
     data class Option(val id: Int, val label: String, val desc: String)
 
     val OPTIONS = listOf(

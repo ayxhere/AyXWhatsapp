@@ -55,6 +55,12 @@ object MediaTools {
             val raw = if (b.outWidth > 0 && b.outHeight > 0) (W * b.outHeight) / b.outWidth else 1280
             (raw / 2 * 2).coerceIn(720, 1600)
         }
+        // Lyric size, WYSIWYG: the fraction of frame WIDTH the editor's
+        // base text occupies on this device (see LyricsStyleStore) — the
+        // bake takes the same fraction of the canvas width, so the
+        // posted status renders lyrics at exactly the relative size the
+        // editor preview showed for the same lyricScale.
+        val lyricFrac = LyricsStyleStore.baseFractionOfWidth(ctx)
         val FPS = 30; val BITRATE = 6_000_000
         val bmps = uris.mapNotNull { runCatching { loadScaledFit(ctx, it, W, H) }.getOrNull() }
         if (bmps.isEmpty()) return false
@@ -136,7 +142,7 @@ object MediaTools {
                 val key = "$imgIdx|$lyric|$pq"
                 if (key != lastKey) {
                     composite?.recycle()
-                    composite = drawComposite(bmps[imgIdx], lyric, W, H, lyricY, lyricScale, animStyle, phase, font)
+                    composite = drawComposite(bmps[imgIdx], lyric, W, H, lyricY, lyricScale, animStyle, phase, font, lyricFrac)
                     quad!!.uploadBitmap(composite!!)
                     lastKey = key
                 }
@@ -507,11 +513,18 @@ object MediaTools {
     // whole-line styles, SANS_SERIF bold for Reveal), so the uploaded
     // status silently lost the selected TTF the preview showed. Null =
     // the old faces, for any caller that doesn't pass one.
-    private fun drawComposite(base: Bitmap, lyric: String, w: Int, h: Int, yFrac: Float, scale: Float, animStyle: Int = 0, phase: Float = 1f, font: android.graphics.Typeface? = null): Bitmap {
+    // [baseFrac]: the editor's lyric base size as a fraction of frame
+    // WIDTH (LyricsStyleStore.baseFractionOfWidth, measured on the
+    // editing device). Text is sized w * baseFrac * scale in BOTH paint
+    // branches — the same fraction the editor preview showed, so the
+    // baked size is locked to the preview at every lyricScale. (Before,
+    // size keyed off canvas height: h * 0.052 whole-line, h * 0.056
+    // Reveal — 1.4–1.9× the preview's relative size.)
+    private fun drawComposite(base: Bitmap, lyric: String, w: Int, h: Int, yFrac: Float, scale: Float, animStyle: Int = 0, phase: Float = 1f, font: android.graphics.Typeface? = null, baseFrac: Float): Bitmap {
         val bmp = base.copy(Bitmap.Config.ARGB_8888, true)
         if (lyric.isBlank()) return bmp
         val canvas = Canvas(bmp)
-        val baseSize = h * 0.052f * scale.coerceIn(0.5f, 2.5f)
+        val baseSize = w * baseFrac * scale.coerceIn(0.5f, 2.5f)
         val p = phase.coerceIn(0f, 1f)
         val cx = w / 2f
         val maxW = w * 0.9f
@@ -523,7 +536,12 @@ object MediaTools {
             val words = lyric.trim().uppercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
             if (words.isEmpty()) return bmp
             val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                textSize = h * 0.056f * scale.coerceIn(0.5f, 2.0f)
+                // Same width fraction as the whole-line branch (and the
+                // editor) — and the editor's full 0.5–2.5 pinch range;
+                // Reveal used to key off height (h * 0.056) AND silently
+                // cap the scale at 2.0, so a 2.5× pinch posted smaller
+                // than the preview on top of the height inflation.
+                textSize = w * baseFrac * scale.coerceIn(0.5f, 2.5f)
                 typeface = font ?: android.graphics.Typeface.create(android.graphics.Typeface.SANS_SERIF, android.graphics.Typeface.BOLD)
                 textAlign = Paint.Align.LEFT
             }

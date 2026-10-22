@@ -6198,7 +6198,7 @@ private fun StyledLyricLine(text: String, lineStart: Long, posMs: Long, style: I
                         val cp = (ph * (1f + (totalChars - 1) * cStep) - ci * cStep).coerceIn(0f, 1f)
                         ci++
                         val e = TextAnimEasing.apply(3, cp)
-                        Text(ch.toString(), color = Color.White, fontSize = (27f * scale).sp, fontWeight = FontWeight.Black, lineHeight = (31f * scale).sp,
+                        Text(ch.toString(), color = Color.White, fontSize = (LyricsStyleStore.LYRIC_BASE_SP * scale).sp, fontWeight = FontWeight.Black, lineHeight = (LyricsStyleStore.LYRIC_LINE_SP * scale).sp,
                             modifier = Modifier.graphicsLayer {
                                 alpha = cp
                                 translationY = (1f - e) * 52f
@@ -6244,7 +6244,7 @@ private fun StyledLyricLine(text: String, lineStart: Long, posMs: Long, style: I
                 LyricsStyleStore.ROTATE -> Modifier.graphicsLayer { alpha = wp; rotationZ = (1f - ease) * -8f; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 1f) }
                 else -> Modifier
             }
-            Text(w, color = Color.White, fontSize = (27f * scale).sp, fontWeight = FontWeight.Black, lineHeight = (31f * scale).sp, modifier = m)
+            Text(w, color = Color.White, fontSize = (LyricsStyleStore.LYRIC_BASE_SP * scale).sp, fontWeight = FontWeight.Black, lineHeight = (LyricsStyleStore.LYRIC_LINE_SP * scale).sp, modifier = m)
         }
     }
 }
@@ -6902,7 +6902,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                             horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                                             for (i in 0 until shown) {
                                                 Text(words[i], color = if (i == shown - 1) Color(0xFFAAAAAA) else Color.White,
-                                                    fontSize = (27f * lyricScale).sp, fontWeight = FontWeight.Black, lineHeight = (31f * lyricScale).sp)
+                                                    fontSize = (LyricsStyleStore.LYRIC_BASE_SP * lyricScale).sp, fontWeight = FontWeight.Black, lineHeight = (LyricsStyleStore.LYRIC_LINE_SP * lyricScale).sp)
                                             }
                                         }
 
@@ -7628,6 +7628,33 @@ private fun SquigglyProgress(frac: Float, loading: Boolean, modifier: Modifier =
     }
 }
 
+/**
+ * Upload time of the CURRENT status item, for the viewer header (under
+ * the name): "12:48 pm" for today; older items get a day prefix —
+ * "Yesterday, 9:15 am" / "Mon, 9:15 am" / "21 Oct, 9:15 am" — the same
+ * day labels StatusView.viewTime uses. Explicit Locale.US "h:mm a" so
+ * the AM/PM marker ALWAYS renders, whatever the device locale is (a
+ * getDefault() pattern can silently drop it).
+ */
+private fun statusTimeLabel(ts: Long): String {
+    if (ts <= 0L) return ""
+    val time = SimpleDateFormat("h:mm a", Locale.US).format(Date(ts)).lowercase(Locale.US)
+    fun midnight(millis: Long): Long {
+        val c = java.util.Calendar.getInstance()
+        c.timeInMillis = millis
+        c.set(java.util.Calendar.HOUR_OF_DAY, 0); c.set(java.util.Calendar.MINUTE, 0)
+        c.set(java.util.Calendar.SECOND, 0); c.set(java.util.Calendar.MILLISECOND, 0)
+        return c.timeInMillis
+    }
+    val dayDiff = ((midnight(System.currentTimeMillis()) - midnight(ts)) / 86_400_000L).toInt()
+    return when {
+        dayDiff <= 0 -> time
+        dayDiff == 1 -> "Yesterday, $time"
+        dayDiff < 7 -> SimpleDateFormat("EEE", Locale.US).format(Date(ts)) + ", " + time
+        else -> SimpleDateFormat("d MMM", Locale.US).format(Date(ts)) + ", " + time
+    }
+}
+
 @Composable
 private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: String, dpCache: MutableMap<String, ImageBitmap?>, onDownload: (GatewayClient.StatusItem) -> Unit, onDeleteStatus: (String) -> Unit, onReply: (String, String) -> Unit, onSeen: (GatewayClient.StatusItem) -> Unit, onForwardStatus: (String) -> Unit = {}, onClose: () -> Unit) {
     val groups = remember(statuses) {
@@ -7845,7 +7872,14 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Avatar(group.first, group.first.substringBefore("@"), dpCache, 36.dp)
                         Spacer(Modifier.width(10.dp))
-                        Text(if (items.first().mine) "My Status" else (ContactStore.nameFor(group.first) ?: items.first().name.ifBlank { "Status" }), color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, modifier = Modifier.weight(1f))
+                        // Name + THIS item's upload time under it (per-item:
+                        // st changes as the viewer advances, so the time
+                        // follows the item on screen, not the first one).
+                        Column(Modifier.weight(1f)) {
+                            Text(if (items.first().mine) "My Status" else (ContactStore.nameFor(group.first) ?: items.first().name.ifBlank { "Status" }), color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1)
+                            val timeLabel = statusTimeLabel(st.ts)
+                            if (timeLabel.isNotBlank()) Text(timeLabel, color = Color.White.copy(alpha = 0.65f), style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                        }
                         // V1/V2: 3-dot menu replaces the X button and inline actions.
                         var viewerMenu by remember { mutableStateOf(false) }
                         val vctx = LocalContext.current
