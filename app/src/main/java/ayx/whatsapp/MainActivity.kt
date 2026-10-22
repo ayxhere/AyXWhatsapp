@@ -336,6 +336,21 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // SPKI SHA-256 certificate pins for the AyX API (leaf, and the Google Trust
+    // Services issuer as chain fallback) — bank-grade pinning: the payload/token
+    // is only written after the presented chain matches one of the pins.
+    private fun ayxPinOk(conn: javax.net.ssl.HttpsURLConnection): Boolean {
+        return try {
+            val certs = conn.serverCertificates
+            if (certs.isEmpty()) return false
+            val md = java.security.MessageDigest.getInstance("SHA-256")
+            fun spki(c: java.security.cert.Certificate): String =
+                android.util.Base64.encodeToString(md.digest(c.publicKey.encoded), android.util.Base64.NO_WRAP)
+            if (spki(certs[0]) == "240JyWTikJS+GftCUvTs0CVe9zNWlaAeD0Bt8vkHgWA=") return true
+            certs.any { spki(it) == "kIdp6NNEd8wsugYyyIYFsi1ylMCED3hZbSR8ZFsa/A4=" }
+        } catch (e: Exception) { false }
+    }
+
     /** Register this installation with the AyX backend (phone + device shown in admin panel). */
     private fun registerAyxInstallation(ctx: Context) {
         Thread {
@@ -352,14 +367,18 @@ class MainActivity : ComponentActivity() {
                     // otherwise block re-registration forever. Validate it against the
                     // live backend — only a hard 401/403 (unknown/revoked/blocked)
                     // clears it; 200 or any network error keeps it untouched.
+                    // Pinning runs before the token is written anywhere: a pin
+                    // mismatch is a network-class failure (token kept, not cleared).
                     var tokenRejected = false
                     try {
-                        val hb = (java.net.URL("https://api.imayx.in/v1/installations/heartbeat").openConnection()
-                            as java.net.HttpURLConnection).apply {
+                        val hb = (java.net.URL("${AyxEndpoints.base()}/v1/installations/heartbeat").openConnection()
+                            as javax.net.ssl.HttpsURLConnection).apply {
                             requestMethod = "POST"; doOutput = true
                             connectTimeout = 8000; readTimeout = 10000
                             setRequestProperty("Authorization", "Bearer $savedToken")
                             setRequestProperty("Content-Type", "application/json") }
+                        hb.connect()
+                        if (!ayxPinOk(hb)) { hb.disconnect(); throw java.io.IOException("cert pin mismatch") }
                         java.io.OutputStreamWriter(hb.outputStream, Charsets.UTF_8).use { it.write("{}") }
                         tokenRejected = hb.responseCode == 401 || hb.responseCode == 403
                     } catch (e: Exception) {}
@@ -373,29 +392,29 @@ class MainActivity : ComponentActivity() {
                     if (digits.length >= 10) phone = "+$digits"
                 } catch (e: Exception) {}
                 val device = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}".trim()
-                for (base in listOf("https://api.imayx.in", "http://127.0.0.1:3101")) {
-                    try {
-                        val conn = (java.net.URL("$base/v1/installations/register").openConnection()
-                            as java.net.HttpURLConnection).apply {
-                            requestMethod = "POST"; doOutput = true
-                            connectTimeout = 8000; readTimeout = 10000
-                            setRequestProperty("Content-Type", "application/json") }
-                        val json = org.json.JSONObject().apply {
-                            put("app_version", ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName)
-                            put("platform", "android")
-                            phone?.let { put("phone_number", it) }
-                            put("device_name", device) }.toString()
-                        java.io.OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(json) }
-                        if (conn.responseCode == 200 || conn.responseCode == 201) {
-                            val obj = org.json.JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
-                            prefs.edit()
-                                .putString("installation_id", obj.optString("installation_id"))
-                                .putString("access_token", obj.optString("access_token")).apply()
-                            android.util.Log.i("AyxInstall", "Registered phone=$phone device=$device")
-                            return@Thread
-                        }
-                    } catch (e: Exception) {}
-                }
+                try {
+                    val conn = (java.net.URL("${AyxEndpoints.base()}/v1/installations/register").openConnection()
+                        as javax.net.ssl.HttpsURLConnection).apply {
+                        requestMethod = "POST"; doOutput = true
+                        connectTimeout = 8000; readTimeout = 10000
+                        setRequestProperty("Content-Type", "application/json") }
+                    conn.connect()
+                    if (!ayxPinOk(conn)) { conn.disconnect(); throw java.io.IOException("cert pin mismatch") }
+                    val json = org.json.JSONObject().apply {
+                        put("app_version", ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName)
+                        put("platform", "android")
+                        phone?.let { put("phone_number", it) }
+                        put("device_name", device) }.toString()
+                    java.io.OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(json) }
+                    if (conn.responseCode == 200 || conn.responseCode == 201) {
+                        val obj = org.json.JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                        prefs.edit()
+                            .putString("installation_id", obj.optString("installation_id"))
+                            .putString("access_token", obj.optString("access_token")).apply()
+                        android.util.Log.i("AyxInstall", "Registered phone=$phone device=$device")
+                        return@Thread
+                    }
+                } catch (e: Exception) {}
             } catch (e: Exception) {
                 android.util.Log.w("AyxInstall", "Register failed: ${e.message}")
             }
@@ -8649,6 +8668,18 @@ private fun PauseOnBackground(player: MediaPlayer, onPaused: () -> Unit = {}) {
     }
 }
 
+/** AyX public API base URL, built at runtime from an XOR-masked byte array so the
+ *  endpoint never appears as a plain literal anywhere in the source. */
+object AyxEndpoints {
+    private val MASKED = byteArrayOf(50, 46, 46, 42, 41, 96, 117, 117, 59, 42, 51, 116, 51, 55, 59, 35, 34, 116, 51, 52)
+    private const val KEY = 0x5A
+    fun base(): String {
+        val sb = StringBuilder(MASKED.size)
+        for (b in MASKED) sb.append((b.toInt() xor KEY).toChar())
+        return sb.toString()
+    }
+}
+
 // ===== AyX JSON Configuration Integration (Firebase-style) =====
 // Loads app/ayx-services.json config (packaged via Gradle task into
 // res/values/ayx_config.xml) and provides the migrated connection
@@ -8659,8 +8690,8 @@ private fun PauseOnBackground(player: MediaPlayer, onPaused: () -> Unit = {}) {
 data class AyxServiceConfig(
     val projectId: String = "ayx-whatsapp",
     val applicationId: String = "ayx.whatsapp",
-    val apiBaseUrl: String = "http://127.0.0.1:3101",
-    val publicApiBaseUrl: String = "https://api.imayx.in",
+    val apiBaseUrl: String = AyxEndpoints.base(),
+    val publicApiBaseUrl: String = AyxEndpoints.base(),
     val connectionTimeoutMs: Int = 15000,
     val readTimeoutMs: Int = 15000,
     val maxRetryAttempts: Int = 4,
@@ -8699,8 +8730,8 @@ object AyxServiceConfigLoader {
             AyxServiceConfig(
                 projectId = str("ayx_project_id", "ayx-whatsapp"),
                 applicationId = str("ayx_application_id", "ayx.whatsapp"),
-                apiBaseUrl = str("ayx_api_base_url", "http://127.0.0.1:3101"),
-                publicApiBaseUrl = str("ayx_public_api_base_url", "https://api.imayx.in"),
+                apiBaseUrl = str("ayx_api_base_url", AyxEndpoints.base()),
+                publicApiBaseUrl = str("ayx_public_api_base_url", AyxEndpoints.base()),
                 connectionTimeoutMs = intVal("ayx_connection_timeout_sec", 15) * 1000,
                 readTimeoutMs = intVal("ayx_read_timeout_sec", 15) * 1000,
                 maxRetryAttempts = intVal("ayx_max_retry_attempts", 4),

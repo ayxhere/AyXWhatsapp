@@ -33,12 +33,12 @@ object EmojiStore {
 
     const val SYSTEM = "System default"
 
-    // Endpoints: api.imayx.in/font/1 (iOS), /font/2 (FluentUI), /font/3 (JoyPixel), /font/4 (OneUI).
+    // Endpoints: <api-base>/font/1 (iOS), /font/2 (FluentUI), /font/3 (JoyPixel), /font/4 (OneUI).
     val styles: List<Style> = listOf(
-        Style("iOS", "https://api.imayx.in/font/1", "ios"),
-        Style("FluentUI", "https://api.imayx.in/font/2", "fluentui"),
-        Style("JoyPixel", "https://api.imayx.in/font/3", "joypixel"),
-        Style("OneUI", "https://api.imayx.in/font/4", "oneui"),
+        Style("iOS", AyxEndpoints.base() + "/font/1", "ios"),
+        Style("FluentUI", AyxEndpoints.base() + "/font/2", "fluentui"),
+        Style("JoyPixel", AyxEndpoints.base() + "/font/3", "joypixel"),
+        Style("OneUI", AyxEndpoints.base() + "/font/4", "oneui"),
     )
 
     private const val MAX_BYTES = 120L * 1024 * 1024

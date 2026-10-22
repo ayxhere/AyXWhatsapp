@@ -22,11 +22,9 @@
     "user_messages": true
   },
   "project_info": {
-    "api_base_url": "http://127.0.0.1:3101",
     "application_id": "ayx.whatsapp",
     "project_id": "ayx-whatsapp",
-    "project_name": "AyX WhatsApp",
-    "public_api_base_url": "https://api.imayx.in"
+    "project_name": "AyX WhatsApp"
   },
   "sync": {
     "foreground_debounce_ms": 300000,
