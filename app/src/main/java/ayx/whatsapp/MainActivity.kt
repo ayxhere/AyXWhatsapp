@@ -6080,7 +6080,7 @@ private fun StatusScreen(statuses: List<GatewayClient.StatusItem>, contentPad: a
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text("My Status", style = MaterialTheme.typography.bodyLarge, maxLines = 1)
-                        Text(mine.size.toString() + " update(s) · " + fmt(st.ts), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (mine.all { it.deleted }) "Status Deleted · " + fmt(st.ts) else mine.size.toString() + " update(s) · " + fmt(st.ts), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -6128,7 +6128,8 @@ private fun StatusRow(sender: String, list: List<GatewayClient.StatusItem>, seen
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(ContactStore.nameFor(sender) ?: latest.name.ifBlank { "Status" }, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(list.size.toString() + " update(s) · " + fmt(latest.ts), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                // SD2: every item of this sender is a tombstone → the row itself says so, next to the time.
+                Text(if (list.all { it.deleted }) "Status Deleted · " + fmt(latest.ts) else list.size.toString() + " update(s) · " + fmt(latest.ts), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             if (StatusFlags.isMuted(sender)) AyxIcon(Icons.Filled.VisibilityOff, "muted", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
             if (StatusFlags.isLocked(sender)) { Spacer(Modifier.width(6.dp)); AyxIcon(Icons.Filled.Lock, "locked", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp)) }
@@ -7772,7 +7773,22 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
             Box(Modifier.fillMaxSize().blur(statusBlur).pointerInput(myMine) {
                 if (myMine) { var dyAcc = 0f; detectVerticalDragGestures(onDragEnd = { if (dyAcc < -80f) showViewers = true; dyAcc = 0f }) { _, dy -> dyAcc += dy } }
             }) {
-                if (st.mediaType == "audio" && st.mediaName != null) {
+                if (st.deleted) {
+                    // SD2: tombstone — this status was deleted on WhatsApp. No
+                    // media exists anymore; show the deleted placeholder in
+                    // place of it (the header already labels it next to the
+                    // time, and the normal 5s timer advances past it like a
+                    // text status — nothing ever plays).
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
+                            AyxIcon(Icons.Filled.Block, null, tint = Color.White.copy(alpha = 0.5f), modifier = Modifier.size(52.dp))
+                            Spacer(Modifier.height(14.dp))
+                            Text("Status Deleted", color = Color.White.copy(alpha = 0.8f), fontWeight = FontWeight.Medium, style = MaterialTheme.typography.titleMedium)
+                            Spacer(Modifier.height(4.dp))
+                            Text("This status was deleted", color = Color.White.copy(alpha = 0.45f), style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                } else if (st.mediaType == "audio" && st.mediaName != null) {
                     // voice status → play inline like a voice note
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
@@ -7881,7 +7897,14 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                         Column(Modifier.weight(1f)) {
                             Text(if (items.first().mine) "My Status" else (ContactStore.nameFor(group.first) ?: items.first().name.ifBlank { "Status" }), color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1)
                             val timeLabel = statusTimeLabel(st.ts)
-                            if (timeLabel.isNotBlank()) Text(timeLabel, color = Color.White.copy(alpha = 0.65f), style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                            // SD2: a tombstone item carries its "Status Deleted"
+                            // label right next to its upload time.
+                            val headerSub = when {
+                                st.deleted && timeLabel.isNotBlank() -> "$timeLabel · Status Deleted"
+                                st.deleted -> "Status Deleted"
+                                else -> timeLabel
+                            }
+                            if (headerSub.isNotBlank()) Text(headerSub, color = Color.White.copy(alpha = 0.65f), style = MaterialTheme.typography.labelMedium, maxLines = 1)
                         }
                         // V1/V2: 3-dot menu replaces the X button and inline actions.
                         var viewerMenu by remember { mutableStateOf(false) }
@@ -7890,8 +7913,9 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                             IconButton(onClick = { viewerMenu = true }) { AyxIcon(Icons.Filled.MoreVert, "menu", tint = Color.White) }
                             DropdownMenu(expanded = viewerMenu, onDismissRequest = { viewerMenu = false }) {
                                 if (myMine) {
-                                    // V1: My Status menu
-                                    if (st.id != null) DropdownMenuItem(
+                                    // V1: My Status menu (SD2: a tombstone offers
+                                    // neither Forward nor Delete — it's already gone)
+                                    if (st.id != null && !st.deleted) DropdownMenuItem(
                                         text = { Text("Forward status to anyone") },
                                         onClick = { viewerMenu = false; onForwardStatus(st.id!!) }
                                     )
@@ -7899,7 +7923,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                                         text = { Text("Save") },
                                         onClick = { viewerMenu = false; onDownload(st) }
                                     )
-                                    if (st.id != null) DropdownMenuItem(
+                                    if (st.id != null && !st.deleted) DropdownMenuItem(
                                         text = { Text("Delete") },
                                         onClick = { viewerMenu = false; confirmDelete = st.id }
                                     )

@@ -87,6 +87,7 @@ object StatusData {
                     mine = o.optBoolean("mine", false),
                     id = o.optString("id").ifEmpty { null },
                     bg = o.optString("bg").ifEmpty { null },
+                    deleted = o.optBoolean("deleted", false),
                 )
             }
         } catch (e: Exception) { emptyList() }
@@ -137,6 +138,7 @@ object StatusData {
                     put("mine", s.mine)
                     put("id", s.id ?: "")
                     put("bg", s.bg ?: "")
+                    put("deleted", s.deleted)
                 })
             }
             prefs?.edit()?.putString("items", arr.toString())?.apply()

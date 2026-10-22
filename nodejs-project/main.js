@@ -30,6 +30,7 @@ const MEDIA_DIR = process.env.WAGW_MEDIA_DIR || path.join(path.dirname(AUTH_DIR)
 const MESSAGES_FILE = path.join(path.dirname(AUTH_DIR), 'messages.json')
 const NAMES_FILE = path.join(path.dirname(AUTH_DIR), 'names.json')
 const STATUS_FILE = path.join(path.dirname(AUTH_DIR), 'statuses.json')
+const STATUS_DELETED_FILE = path.join(path.dirname(AUTH_DIR), 'status-deleted.json')
 const AIMEM_FILE = path.join(path.dirname(AUTH_DIR), 'aimemory.json')
 
 const logger = pino({ level: 'warn' })
@@ -213,6 +214,16 @@ try {
   const cutoff = Date.now() - 24 * 3600 * 1000
   if (Array.isArray(loaded)) statuses = loaded.filter(x => x && x.ts && x.ts > cutoff)
 } catch (_) { statuses = [] }
+// SD2: tombstones for statuses deleted on WhatsApp (by the contact, or by me on
+// another device). Sender + name + ts survive; media does not. Persisted so a
+// gateway restart can't resurrect the deleted status as if it were alive, and
+// expired with the same 24h rule as live statuses.
+let statusDeleted = []         // [{ id, sender, name, ts, mine }]
+try {
+  const loadedD = JSON.parse(fs.readFileSync(STATUS_DELETED_FILE, 'utf8'))
+  const cutoffD = Date.now() - 24 * 3600 * 1000
+  if (Array.isArray(loadedD)) statusDeleted = loadedD.filter(x => x && x.id && x.ts && x.ts > cutoffD)
+} catch (_) { statusDeleted = [] }
 
 // FULL CHAT LIST (BUG FIX: chat list showed only chats that had a message
 // in the 500-entry msgLog / 200-item /messages page — chats with no recent
@@ -271,6 +282,20 @@ let _statusTimer = null
 function saveStatusesDebounced() {
   if (_statusTimer) return
   _statusTimer = setTimeout(() => { _statusTimer = null; try { fs.writeFileSync(STATUS_FILE, JSON.stringify(statuses.slice(0, 120))) } catch (_) {} }, 1500)
+}
+let _statusDelTimer = null
+function saveStatusDeletedDebounced() {
+  if (_statusDelTimer) return
+  _statusDelTimer = setTimeout(() => { _statusDelTimer = null; try { fs.writeFileSync(STATUS_DELETED_FILE, JSON.stringify(statusDeleted.slice(0, 120))) } catch (_) {} }, 1500)
+}
+// SD2: record a deleted status as a tombstone (idempotent by id).
+function tombstoneStatus(entry) {
+  if (!entry || !entry.id) return
+  if (!statusDeleted.find(x => x.id === entry.id)) {
+    statusDeleted.unshift({ id: entry.id, sender: entry.sender, name: entry.name || '', ts: entry.ts, mine: !!entry.mine })
+    if (statusDeleted.length > 120) statusDeleted.length = 120
+  }
+  saveStatusDeletedDebounced()
 }
 
 // BUG FIX (double-send): the gateway used to queue unsent messages in its
@@ -1513,12 +1538,19 @@ function captureDelete(delId) {
     saveMessagesDebounced()
     log('marked deleted:', JSON.stringify(orig.text))
   }
-  // a REVOKE can also be for a STATUS — drop it from the status list so a status deleted
-  // on the real WhatsApp app (or elsewhere) also disappears from AyX.
+  // a REVOKE can also be for a STATUS — SD2: TOMBSTONE it instead of silently
+  // dropping it. The entry leaves the live list (media is gone for good) but a
+  // { id, sender, name, ts } shell stays, so the app renders "Status Deleted"
+  // next to the time instead of its union-merge resurrecting the cached copy
+  // as if the status were still alive (the user's re-report).
   if (delId) {
-    const before = statuses.length
-    statuses = statuses.filter(x => x.id !== delId)
-    if (statuses.length !== before) { saveStatusesDebounced(); log('status revoked → removed from AyX:', delId) }
+    const stEntry = statuses.find(x => x.id === delId)
+    if (stEntry) {
+      statuses = statuses.filter(x => x.id !== delId)
+      tombstoneStatus(stEntry)
+      saveStatusesDebounced()
+      log('status revoked → tombstoned in AyX:', delId)
+    }
   }
 }
 
@@ -2015,7 +2047,7 @@ async function startSocket() {
   sock.ev.on('messages.delete', (item) => {
     try {
       if (item && Array.isArray(item.keys)) { for (const k of item.keys) captureDelete(k && k.id) }
-      else if (item && item.all && item.jid === 'status@broadcast') { statuses = []; saveStatusesDebounced(); log('all statuses cleared on primary') }
+      else if (item && item.all && item.jid === 'status@broadcast') { for (const s of statuses) tombstoneStatus(s); statuses = []; saveStatusesDebounced(); log('all statuses cleared on primary') }
     } catch (_) {}
   })
   const addContacts = (list) => { for (const c of list || []) { learnContactIds(c); if (c.id) { const nm = c.name || c.notify || ''; contacts.set(c.id, { name: nm, notify: c.notify || '' }); rememberName(c.id, nm) } } }
@@ -3281,7 +3313,13 @@ app.post('/status/delete', async (req, res) => {
     key.id = id
     if (mine) {
       key.fromMe = true
-      if (!key.participant) { const me = baseJid(sock.user && sock.user.id); if (me) key.participant = me }
+      // SD2: WhatsApp keys statuses by the author's LID identity now (incoming
+      // statuses arrive with @lid participants — see resolveLid usage above, and
+      // /status/viewers treating user.lid as a first-class identity). A built key
+      // whose participant is only the phone-number jid matches nothing on the
+      // server, so the revoke silently no-ops. Prefer the account's LID; PN is
+      // only the fallback for accounts that have no LID yet.
+      if (!key.participant) { const me = baseJid(sock.user && sock.user.lid) || baseJid(sock.user && sock.user.id); if (me) key.participant = me }
     } else if (st && st.sender) {
       key.fromMe = false
       key.participant = st.sender
@@ -3289,8 +3327,16 @@ app.post('/status/delete', async (req, res) => {
     let ok = false, err = ''
     try { await sock.sendMessage('status@broadcast', { delete: key }); ok = true; log('status delete sent → WhatsApp:', id, raw ? '(stored key)' : '(built key)') }
     catch (e) { err = (e && e.message) || 'delete failed'; log('status delete err:', err) }
-    statuses = statuses.filter(x => x.id !== id); saveStatusesDebounced()
-    try { rawStore.delete(id) } catch (_) {}
+    // SD2: prune ONLY on success. The old code dropped the status entry AND the
+    // stored raw key even when the send failed, so a retry had lost the exact
+    // key it needed — and the app (old StatusDl) removed its local copy too,
+    // so a failed delete looked successful everywhere except WhatsApp itself.
+    if (ok) {
+      const gone = statuses.find(x => x.id === id)
+      statuses = statuses.filter(x => x.id !== id); saveStatusesDebounced()
+      if (gone) tombstoneStatus(gone)
+      try { rawStore.delete(id) } catch (_) {}
+    }
     res.json({ ok, error: err })
   } catch (e) { res.status(500).json({ ok: false, error: e && e.message }) }
 })
@@ -3335,6 +3381,15 @@ app.get('/statuses', (req, res) => {
     if (s.bg) out.bg = s.bg   // coloured text status background
     return out
   })
+  // SD2: deleted statuses ride along as tombstones (deleted:true, NO media) so
+  // the app can render "Status Deleted" next to the time. Without this the
+  // gateway going silent about an id made the app's union-merge keep its
+  // cached copy alive for the full 24h.
+  const liveIds = new Set(items.map(x => x.id))
+  for (const d of statusDeleted) {
+    if (!d || !d.id || liveIds.has(d.id) || !(d.ts > cutoff)) continue
+    items.push({ sender: d.sender, name: d.name || '', text: '', ts: d.ts, mine: !!d.mine, id: d.id, deleted: true })
+  }
   res.json({ items })
 })
 app.get('/messages', (req, res) => {

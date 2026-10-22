@@ -689,9 +689,14 @@ object GatewayClient {
     }
 
     data class StatusItem(val sender: String, val name: String, val text: String,
-        val mediaName: String? = null, val mediaType: String? = null, val thumb: String? = null, val ts: Long = 0L, val mine: Boolean = false, val id: String? = null, val bg: String? = null)
-    suspend fun deleteStatus(id: String): Boolean = withContext(Dispatchers.IO) {
-        post("/status/delete", JSONObject().put("id", id)).optBoolean("ok", false)
+        val mediaName: String? = null, val mediaType: String? = null, val thumb: String? = null, val ts: Long = 0L, val mine: Boolean = false, val id: String? = null, val bg: String? = null,
+        // SD2: tombstone — this status was deleted on WhatsApp (gateway sends
+        // sender + ts but no media). Rendered as "Status Deleted", never played.
+        val deleted: Boolean = false)
+    /** (ok, error) — ok=true ONLY when the gateway confirms the revoke was sent to WhatsApp. */
+    suspend fun deleteStatus(id: String): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        val o = post("/status/delete", JSONObject().put("id", id))
+        o.optBoolean("ok", false) to o.optString("error", "")
     }
     // who viewed my status (jid to display name)
     data class StatusViewer(val jid: String, val lid: String, val name: String, val ts: Long)
@@ -723,6 +728,7 @@ object GatewayClient {
                     mine = o.optBoolean("mine", false),
                     id = o.optString("id").ifEmpty { null },
                     bg = o.optString("bg").ifEmpty { null },
+                    deleted = o.optBoolean("deleted", false),
                 )
             }
         } catch (e: Exception) { emptyList() }
