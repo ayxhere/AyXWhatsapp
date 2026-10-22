@@ -6801,9 +6801,13 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                             // pass through unconsumed exactly as before, and
                             // when a pinch starts ON the lyric box, that
                             // box's own transform detector consumes the moves
-                            // first (it sits deeper in the hit order) — this
-                            // one then sees the changes consumed and skips,
-                            // so the zoom is never applied twice. The state
+                            // first (it sits deeper in the hit order) — when
+                            // it has consumed BOTH pointers it is running the
+                            // transform itself and this tracker defers, so
+                            // the zoom is never applied twice; a pinch that
+                            // STRADDLES the box edge (only one pointer
+                            // consumed) is rescued in the tracking loop
+                            // below. The state
                             // written here (lyricScale / lyricY) is the same
                             // state the box detector writes and the send /
                             // bake path reads: preview == posted.
@@ -6811,12 +6815,17 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                 val first = awaitFirstDown(requireUnconsumed = false)
                                 var second: androidx.compose.ui.input.pointer.PointerInputChange? = null
                                 var firstGone = false
-                                withTimeoutOrNull(300L) {
-                                    while (second == null && !firstGone) {
-                                        val ev = awaitPointerEvent()
-                                        second = ev.changes.firstOrNull { it.id != first.id && it.pressed }
-                                        if (ev.changes.firstOrNull { it.id == first.id }?.pressed != true) firstGone = true
-                                    }
+                                // No arming timeout: a deliberate pinch often lands
+                                // its second finger well after the first (touch,
+                                // look, then spread). The old 300ms window killed
+                                // the gesture block in that case, and it could not
+                                // re-arm until BOTH fingers had lifted — slow
+                                // pinches simply never formed. Waiting costs
+                                // nothing: this tracker consumes nothing meanwhile.
+                                while (second == null && !firstGone) {
+                                    val ev = awaitPointerEvent()
+                                    second = ev.changes.firstOrNull { it.id != first.id && it.pressed }
+                                    if (ev.changes.firstOrNull { it.id == first.id }?.pressed != true) firstGone = true
                                 }
                                 val s0 = second ?: return@awaitEachGesture
                                 var prevDist = (s0.position - first.position).getDistance()
@@ -6828,9 +6837,31 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                     if (a == null || b == null || !a.pressed || !b.pressed) break
                                     val dist = (b.position - a.position).getDistance()
                                     val cy = (b.position.y + a.position.y) / 2f
-                                    if (!a.isConsumed && !b.isConsumed) {
-                                        if (prevDist > 1f && dist > 1f) {
-                                            lyricScale = (lyricScale * (dist / prevDist)).coerceIn(0.5f, 2.5f)
+                                    // Who else has claimed these pointers decides what
+                                    // this tracker may do:
+                                    // - BOTH consumed: the lyric box sees both fingers
+                                    //   and is running its own transform (zoom + pan)
+                                    //   — defer, never double-apply.
+                                    // - NEITHER consumed: nobody else wants them —
+                                    //   full pinch here (scale + centroid pan).
+                                    // - EXACTLY ONE consumed: the STRADDLE pinch —
+                                    //   one finger on the lyric box, the other off
+                                    //   it. The box only ever receives its own finger,
+                                    //   so it pans lyricY with that finger as a plain
+                                    //   drag and consumes just that one change; the
+                                    //   old blanket both-unconsumed check then
+                                    //   refused the zoom for the WHOLE gesture —
+                                    //   and a natural pinch centred on the lines
+                                    //   almost always straddles (the box is ~one
+                                    //   line tall, the fingers land above/below
+                                    //   it), which is why pinch-to-resize still
+                                    //   felt dead. Here the span still drives the
+                                    //   SCALE; only the pan is left to the box's
+                                    //   own finger, so lyricY is never doubled.
+                                    val consumedCount = (if (a.isConsumed) 1 else 0) + (if (b.isConsumed) 1 else 0)
+                                    if (consumedCount < 2 && prevDist > 1f && dist > 1f) {
+                                        lyricScale = (lyricScale * (dist / prevDist)).coerceIn(0.5f, 2.5f)
+                                        if (consumedCount == 0) {
                                             lyricY = (lyricY + (cy - prevCy) / size.height.toFloat()).coerceIn(0.06f, 0.9f)
                                         }
                                         ev.changes.forEach { runCatching { it.consume() } }
