@@ -38,6 +38,9 @@ class NodeService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        // v147: make sure gateway-process crashes are captured too, even
+        // when the process was started by the service before any UI ran.
+        CrashReporter.install(applicationContext)
         acquireLocks()
     }
 

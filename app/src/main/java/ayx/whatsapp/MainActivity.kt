@@ -266,6 +266,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.withLink
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.platform.LocalUriHandler
@@ -324,6 +325,12 @@ By continuing you agree to use this app responsibly and accept these terms."""
 class MainActivity : ComponentActivity() {
     private val notifPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    // v147: a crash report saved by the previous run (CrashReporter) and a
+    // pending update (AyxUpdate) — both surface as dialogs at the root of
+    // the main UI in setContent below.
+    private val pendingCrashReport = mutableStateOf<String?>(null)
+    private val pendingUpdateInfo = mutableStateOf<AyxUpdate.Info?>(null)
 
     private fun handleDeepLink(intent: Intent?) {
         intent?.getStringExtra("openChat")?.let { AppNav.pendingOpenChat.value = it }
@@ -565,6 +572,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // v147: from here on, any crash is saved as a report file and the
+        // user is offered a one-tap email report on the next launch.
+        CrashReporter.install(applicationContext)
         // Integrity gate (Paytm-style): a re-signed/modded or API-stripped
         // build gets only a dead block screen — no real UI, no installation
         // registration, and the gateway is never started (NodeService and
@@ -594,6 +604,19 @@ class MainActivity : ComponentActivity() {
         // run and the first onResume don't double-fire a heartbeat.
         lastAyxPulseMs = android.os.SystemClock.elapsedRealtime()
         registerAyxInstallation(this)
+
+        // v147: pick up any crash report the previous run left behind, and
+        // run the light update check off the main thread (fail-open: any
+        // error simply means no update dialog).
+        pendingCrashReport.value = CrashReporter.pending(applicationContext)
+        Thread {
+            runCatching {
+                val info = AyxUpdate.fetch()
+                if (info != null && info.versionCode > AyxUpdate.installedVersionCode(this)) {
+                    pendingUpdateInfo.value = info
+                }
+            }
+        }.start()
 
         // D: Battery optimization exemption — ask once per launch until granted,
         // so Doze can't silently kill the Node gateway socket. The manual
@@ -663,11 +686,108 @@ class MainActivity : ComponentActivity() {
                     }
                     var splashDone by remember { mutableStateOf(false) }
                     if (!splashDone) SplashScreen(dark) { splashDone = true }
+                    // v147: the update dialog wins over the crash dialog —
+                    // a forced update locks the app until it is installed.
+                    val upd = pendingUpdateInfo.value
+                    if (upd != null) {
+                        AyxUpdateDialog(info = upd, onLater = { pendingUpdateInfo.value = null })
+                    } else {
+                        pendingCrashReport.value?.let { report ->
+                            CrashReportDialog(
+                                report = report,
+                                onDone = {
+                                    CrashReporter.clear(applicationContext)
+                                    pendingCrashReport.value = null
+                                },
+                            )
+                        }
+                    }
                 }
             }
             }
         }
     }
+}
+
+/**
+ * v147: shown once when the previous run left a crash report behind.
+ * "Send crash report" opens the user's mail app addressed to
+ * raju@imayx.in with the subject and the full report (crash location,
+ * device model, Android + app version, stack trace) already filled in —
+ * the user only taps Send there. Either button deletes the saved report,
+ * so one crash is only ever offered once.
+ */
+@Composable
+private fun CrashReportDialog(report: String, onDone: () -> Unit) {
+    val ctx = LocalContext.current
+    AlertDialog(
+        onDismissRequest = onDone,
+        title = { Text("App crashed") },
+        text = {
+            Text(
+                "AyXWhatsapp crashed the last time it ran. Please send the crash report so the " +
+                    "problem can be found and fixed. It includes where the app crashed, your " +
+                    "device model and Android version."
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:raju@imayx.in")).apply {
+                    putExtra(Intent.EXTRA_SUBJECT, CrashReporter.subject(report))
+                    putExtra(Intent.EXTRA_TEXT, report)
+                }
+                runCatching { ctx.startActivity(intent) }
+                onDone()
+            }) { Text("Send crash report") }
+        },
+        dismissButton = { TextButton(onClick = onDone) { Text("Not now") } },
+    )
+}
+
+/**
+ * v147: update prompt driven by https://imayx.in/ayx/whatsapp/update.json
+ * (see AyxUpdate). Clean Material look in the app's own theme — no logo
+ * or image. A forced update cannot be dismissed (no back button, no
+ * outside tap, no Later button) and the app behind it stays unusable;
+ * the Download button opens the update page / APK link on the website.
+ */
+@Composable
+private fun AyxUpdateDialog(info: AyxUpdate.Info, onLater: () -> Unit) {
+    val ctx = LocalContext.current
+    AlertDialog(
+        onDismissRequest = { if (!info.force) onLater() },
+        properties = if (info.force) {
+            DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)
+        } else {
+            DialogProperties()
+        },
+        title = { Text("Update available") },
+        text = {
+            Column {
+                Text("AyXWhatsapp ${info.versionName} is ready to download.")
+                if (info.changelog.isNotBlank()) {
+                    Spacer(Modifier.height(10.dp))
+                    Text("What's new", fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(4.dp))
+                    Text(info.changelog)
+                }
+                if (info.force) {
+                    Spacer(Modifier.height(10.dp))
+                    Text("Please update to continue using the app.")
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(info.apkUrl))) }
+            }) { Text("Download") }
+        },
+        dismissButton = if (!info.force) {
+            { TextButton(onClick = onLater) { Text("Later") } }
+        } else {
+            null
+        },
+    )
 }
 
 private val timeFmt = SimpleDateFormat("h:mm a", Locale.getDefault())
