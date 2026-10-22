@@ -73,6 +73,13 @@ class NodeService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground(NOTIF_ID, buildNotification())
+        // Integrity gate: on a failed verdict the gateway stays dead —
+        // satisfy the foreground-service contract, then stop immediately
+        // without starting Node or the polling loop.
+        if (!AyxIntegrity.ok(this)) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         NodeRuntime.ensureStarted(applicationContext)
         startNotifPolling()
         return START_STICKY
@@ -212,6 +219,8 @@ class NodeService : Service() {
         private const val NOTIF_ID = 1
 
         fun start(ctx: Context) {
+            // Integrity gate: never (re)start the gateway on a failed verdict.
+            if (!AyxIntegrity.ok(ctx)) return
             allowRestart = true
             val i = Intent(ctx, NodeService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(i)

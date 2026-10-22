@@ -22,6 +22,10 @@ object NodeRuntime {
     fun isStarted(): Boolean = started.get()
 
     fun ensureStarted(ctx: Context) {
+        // Integrity gate: the gateway engine never starts on a failed
+        // verdict (re-signed/modded build), no matter which entry point
+        // asks — service, receiver or UI retry.
+        if (!AyxIntegrity.ok(ctx)) return
         if (!started.compareAndSet(false, true)) return
 
         // SECURITY: Generate per-installation gateway auth token BEFORE starting Node,

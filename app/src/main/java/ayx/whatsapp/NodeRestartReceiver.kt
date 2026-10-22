@@ -31,6 +31,12 @@ import android.util.Log
 class NodeRestartReceiver : BroadcastReceiver() {
     override fun onReceive(ctx: Context, intent: Intent?) {
         try {
+            // Integrity gate: no boot/update/alarm autostart of the gateway
+            // on a failed verdict.
+            if (!AyxIntegrity.ok(ctx)) {
+                Log.i(TAG, "restart skipped: integrity verdict failed")
+                return
+            }
             ChatStyle.init(ctx)
             if (!ChatStyle.runBackground.value) {
                 Log.i(TAG, "restart skipped: Run in background OFF")

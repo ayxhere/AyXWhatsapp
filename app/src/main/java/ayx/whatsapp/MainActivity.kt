@@ -398,6 +398,15 @@ class MainActivity : ComponentActivity() {
         } catch (e: Exception) {}
     }
 
+    // Heartbeat body: carries the APK's own signing-cert fingerprint so the
+    // backend can cross-check it server-side later (unknown fields are
+    // ignored by the current backend, so this is forward-compatible).
+    private fun ayxHeartbeatJson(ctx: Context): String {
+        val o = org.json.JSONObject()
+        AyxIntegrity.signatureSha256Hex(ctx)?.let { o.put("app_signature", it) }
+        return o.toString()
+    }
+
     /** Register this installation with the AyX backend (phone + device shown in admin panel). */
     private fun registerAyxInstallation(ctx: Context) {
         Thread {
@@ -424,7 +433,7 @@ class MainActivity : ComponentActivity() {
                     var hbCode = -1
                     var hbErr: String? = null
                     try {
-                        val r = ayxInstallPost("/v1/installations/heartbeat", savedToken, "{}")
+                        val r = ayxInstallPost("/v1/installations/heartbeat", savedToken, ayxHeartbeatJson(ctx))
                         hbCode = r.first; hbErr = r.second
                     } catch (e: Exception) {}
                     when {
@@ -445,7 +454,8 @@ class MainActivity : ComponentActivity() {
                         put("app_version", ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName)
                         put("platform", "android")
                         phone?.let { put("phone_number", it) }
-                        put("device_name", device) }.toString()
+                        put("device_name", device)
+                        AyxIntegrity.signatureSha256Hex(ctx)?.let { put("app_signature", it) } }.toString()
                     val (code, _, respBody) = ayxInstallPost("/v1/installations/register", null, json)
                     if ((code == 200 || code == 201) && respBody != null) {
                         val obj = org.json.JSONObject(respBody)
@@ -457,7 +467,7 @@ class MainActivity : ComponentActivity() {
                         // Register does not set last_seen_at — heartbeat in the same
                         // run so the admin "online / last seen" is alive from birth,
                         // then heal the profile (the gateway may be up by now).
-                        try { ayxInstallPost("/v1/installations/heartbeat", newToken, "{}") } catch (e: Exception) {}
+                        try { ayxInstallPost("/v1/installations/heartbeat", newToken, ayxHeartbeatJson(ctx)) } catch (e: Exception) {}
                         ayxSyncInstallProfile(newToken, device)
                         return@Thread
                     }
@@ -471,6 +481,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (!AyxIntegrity.ok(this)) return
         handleDeepLink(intent)
         registerAyxInstallation(this)
     }
@@ -481,6 +492,25 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Integrity gate (Paytm-style): a re-signed/modded or API-stripped
+        // build gets only a dead block screen — no real UI, no installation
+        // registration, and the gateway is never started (NodeService and
+        // NodeRuntime are gated on the same verdict). Debuggable builds
+        // always pass, so AndroidIDE test builds can never lock.
+        if (!AyxIntegrity.ok(this)) {
+            setContent {
+                Box(
+                    Modifier.fillMaxSize().background(Color.Black),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "This app build is not genuine and cannot run.",
+                        color = Color.White
+                    )
+                }
+            }
+            return
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
             != PackageManager.PERMISSION_GRANTED
