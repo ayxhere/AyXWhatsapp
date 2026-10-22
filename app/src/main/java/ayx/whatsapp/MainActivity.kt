@@ -346,7 +346,26 @@ class MainActivity : ComponentActivity() {
                     "ayx_install", masterKey, ctx,
                     androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                     androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
-                if (prefs.getString("access_token", null) != null) return@Thread
+                val savedToken = prefs.getString("access_token", null)
+                if (savedToken != null) {
+                    // Stale-token heal: a token registered into a long-gone DB would
+                    // otherwise block re-registration forever. Validate it against the
+                    // live backend — only a hard 401/403 (unknown/revoked/blocked)
+                    // clears it; 200 or any network error keeps it untouched.
+                    var tokenRejected = false
+                    try {
+                        val hb = (java.net.URL("https://api.imayx.in/v1/installations/heartbeat").openConnection()
+                            as java.net.HttpURLConnection).apply {
+                            requestMethod = "POST"; doOutput = true
+                            connectTimeout = 8000; readTimeout = 10000
+                            setRequestProperty("Authorization", "Bearer $savedToken")
+                            setRequestProperty("Content-Type", "application/json") }
+                        java.io.OutputStreamWriter(hb.outputStream, Charsets.UTF_8).use { it.write("{}") }
+                        tokenRejected = hb.responseCode == 401 || hb.responseCode == 403
+                    } catch (e: Exception) {}
+                    if (!tokenRejected) return@Thread
+                    prefs.edit().clear().apply()
+                }
                 var phone: String? = null
                 try {
                     val jid = kotlinx.coroutines.runBlocking { GatewayClient.getMe() }
@@ -354,7 +373,7 @@ class MainActivity : ComponentActivity() {
                     if (digits.length >= 10) phone = "+$digits"
                 } catch (e: Exception) {}
                 val device = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}".trim()
-                for (base in listOf("http://127.0.0.1:3101", "https://api.imayx.in")) {
+                for (base in listOf("https://api.imayx.in", "http://127.0.0.1:3101")) {
                     try {
                         val conn = (java.net.URL("$base/v1/installations/register").openConnection()
                             as java.net.HttpURLConnection).apply {
@@ -402,6 +421,7 @@ class MainActivity : ComponentActivity() {
         ) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
 
         handleDeepLink(intent)
+        registerAyxInstallation(this)
 
         // D: Battery optimization exemption — ask once per launch until granted,
         // so Doze can't silently kill the Node gateway socket. The manual
