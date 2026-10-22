@@ -67,6 +67,16 @@ export const config = {
   // Public base URL of this API, used to build absolute media URLs.
   apiPublicBase: optional('API_PUBLIC_BASE', 'https://api.imayx.in').replace(/\/$/, ''),
 
+  // --- app integrity (optional) ----------------------------------------------
+  // Expected SHA-256 fingerprint of the official app's signing certificate
+  // (colon-separated hex, as printed by keytool / Play Console). When set,
+  // register + heartbeat reject clients whose app_signature does not match.
+  // When empty, enforcement is OFF and those endpoints behave as before.
+  // Stored normalized: colons stripped, uppercase hex.
+  appSignatureSha256: optional('APP_SIGNATURE_SHA256', '')
+    .replace(/:/g, '')
+    .toUpperCase(),
+
   // --- uploads -------------------------------------------------------------
   uploadDir: optional('UPLOAD_DIR', './uploads'),
   maxUploadMb: int('MAX_UPLOAD_MB', 25),

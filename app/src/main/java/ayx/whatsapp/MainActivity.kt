@@ -385,12 +385,7 @@ class MainActivity : ComponentActivity() {
     // device so the admin panel shows them. All failures swallowed by design.
     private fun ayxSyncInstallProfile(token: String, device: String) {
         try {
-            var phone: String? = null
-            try {
-                val jid = kotlinx.coroutines.runBlocking { GatewayClient.getMe() }
-                val digits = jid.substringBefore("@").filter { it.isDigit() }
-                if (digits.length >= 10) phone = "+$digits"
-            } catch (e: Exception) {}
+            val phone = ayxOwnPhoneE164()
             val json = org.json.JSONObject().apply {
                 phone?.let { put("phone_number", it) }
                 put("device_name", device) }.toString()
@@ -407,16 +402,85 @@ class MainActivity : ComponentActivity() {
         return o.toString()
     }
 
+    private fun ayxInstallPrefs(ctx: Context, name: String): android.content.SharedPreferences {
+        val masterKey = androidx.security.crypto.MasterKeys.getOrCreate(
+            androidx.security.crypto.MasterKeys.AES256_GCM_SPEC)
+        return androidx.security.crypto.EncryptedSharedPreferences.create(
+            name, masterKey, ctx,
+            androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
+    }
+
+    // The own-account number in E.164 ("+919876543210"), taken from the same
+    // gateway identity the header shows on its left side (GatewayClient
+    // .getMe()). getMe returns the account JID: only a real phone JID carries
+    // the number — "<number>@s.whatsapp.net", optionally "<number>:<device>@…".
+    // An @lid identity, a foreign suffix or a not-yet-connected gateway means
+    // "no number yet" -> null, and callers then SKIP the phone field entirely
+    // (junk/empty numbers are never sent).
+    private fun ayxOwnPhoneE164(): String? {
+        return try {
+            val jid = kotlinx.coroutines.runBlocking { GatewayClient.getMe() }.trim()
+            if (jid.isEmpty()) return null
+            if (jid.contains("@") && !jid.endsWith("@s.whatsapp.net")) return null
+            val digits = jid.substringBefore("@").substringBefore(":").filter { it.isDigit() }
+            if (digits.length in 10..15) "+$digits" else null
+        } catch (e: Exception) { null }
+    }
+
+    // Foreground heartbeat: the panel's last-seen must track real app use,
+    // not just cold starts. onResume pulses the same pinned heartbeat,
+    // throttled to one per 60s; onCreate stamps the throttle too, so a
+    // launch's register run and the first onResume never double-fire. A 200
+    // also re-syncs the profile (same as the launch path). An invalid-token
+    // verdict delegates to registerAyxInstallation, which owns the v142
+    // heal semantics; every other outcome (blocked / revoked / network /
+    // pin mismatch) leaves the token exactly as it is.
+    @Volatile private var lastAyxPulseMs = 0L
+
+    private fun ayxForegroundHeartbeat() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastAyxPulseMs < 60_000L) return
+        lastAyxPulseMs = now
+        val ctx = this
+        Thread {
+            try {
+                val token = ayxInstallPrefs(ctx, "ayx_install").getString("access_token", null)
+                    ?: return@Thread // no token yet — the register flow owns first contact
+                val r = ayxInstallPost("/v1/installations/heartbeat", token, ayxHeartbeatJson(ctx))
+                when {
+                    r.first == 200 -> {
+                        val device = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}".trim()
+                        ayxSyncInstallProfile(token, device)
+                    }
+                    r.first == 401 && (r.second == null || r.second == "invalid_token" || r.second == "unauthorized") ->
+                        registerAyxInstallation(ctx)
+                    else -> {} // blocked / revoked / server error: token kept
+                }
+            } catch (e: Exception) {} // network / pin mismatch: network-class, token kept
+        }.start()
+    }
+
     /** Register this installation with the AyX backend (phone + device shown in admin panel). */
     private fun registerAyxInstallation(ctx: Context) {
         Thread {
             try {
-                val masterKey = androidx.security.crypto.MasterKeys.getOrCreate(
-                    androidx.security.crypto.MasterKeys.AES256_GCM_SPEC)
-                val prefs = androidx.security.crypto.EncryptedSharedPreferences.create(
-                    "ayx_install", masterKey, ctx,
-                    androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                    androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
+                val prefs = ayxInstallPrefs(ctx, "ayx_install")
+                // Stable identity (v145): the installation id lives in its OWN
+                // store. The token heal below clears the token store — when
+                // the id shared that store, every heal wiped it too and the
+                // next register minted a fresh server row (the panel showed
+                // a duplicate). The id now survives; only the token rotates.
+                val idPrefs = ayxInstallPrefs(ctx, "ayx_install_id")
+                var savedId = idPrefs.getString("installation_id", null)
+                if (savedId.isNullOrBlank()) {
+                    // Migrate the pre-v145 location (id shared the token store).
+                    val legacyId = prefs.getString("installation_id", null)
+                    if (!legacyId.isNullOrBlank()) {
+                        savedId = legacyId
+                        idPrefs.edit().putString("installation_id", legacyId).apply()
+                    }
+                }
                 val device = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}".trim()
                 val savedToken = prefs.getString("access_token", null)
                 if (savedToken != null) {
@@ -439,29 +503,33 @@ class MainActivity : ComponentActivity() {
                     when {
                         hbCode == 200 -> { ayxSyncInstallProfile(savedToken, device); return@Thread }
                         hbCode == 401 && (hbErr == null || hbErr == "invalid_token" || hbErr == "unauthorized") ->
+                            // Token store only — the id in ayx_install_id is
+                            // kept, so the re-register below upserts its row.
                             prefs.edit().clear().apply()
                         else -> return@Thread
                     }
                 }
-                var phone: String? = null
-                try {
-                    val jid = kotlinx.coroutines.runBlocking { GatewayClient.getMe() }
-                    val digits = jid.substringBefore("@").filter { it.isDigit() }
-                    if (digits.length >= 10) phone = "+$digits"
-                } catch (e: Exception) {}
+                val phone = ayxOwnPhoneE164()
                 try {
                     val json = org.json.JSONObject().apply {
                         put("app_version", ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName)
                         put("platform", "android")
                         phone?.let { put("phone_number", it) }
                         put("device_name", device)
+                        // Stable identity: with the persisted id the server
+                        // upserts THIS installation's row instead of
+                        // minting a duplicate.
+                        savedId?.takeIf { it.isNotBlank() }?.let { put("installation_id", it) }
                         AyxIntegrity.signatureSha256Hex(ctx)?.let { put("app_signature", it) } }.toString()
                     val (code, _, respBody) = ayxInstallPost("/v1/installations/register", null, json)
                     if ((code == 200 || code == 201) && respBody != null) {
                         val obj = org.json.JSONObject(respBody)
                         val newToken = obj.optString("access_token")
+                        val returnedId = obj.optString("installation_id")
+                        if (returnedId.isNotBlank())
+                            idPrefs.edit().putString("installation_id", returnedId).apply()
                         prefs.edit()
-                            .putString("installation_id", obj.optString("installation_id"))
+                            .remove("installation_id")
                             .putString("access_token", newToken).apply()
                         android.util.Log.i("AyxInstall", "Registered phone=$phone device=$device")
                         // Register does not set last_seen_at — heartbeat in the same
@@ -488,6 +556,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Foreground pulse: keep the panel's last-seen honest during real
+        // use, not only at cold start (60s throttle inside the helper).
+        if (AyxIntegrity.ok(this)) ayxForegroundHeartbeat()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -517,6 +588,9 @@ class MainActivity : ComponentActivity() {
         ) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
 
         handleDeepLink(intent)
+        // Stamp the foreground-heartbeat throttle so this launch's register
+        // run and the first onResume don't double-fire a heartbeat.
+        lastAyxPulseMs = android.os.SystemClock.elapsedRealtime()
         registerAyxInstallation(this)
 
         // D: Battery optimization exemption — ask once per launch until granted,

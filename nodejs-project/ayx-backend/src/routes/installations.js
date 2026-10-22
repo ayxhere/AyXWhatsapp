@@ -6,6 +6,7 @@ import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
 import { get, run, insertRow, transaction, nowIso } from '../db.js';
+import { config } from '../config.js';
 import { installationAuth, hashToken } from '../auth-installation.js';
 import { validate } from '../middleware/validate.js';
 import { clientIp } from '../middleware/ip.js';
@@ -56,11 +57,16 @@ const heartbeatLimiter = rateLimit({
 });
 
 const registerSchema = z.object({
+  // Stable installation identity (app v145+): the app persists this id
+  // separately from its token and re-sends it on every re-register, so a
+  // token heal upserts the same row instead of minting a duplicate.
+  installation_id: z.string().min(1).max(64).optional(),
   app_version: z.string().min(1).max(32).optional(),
   platform: z.string().min(1).max(32).optional(),
   locale: z.string().min(1).max(16).optional(),
   phone_number: z.string().min(4).max(20).optional(),
   device_name: z.string().min(1).max(128).optional(),
+  app_signature: z.string().min(1).max(128).optional(),
 });
 
 const profileSchema = z.object({
@@ -72,28 +78,94 @@ const pushTokenSchema = z.object({
   fcm_token: z.string().min(1).max(4096),
 });
 
-function newTokenPair() {
-  return {
-    installationId: randomUUID(),
-    accessToken: randomBytes(48).toString('hex'), // 48 random bytes, hex
-  };
+function newAccessToken() {
+  return randomBytes(48).toString('hex'); // 48 random bytes, hex
+}
+
+// App-signature enforcement — stateless compare only; the presented signature
+// is never stored. OFF entirely when APP_SIGNATURE_SHA256 is not configured
+// (config.appSignatureSha256 is '' then), preserving the old behavior.
+// Compare is format-insensitive: colons stripped, case-insensitive.
+function signatureAccepted(provided) {
+  const expected = config.appSignatureSha256;
+  if (!expected) return true;
+  if (typeof provided !== 'string') return false;
+  return provided.replace(/:/g, '').toUpperCase() === expected;
+}
+
+function rejectSignatureMismatch(res) {
+  return res.status(403).json({
+    error: { code: 'signature_mismatch', message: 'App signature not recognized.' },
+  });
+}
+
+// One phone number = one installation row in the panel. Whenever a number is
+// saved for installation `keepId`, every OTHER row carrying the same number
+// is a stale duplicate (an earlier registration of the same number) and is
+// deleted — the panel must never show two rows for one number.
+function deleteDuplicatePhoneRows(phone, keepId) {
+  if (!phone) return;
+  run(
+    'DELETE FROM push_tokens WHERE installation_id IN (SELECT id FROM installations WHERE phone_number = ? AND id != ?)',
+    [phone, keepId]
+  );
+  run('DELETE FROM installations WHERE phone_number = ? AND id != ?', [phone, keepId]);
 }
 
 // POST /v1/installations/register — anonymous installation, no login.
+// Identity is stable (app v145+): when the payload carries an
+// installation_id, register is an UPSERT — a known id rotates the token on
+// its existing row (same id back, no duplicate), an unknown id creates the
+// row under that id. No id in the payload keeps the legacy behaviour
+// (fresh uuid).
 router.post('/register', registerLimiter, validate(registerSchema), async (req, res, next) => {
   try {
-    const { installationId, accessToken } = newTokenPair();
+    // Signature gate runs BEFORE any row is created (enforcement ON only).
+    if (!signatureAccepted(req.body.app_signature)) return rejectSignatureMismatch(res);
+    const accessToken = newAccessToken();
     const now = nowIso();
-    insertRow('installations', {
-      id: installationId,
-      token_hash: hashToken(accessToken),
-      app_version: req.body.app_version ?? null,
-      platform: req.body.platform ?? null,
-      locale: req.body.locale ?? null,
-      phone_number: req.body.phone_number ?? null,
-      device_name: req.body.device_name ?? null,
-      created_at: now,
-      updated_at: now,
+    const providedId = req.body.installation_id || null;
+    let installationId = providedId;
+    await transaction(() => {
+      const existing = providedId
+        ? get(null, 'SELECT id FROM installations WHERE id = ?', [providedId])
+        : null;
+      if (existing) {
+        // Same installation re-registering (e.g. after a token heal): rotate
+        // the token and refresh the mutable fields on the SAME row. Fields
+        // absent from the payload keep their stored values.
+        const updates = {
+          token_hash: hashToken(accessToken),
+          last_seen_at: now,
+          updated_at: now,
+        };
+        if (req.body.app_version !== undefined) updates.app_version = req.body.app_version;
+        if (req.body.platform !== undefined) updates.platform = req.body.platform;
+        if (req.body.locale !== undefined) updates.locale = req.body.locale;
+        if (req.body.phone_number) updates.phone_number = req.body.phone_number;
+        if (req.body.device_name) updates.device_name = req.body.device_name;
+        const sets = Object.keys(updates).map((k) => `${k} = ?`).join(', ');
+        run(`UPDATE installations SET ${sets} WHERE id = ?`, [
+          ...Object.values(updates),
+          providedId,
+        ]);
+      } else {
+        installationId = providedId || randomUUID();
+        insertRow('installations', {
+          id: installationId,
+          token_hash: hashToken(accessToken),
+          app_version: req.body.app_version ?? null,
+          platform: req.body.platform ?? null,
+          locale: req.body.locale ?? null,
+          phone_number: req.body.phone_number ?? null,
+          device_name: req.body.device_name ?? null,
+          created_at: now,
+          updated_at: now,
+        });
+      }
+      if (req.body.phone_number) {
+        deleteDuplicatePhoneRows(req.body.phone_number, installationId);
+      }
     });
     // The access token is returned ONCE and never stored in plaintext.
     res.status(201).json({ installation_id: installationId, access_token: accessToken });
@@ -112,12 +184,13 @@ router.post('/profile', installationAuth, validate(profileSchema), async (req, r
       updates.updated_at = nowIso();
       const sets = Object.keys(updates).map((k) => `${k} = ?`).join(', ');
       run(`UPDATE installations SET ${sets} WHERE id = ?`, [...Object.values(updates), req.installation.id]);
+      // A number that moved to this installation must not linger on an old
+      // duplicate row.
+      if (updates.phone_number) {
+        deleteDuplicatePhoneRows(updates.phone_number, req.installation.id);
+      }
     }
     res.json({ ok: true });
-  } catch (err) {
-    next(err);
-  }
-});
   } catch (err) {
     next(err);
   }
@@ -162,6 +235,9 @@ router.post('/revoke', installationAuth, async (req, res, next) => {
 // guarantee — just the last time the app checked in.
 router.post('/heartbeat', heartbeatLimiter, installationAuth, async (req, res, next) => {
   try {
+    // Token validity has already gated in installationAuth; the signature
+    // check runs here, where the body is visible (enforcement ON only).
+    if (!signatureAccepted(req.body?.app_signature)) return rejectSignatureMismatch(res);
     const now = new Date();
     run('UPDATE installations SET last_seen_at = ?, updated_at = ? WHERE id = ?', [
       now,
