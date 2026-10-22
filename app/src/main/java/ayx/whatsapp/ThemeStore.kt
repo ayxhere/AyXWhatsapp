@@ -19,6 +19,10 @@ object ThemeStore {
     val mode = mutableStateOf("system")
     // key into [accents]
     val accent = mutableStateOf("purple")
+    // status viewer top progress style: default | wavy | squiggly
+    // (Settings → Appearance → Status style). Default stays "squiggly" so
+    // the shipped look never changes unless the user switches it.
+    val statusProgressStyle = mutableStateOf("squiggly")
 
     /**
      * Legacy: delegates to UiStyleStore.uiStyle.
@@ -67,6 +71,7 @@ object ThemeStore {
             prefs!!.edit().putString("mode", "amoled").apply()
         }
         accent.value = prefs!!.getString("accent", "purple") ?: "purple"
+        statusProgressStyle.value = prefs!!.getString("status_progress_style", "squiggly") ?: "squiggly"
         // Migrate legacy appearance_style to UiStyleStore if present
         val legacy = prefs!!.getString("appearance_style", null)
         if (legacy != null && UiStyleStore.uiStyle.value == "default") {
@@ -86,5 +91,10 @@ object ThemeStore {
     fun setAccent(a: String) {
         accent.value = a
         prefs?.edit()?.putString("accent", a)?.apply()
+    }
+
+    fun setStatusProgressStyle(s: String) {
+        statusProgressStyle.value = s
+        prefs?.edit()?.putString("status_progress_style", s)?.apply()
     }
 }

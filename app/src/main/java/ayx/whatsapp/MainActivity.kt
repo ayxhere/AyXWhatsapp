@@ -535,6 +535,7 @@ class MainActivity : ComponentActivity() {
         StatusFlags.init(applicationContext)
         SetName.init(applicationContext)
         GroupNameStore.init(applicationContext)
+        GroupReadStore.init(applicationContext)
         ThemeStore.init(applicationContext)
         TextAnimSettings.init(applicationContext)
         MessageMotionSettings.init(applicationContext)
@@ -956,6 +957,9 @@ fun GatewayApp() {
     var clearedUnread by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
     fun markChatRead(jid: String) {
         clearedUnread = clearedUnread + (jid to System.currentTimeMillis())
+        // Groups: persist the read marker too — the group badge is counted
+        // locally from messages newer than it (see GroupReadStore).
+        if (jid.endsWith("@g.us")) GroupReadStore.markRead(jid, System.currentTimeMillis())
         scope.launch { runCatching { GatewayClient.markRead(jid) } }
     }
     // Opening a chat marks it read (covers every open path: tap, locked-chat
@@ -1488,12 +1492,16 @@ fun GatewayApp() {
 
 
     // image viewer (full screen) — B7: proper header (back + title + download/share), not just the bare image.
+    // v144: single-tap on the image no longer closes the viewer (user
+    // request) — closing is Back (system / top-bar arrow) only. The image
+    // is pinch-zoomable + pannable, double-tap toggles zoom.
     viewImg?.let { (img, msg) ->
         BackHandler { viewImg = null }
         ForceLightSystemBarIcons()
         run {
+            val zoom = remember(msg.id, img) { ViewerZoom() }
             Box(Modifier.fullscreenOverlay()) {
-                Image(img, "image", Modifier.fillMaxSize().clickable { viewImg = null }, contentScale = ContentScale.Fit)
+                Image(img, "image", Modifier.fillMaxSize().viewerGestures(zoom, doubleTap = true), contentScale = ContentScale.Fit)
                 ViewerTopBar(
                     title = chatTitleOf(messages, msg.chat), caption = msg.text,
                     onBack = { viewImg = null },
@@ -2265,9 +2273,12 @@ private fun ProfilePhotoViewer(jid: String, name: String, onDownload: () -> Unit
     }
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.96f))) {
-            Box(Modifier.fillMaxSize().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onClose() }, contentAlignment = Alignment.Center) {
+            // v144: tapping the photo no longer closes the viewer — close
+            // is Back / the top-bar arrow. The photo is pinch-zoomable.
+            val zoom = remember(jid) { ViewerZoom() }
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 when {
-                    full != null -> Image(full!!, "profile photo", Modifier.fillMaxWidth().aspectRatio(1f), contentScale = ContentScale.Fit)
+                    full != null -> Image(full!!, "profile photo", Modifier.fillMaxWidth().aspectRatio(1f).viewerGestures(zoom, doubleTap = true), contentScale = ContentScale.Fit)
                     loading -> CircularProgressIndicator(color = Color.White)
                     else -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         AyxIcon(Icons.Filled.Person, null, tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(72.dp))
@@ -2412,12 +2423,29 @@ private fun ChatList(messages: List<GatewayClient.Msg>, chats: List<GatewayClien
                         // never a 1970 epoch date.
                         if (entry.lastTs > 0) Text(fmt(entry.lastTs), style = MaterialTheme.typography.labelSmall)
                     }
-                    // Unread badge (WhatsApp-style): Baileys unreadCount for
-                    // this chat. Locally cleared the moment the chat was
-                    // opened (clearedUnread) so the badge drops instantly —
-                    // a message that arrived AFTER the mark-read still shows.
+                    // Unread badge (WhatsApp-style). 1:1 chats: Baileys
+                    // unreadCount is a real server-maintained count — pass
+                    // it through. GROUPS (BUG FIX): that same value is only
+                    // an "any unread" flag for groups — it caps at 1 no
+                    // matter how many messages are pending — so a group's
+                    // badge is counted locally instead: this row's incoming
+                    // messages newer than the persisted read marker
+                    // (GroupReadStore, written on every open). The server
+                    // value stays as a floor, and a zero from the server
+                    // (read elsewhere / marked read) is always honoured.
+                    // Locally cleared the moment the chat was opened
+                    // (clearedUnread) so the badge drops instantly — a
+                    // message that arrived AFTER the mark-read still shows.
                     val serverUnread = entry.info?.unreadCount ?: 0
-                    val unread = if ((clearedUnread[entry.jid] ?: 0L) >= entry.lastTs && entry.lastTs > 0) 0 else serverUnread
+                    val unread = if (entry.isGroup) {
+                        val marker = maxOf(clearedUnread[entry.jid] ?: 0L, GroupReadStore.marker(entry.jid))
+                        when {
+                            entry.lastTs > 0 && marker >= entry.lastTs -> 0
+                            serverUnread <= 0 -> 0
+                            marker > 0 -> maxOf(serverUnread, entry.msgs.count { m -> !m.fromMe && m.ts > marker })
+                            else -> serverUnread
+                        }
+                    } else if ((clearedUnread[entry.jid] ?: 0L) >= entry.lastTs && entry.lastTs > 0) 0 else serverUnread
                     // No-message chats have an honestly empty preview —
                     // never a fake "[message]".
                     val preview = entry.lastMsg?.let { chatPreview(it, entry.isGroup) } ?: ""
@@ -4915,6 +4943,45 @@ private fun accentDisplayName(key: String): String = when (key) {
     else -> key.replaceFirstChar { it.uppercase() }
 }
 
+// Settings → Appearance → Status style: renderer for the status viewer's
+// top progress segments. Stored in ThemeStore (persisted); "squiggly" is
+// the default so the shipped look is unchanged until the user switches.
+private val STATUS_STYLES = listOf(
+    "default" to "Default", "wavy" to "Wavy", "squiggly" to "Squiggly"
+)
+
+@Composable
+private fun StatusStyleGrid() {
+    val current = ThemeStore.statusProgressStyle.value
+    Column(Modifier.padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        for (row in STATUS_STYLES.chunked(2)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                for ((k, lbl) in row) {
+                    val sel = current == k
+                    StyledSurface(
+                        onClick = { ThemeStore.setStatusProgressStyle(k) },
+                        shape = uiShapeFor(16),
+                        color = if (sel) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(10.dp).clip(CircleShape)
+                                .background(if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)))
+                            Spacer(Modifier.width(10.dp))
+                            Text(lbl, style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                        }
+                    }
+                }
+                // Keep the grid aligned when the row has one item.
+                if (row.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+}
+
 @Composable
 private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -> Unit, onOpenIconStyle: () -> Unit, onOpenAccentColor: () -> Unit, onOpenBlurAnim: () -> Unit) {
     val accent = ThemeStore.accent.value
@@ -4996,6 +5063,20 @@ private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -
             value = IconPackRegistry.nameOf(IconStyleSettings.style.value),
             onClick = onOpenIconStyle,
         )
+    }
+
+    SettingsGroup("Status") {
+        Text(
+            "Status style",
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+        Text(
+            "Progress bar shown on top of the status viewer",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        StatusStyleGrid()
     }
 
 }
@@ -7686,6 +7767,87 @@ private fun AudRadio(label: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 
+/**
+ * Pinch-zoom state for the full-screen media viewers (v144: chat image
+ * viewer, profile photo viewer, status viewer). One instance per viewed
+ * item — created via remember(...) keyed on the item, so switching
+ * photos/statuses always starts unzoomed.
+ *
+ * [touchedAt] is the last transform-gesture activity (pinch or pan): the
+ * status viewer's tap zones consult it (plus [zoomed]) so the tap that
+ * ends a pinch never also navigates to the next/previous status.
+ */
+private class ViewerZoom {
+    var scale by mutableStateOf(1f)
+    var offset by mutableStateOf(Offset.Zero)
+    var touchedAt by mutableStateOf(0L)
+    val zoomed: Boolean get() = scale > 1.01f
+    fun reset() { scale = 1f; offset = Offset.Zero }
+    /** Status tap zones: swallow the tap while zoomed, or when it is the
+     *  release of a pinch/pan that just happened. */
+    fun blocksNav(): Boolean = zoomed || System.currentTimeMillis() - touchedAt < 400L
+}
+
+/**
+ * Pinch-to-zoom + pan (plus an optional double-tap zoom toggle) for one
+ * media element, rendered through a graphicsLayer. The zoom is anchored
+ * on the pinch centroid — the content point under the fingers stays
+ * put — and the pan is clamped so the media can't be dragged off into
+ * the void. Plain single taps are left alone entirely: closing a viewer
+ * is Back-only (v144, user request).
+ */
+private fun Modifier.viewerGestures(zoom: ViewerZoom, doubleTap: Boolean): Modifier {
+    var m = this.pointerInput(zoom) {
+        detectTransformGestures { centroid, pan, gestureZoom, _ ->
+            val old = zoom.scale
+            val new = (old * gestureZoom).coerceIn(1f, 5f)
+            zoom.touchedAt = System.currentTimeMillis()
+            if (new <= 1f) {
+                zoom.scale = 1f
+                zoom.offset = Offset.Zero
+            } else {
+                // screen(p) = centre + offset + scale*(p - centre); keep
+                // the content point under the pinch centroid fixed.
+                val cx = size.width / 2f
+                val cy = size.height / 2f
+                val ratio = new / old
+                val maxX = size.width * (new - 1f) / 2f
+                val maxY = size.height * (new - 1f) / 2f
+                zoom.scale = new
+                zoom.offset = Offset(
+                    ((centroid.x - cx) * (1f - ratio) + zoom.offset.x * ratio + pan.x).coerceIn(-maxX, maxX),
+                    ((centroid.y - cy) * (1f - ratio) + zoom.offset.y * ratio + pan.y).coerceIn(-maxY, maxY),
+                )
+            }
+        }
+    }
+    if (doubleTap) {
+        m = m.pointerInput(zoom) {
+            detectTapGestures(onDoubleTap = { tap ->
+                zoom.touchedAt = System.currentTimeMillis()
+                if (zoom.zoomed) {
+                    zoom.reset()
+                } else {
+                    zoom.scale = 2.5f
+                    // bring the double-tapped point to the centre
+                    val maxX = size.width * (zoom.scale - 1f) / 2f
+                    val maxY = size.height * (zoom.scale - 1f) / 2f
+                    zoom.offset = Offset(
+                        ((size.width / 2f - tap.x) * zoom.scale).coerceIn(-maxX, maxX),
+                        ((size.height / 2f - tap.y) * zoom.scale).coerceIn(-maxY, maxY),
+                    )
+                }
+            })
+        }
+    }
+    return m.graphicsLayer {
+        scaleX = zoom.scale
+        scaleY = zoom.scale
+        translationX = zoom.offset.x
+        translationY = zoom.offset.y
+    }
+}
+
 @Composable
 /**
  * One status progress segment drawn as a SQUIGGLY (wavy) track, after
@@ -7744,6 +7906,99 @@ private fun SquigglyProgress(frac: Float, loading: Boolean, modifier: Modifier =
                 val half = 4.5.dp.toPx()
                 drawLine(Color.White, Offset(fx, midY - half), Offset(fx, midY + half), strokeWidth = 2.5.dp.toPx(), cap = StrokeCap.Round)
             }
+        }
+    }
+}
+
+@Composable
+/**
+ * "Wavy" status progress segment (Settings → Appearance → Status style):
+ * the same contract as SquigglyProgress — faint full track, bright wave
+ * up to the progress point with a playhead bar, a sweeping bright chunk
+ * while loading — but drawn as one long, gentle sine wave instead of
+ * the squiggly's tight music-player wave.
+ */
+private fun WavyProgress(frac: Float, loading: Boolean, modifier: Modifier = Modifier) {
+    var sweep = -1f
+    if (loading) {
+        val s by rememberInfiniteTransition(label = "wavysweep").animateFloat(
+            initialValue = -0.45f, targetValue = 1.1f,
+            animationSpec = infiniteRepeatable(tween(1100, easing = LinearEasing), RepeatMode.Restart),
+            label = "wavysweep"
+        )
+        sweep = s
+    }
+    val wave = remember { Path() }
+    Canvas(modifier) {
+        val w = size.width
+        val midY = size.height / 2f
+        val amp = size.height * 0.30f
+        val waveLen = 34.dp.toPx().coerceAtLeast(1f)
+        val trackW = 2.dp.toPx()
+        val phase = frac * 3.2f   // progress drags the wave, same trick as the squiggly
+        fun buildWave(x0: Float, x1: Float) {
+            wave.rewind()
+            var x = x0
+            wave.moveTo(x, midY + amp * kotlin.math.sin((x / waveLen) * 6.28318f + phase))
+            while (x < x1) {
+                x = minOf(x + waveLen / 16f, x1)
+                wave.lineTo(x, midY + amp * kotlin.math.sin((x / waveLen) * 6.28318f + phase))
+            }
+        }
+        // faint full track
+        buildWave(0f, w)
+        drawPath(wave, Color.White.copy(alpha = 0.35f), style = Stroke(width = trackW, cap = StrokeCap.Round))
+        if (loading) {
+            val x0 = (sweep * w).coerceIn(0f, w)
+            val x1 = ((sweep + 0.45f) * w).coerceIn(0f, w)
+            if (x1 > x0) {
+                buildWave(x0, x1)
+                drawPath(wave, Color.White, style = Stroke(width = trackW, cap = StrokeCap.Round))
+            }
+        } else if (frac > 0f) {
+            val fx = (frac * w).coerceIn(0f, w)
+            buildWave(0f, fx)
+            drawPath(wave, Color.White, style = Stroke(width = trackW + 0.5.dp.toPx(), cap = StrokeCap.Round))
+            // playhead: short vertical bar at the progress point
+            if (frac < 1f) {
+                val half = 4.5.dp.toPx()
+                drawLine(Color.White, Offset(fx, midY - half), Offset(fx, midY + half), strokeWidth = 2.5.dp.toPx(), cap = StrokeCap.Round)
+            }
+        }
+    }
+}
+
+@Composable
+/**
+ * "Default" status progress segment: the classic straight segmented
+ * bar — a faint rounded track with a bright fill up to the progress
+ * point. While loading, a bright chunk sweeps across (same timing as
+ * the wave styles) instead of a fill.
+ */
+private fun DefaultProgress(frac: Float, loading: Boolean, modifier: Modifier = Modifier) {
+    var sweep = -1f
+    if (loading) {
+        val s by rememberInfiniteTransition(label = "defsweep").animateFloat(
+            initialValue = -0.45f, targetValue = 1.1f,
+            animationSpec = infiniteRepeatable(tween(1100, easing = LinearEasing), RepeatMode.Restart),
+            label = "defsweep"
+        )
+        sweep = s
+    }
+    Canvas(modifier) {
+        val w = size.width
+        val barH = 3.dp.toPx()
+        val y = (size.height - barH) / 2f
+        val corner = CornerRadius(barH / 2f, barH / 2f)
+        // faint full track
+        drawRoundRect(Color.White.copy(alpha = 0.35f), topLeft = Offset(0f, y), size = Size(w, barH), cornerRadius = corner)
+        if (loading) {
+            val x0 = (sweep * w).coerceIn(0f, w)
+            val x1 = ((sweep + 0.45f) * w).coerceIn(0f, w)
+            if (x1 > x0) drawRoundRect(Color.White, topLeft = Offset(x0, y), size = Size(x1 - x0, barH), cornerRadius = corner)
+        } else if (frac > 0f) {
+            val fx = (frac * w).coerceIn(0f, w)
+            drawRoundRect(Color.White, topLeft = Offset(0f, y), size = Size(fx, barH), cornerRadius = corner)
         }
     }
 }
@@ -7832,6 +8087,9 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
     var imgLoading by remember(st.mediaName, si, ii) { mutableStateOf(st.mediaName != null && st.mediaType != "video") }
     var reloadKey by remember(st.mediaName, si, ii) { mutableStateOf(0) }
     var fullLoaded by remember(st.mediaName, si, ii) { mutableStateOf(false) }
+    // v144: pinch-zoom for this status's image/video (fresh per item).
+    // The tap zones below consult it so zooming never navigates.
+    val zoom = remember(si, ii) { ViewerZoom() }
     LaunchedEffect(st.mediaName, si, ii, reloadKey) {
         val name = st.mediaName
         if (name != null && st.mediaType != "video") {
@@ -7887,7 +8145,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
     Box(Modifier.fullscreenOverlay()) {
         Surface(Modifier.fillMaxSize(), color = Color.Black) {
             Box(Modifier.fillMaxSize().blur(statusBlur).pointerInput(myMine) {
-                if (myMine) { var dyAcc = 0f; detectVerticalDragGestures(onDragEnd = { if (dyAcc < -80f) showViewers = true; dyAcc = 0f }) { _, dy -> dyAcc += dy } }
+                if (myMine) { var dyAcc = 0f; detectVerticalDragGestures(onDragEnd = { if (dyAcc < -80f && !zoom.zoomed) showViewers = true; dyAcc = 0f }) { _, dy -> dyAcc += dy } }
             }) {
                 if (st.deleted) {
                     // SD2: tombstone — this status was deleted on WhatsApp. No
@@ -7915,15 +8173,21 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                     }
                 } else if (st.mediaType == "video" && st.mediaName != null) {
                     key(si, ii, st.mediaName) {
-                        ExoVideoPlayer(
-                            uri = Uri.parse(GatewayClient.mediaUrl(st.mediaName!!)),
-                            modifier = Modifier.fillMaxSize(),
-                            autoPlay = true,
-                            onPlayer = { exoPlayer = it },
-                            onReady = { videoReady = true },
-                            onCompletion = { goNext() },
-                            onError = { goNext() },   // failed video -> skip instead of black screen
-                        )
+                        // v144: zoom gestures sit on a wrapping Box (pure
+                        // Compose node) rather than on the player view
+                        // itself — the graphicsLayer scales the whole
+                        // player surface, playback untouched.
+                        Box(Modifier.fillMaxSize().viewerGestures(zoom, doubleTap = false)) {
+                            ExoVideoPlayer(
+                                uri = Uri.parse(GatewayClient.mediaUrl(st.mediaName!!)),
+                                modifier = Modifier.fillMaxSize(),
+                                autoPlay = true,
+                                onPlayer = { exoPlayer = it },
+                                onReady = { videoReady = true },
+                                onCompletion = { goNext() },
+                                onError = { goNext() },   // failed video -> skip instead of black screen
+                            )
+                        }
                         // C4: show a spinner while the video buffers — previously
                         // it was a black screen with no feedback (felt like "lag").
                         if (!videoReady) {
@@ -7933,7 +8197,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                         }
                     }
                 } else if (bmp != null) {
-                    Image(bmp!!, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                    Image(bmp!!, null, Modifier.fillMaxSize().viewerGestures(zoom, doubleTap = false), contentScale = ContentScale.Fit)
                     if (imgLoading) CircularProgressIndicator(Modifier.align(Alignment.Center), color = Color.White.copy(alpha = 0.7f))
                     // only a blurry thumbnail loaded (full media was deleted) → tap to re-download, like chat media
                     else if (!fullLoaded && st.mediaName != null) {
@@ -7964,12 +8228,14 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                 }
                 // BUG2b: while the reply keyboard is up, a tap on the status
                 // dismisses ONLY the keyboard — it must not also navigate.
+                // v144: while the media is zoomed (or a pinch/pan just
+                // ended), taps are swallowed too — they belong to the zoom.
                 Row(Modifier.fillMaxSize()) {
                     Box(Modifier.weight(1f).fillMaxHeight().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                        if (imeVisible) { keyboard?.hide(); focusManager.clearFocus() } else goPrev()
+                        if (imeVisible) { keyboard?.hide(); focusManager.clearFocus() } else if (!zoom.blocksNav()) goPrev()
                     })
                     Box(Modifier.weight(1.6f).fillMaxHeight().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                        if (imeVisible) { keyboard?.hide(); focusManager.clearFocus() } else goNext()
+                        if (imeVisible) { keyboard?.hide(); focusManager.clearFocus() } else if (!zoom.blocksNav()) goNext()
                     })
                 }
                 // J: header block = solid black from the very top (notification bar) down to the user row.
@@ -7980,15 +8246,14 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                         "video" -> !videoReady                 // buffering the clip
                         else -> imgLoading && bmp == null      // image still downloading (no thumb yet)
                     }
-                    // Squiggly segments (user request — the music-player
-                    // "Squiggly" progress style): each segment is a wavy
-                    // track; the watched part is bright with a short
-                    // vertical playhead bar at the progress point, the
-                    // rest stays faint, and a loading segment sweeps a
-                    // bright chunk of wave (the old shimmer, same 1100ms
-                    // timing). Segmentation, fill fractions and the
-                    // tap/hold zones around this row are unchanged —
-                    // only the drawing changed.
+                    // Progress segments — renderer picked by Settings →
+                    // Appearance → Status style (Default / Wavy / Squiggly;
+                    // Squiggly is the shipped look and stays the default).
+                    // Every renderer shares the same contract: the watched
+                    // fraction is bright, the rest faint, and a loading
+                    // segment sweeps a bright chunk (1100ms timing).
+                    // Segmentation, fill fractions and the tap/hold zones
+                    // around this row are unchanged — only drawing differs.
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                         items.indices.forEach { idx ->
                             val fillFrac: Float = when {
@@ -7996,11 +8261,24 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                                 idx == ii && !activeLoading -> progress.coerceIn(0f, 1f)
                                 else -> 0f
                             }
-                            SquigglyProgress(
-                                frac = fillFrac,
-                                loading = idx == ii && activeLoading,
-                                modifier = Modifier.weight(1f).height(10.dp)
-                            )
+                            val segMod = Modifier.weight(1f).height(10.dp)
+                            when (ThemeStore.statusProgressStyle.value) {
+                                "default" -> DefaultProgress(
+                                    frac = fillFrac,
+                                    loading = idx == ii && activeLoading,
+                                    modifier = segMod
+                                )
+                                "wavy" -> WavyProgress(
+                                    frac = fillFrac,
+                                    loading = idx == ii && activeLoading,
+                                    modifier = segMod
+                                )
+                                else -> SquigglyProgress(
+                                    frac = fillFrac,
+                                    loading = idx == ii && activeLoading,
+                                    modifier = segMod
+                                )
+                            }
                         }
                     }
                     Spacer(Modifier.height(8.dp))
