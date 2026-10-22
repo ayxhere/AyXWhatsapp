@@ -2278,30 +2278,10 @@ app.get('/groupname', async (req, res) => {
   catch (_) { res.json({ name: cachedGroupSubject(jid) }) }
 })
 
-app.get('/session/export', (req, res) => {
-  try {
-    const out = { auth: {}, messages: null, settings: null }
-    try { for (const f of fs.readdirSync(AUTH_DIR)) out.auth[f] = fs.readFileSync(path.join(AUTH_DIR, f), 'utf8') } catch (_) {}
-    try { out.messages = fs.readFileSync(MESSAGES_FILE, 'utf8') } catch (_) {}
-    try { out.settings = fs.readFileSync(SETTINGS_FILE, 'utf8') } catch (_) {}
-    res.json(out)
-  } catch (e) { res.status(500).json({ error: e?.message }) }
-})
-
-app.post('/session/import', async (req, res) => {
-  try {
-    const b = req.body || {}
-    try { await sock?.ws?.close() } catch (_) {}
-    fs.mkdirSync(AUTH_DIR, { recursive: true })
-    if (b.auth) for (const [f, content] of Object.entries(b.auth)) fs.writeFileSync(path.join(AUTH_DIR, path.basename(f)), content)
-    if (b.messages) fs.writeFileSync(MESSAGES_FILE, b.messages)
-    if (b.settings) fs.writeFileSync(SETTINGS_FILE, b.settings)
-    state = null; sock = null; msgStore.clear(); rawStore.clear(); msgLog = []
-    _outgoingRawIds.length = 0; try { fs.rmSync(RAWSTORE_FILE, { force: true }) } catch (_) {}  // A+: imported session replaces local state
-    loadSettings(); loadMessages(); await loadAuth(); await startSocket()
-    res.json({ ok: true, registered: status.registered })
-  } catch (e) { res.status(500).json({ error: e?.message }) }
-})
+// v148 session privacy: /session/export and /session/import are GONE.
+// The Baileys auth state never leaves the app-private AUTH_DIR — no
+// endpoint may read it out or write foreign creds into it. A logged-in
+// session survives app updates in place; logout/uninstall end it for good.
 
 app.get('/contacts', (req, res) => {
   const items = []

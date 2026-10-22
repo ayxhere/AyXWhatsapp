@@ -28,6 +28,14 @@ object NodeRuntime {
         if (!AyxIntegrity.ok(ctx)) return
         if (!started.compareAndSet(false, true)) return
 
+        // v148 session privacy: BEFORE node reads the auth dir, run the
+        // one-time migration/purge of the legacy public session backup
+        // (Download/WhatsAyX/session). A stranded backup is imported into
+        // the private auth dir only when no private session exists, and
+        // the public copy is then deleted for good. Synchronous on
+        // purpose — extractIfNeeded() below already does blocking IO here.
+        SessionMigration.runBlockingOnce(ctx)
+
         // SECURITY: Generate per-installation gateway auth token BEFORE starting Node,
         // so it can be passed via environment (process-private, not on command line).
         val apiToken = GatewayAuth.init(ctx)

@@ -1410,8 +1410,6 @@ fun GatewayApp() {
         }
     }
     LaunchedEffect(Unit) {
-        var triedRestore = false
-        var didBackup = false
         var toldRelogin = false
         while (true) {
             status = GatewayClient.status()
@@ -1427,18 +1425,9 @@ fun GatewayApp() {
             } else toldRelogin = false
             if (!status.registered) {
                 settingsLoaded = false; openChat = null
-                // One-shot: restore a saved login from Download/WhatsAyX/session (survives reinstall / reset).
-                if (status.reachable && !triedRestore) {
-                    triedRestore = true
-                    runCatching {
-                        if (SessionBackup.exists(ctx)) {
-                            SessionBackup.load(ctx)?.let { js ->
-                                notify("restoring login…")
-                                if (GatewayClient.importSession(js)) { status = GatewayClient.status(); notify("login restored") }
-                            }
-                        }
-                    }
-                }
+                // v148: no session restore from public storage — the login
+                // lives only in the private auth dir (see SessionMigration,
+                // which runs once inside NodeRuntime before node boots).
                 if (!status.registered) {
                     val b = GatewayClient.qrBytes()
                     if (b != null) {
@@ -1453,11 +1442,8 @@ fun GatewayApp() {
                     // keep the download-link auto-reply fed from the encrypted AyxHere store (single source of truth)
                     runCatching { GatewayClient.patchSettings(JSONObject().put("ayxDownloadUrl", AyxHere.githubReleases).put("ayxShareMsg", AyxHere.shareMsg)) }
                 }
-                // Back up the login once per session so a later reset / reinstall keeps it.
-                if (!didBackup) {
-                    didBackup = true
-                    runCatching { val js = GatewayClient.exportSession(); if (js.isNotBlank() && js != "{}") SessionBackup.save(ctx, js) }
-                }
+                // v148: the session is NEVER copied out of the private auth
+                // dir — the old Download/WhatsAyX/session backup is abolished.
                 // Messages + full chat list fetched IN PARALLEL (they were serial,
                 // doubling the poll cycle and delaying tick updates after sends).
                 // Chat-list failure must never kill the poll; the last good list persists.
@@ -2205,11 +2191,11 @@ fun GatewayApp() {
                 // AyX Group system channel — independent of WhatsApp link state.
                 !status.registered -> Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode,
                     onPair = { n -> scope.launch { try { notify("code: " + GatewayClient.pair(n)) } catch (e: Exception) { notify("pair error: ${e.message}") } } },
-                    onReset = { scope.launch { GatewayClient.logout(); SessionBackup.delete(ctx); notify("reset") } }) }
+                    onReset = { scope.launch { GatewayClient.logout(); SessionMigration.purgePublic(ctx); notify("reset") } }) }
                 screen == "settings" -> Box(Modifier.padding(pad)) { SettingsScreen(status, settings, page = settingsPage, onPage = { settingsPage = it }, wallpaperVersion = wallpaperVersion,
                     onToggle = { patch -> scope.launch { settings = GatewayClient.patchSettings(patch) } },
                     onRules = { r -> scope.launch { settings = GatewayClient.setRules(r) } },
-                    onLogout = { scope.launch { GatewayClient.logout(); SessionBackup.delete(ctx); notify("logged out") } }, ctx = ctx,
+                    onLogout = { scope.launch { GatewayClient.logout(); SessionMigration.purgePublic(ctx); notify("logged out") } }, ctx = ctx,
                     onPickWallpaper = { wallpaperPicker.launch("image/*") },
                     onRemoveWallpaper = { File(ctx.filesDir, "wallpaper.jpg").delete(); loadWallpaper(); wallpaperVersion++; notify("wallpaper removed") },
                     onPickPhoto = { profilePicPicker.launch("image/*") },

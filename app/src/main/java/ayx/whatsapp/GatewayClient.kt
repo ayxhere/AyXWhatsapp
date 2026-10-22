@@ -537,15 +537,8 @@ object GatewayClient {
             out
         } catch (e: Exception) { emptyList() }
     }
-    suspend fun exportSession(): String = withContext(Dispatchers.IO) { get("/session/export").toString() }
-    suspend fun importSession(json: String) = withContext(Dispatchers.IO) {
-        val c = (java.net.URL("$base/session/import").openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"; doOutput = true; connectTimeout = 4000; readTimeout = 30000
-            setRequestProperty("Content-Type", "application/json")
-        }
-        c.outputStream.use { it.write(json.toByteArray()) }
-        readJson(c).optBoolean("ok", false)
-    }
+    // v148: no session export/import — the WhatsApp login never leaves the
+    // app-private auth dir (see SessionMigration for the one-time cleanup).
     suspend fun blockChat(jid: String, block: Boolean) = withContext(Dispatchers.IO) {
         val o = post("/block", JSONObject().put("jid", jid).put("action", if (block) "block" else "unblock"))
         if (!o.optBoolean("ok", false)) throw RuntimeException(o.optString("error", "failed"))
