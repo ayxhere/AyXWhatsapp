@@ -1252,13 +1252,16 @@ fun GatewayApp() {
                             val durMs = (tEnd - tStart).coerceAtLeast(3000L)
                             val lyFetched = if (lyricsOff) emptyList() else if (lyrics.isNotEmpty()) lyrics else getCachedLyrics(song.title, song.artist, song.durationSec)
                             // Safety net: romanize any Devanagari that slipped through (lyrics are normally romanized at fetch time).
-                            val ly = romanizeLyricPairs(lyFetched)
-                            val adjusted0 = ly.filter { it.first in tStart..tEnd }.map { ((it.first - tStart - 450L).coerceAtLeast(0L)) to it.second }
-                            // Hindi (or any) lyrics → English letters when requested
-                            val adjusted = if (romanize && adjusted0.isNotEmpty()) {
-                                val rom = runCatching { GatewayClient.translateLines(adjusted0.map { it.second }, true) }.getOrDefault(adjusted0.map { it.second })
-                                adjusted0.mapIndexed { i, pr -> pr.first to (rom.getOrNull(i)?.ifBlank { pr.second } ?: pr.second) }
-                            } else adjusted0
+                            val lyRomanized = romanizeLyricPairs(lyFetched)
+                            // Hindi (or any) lyrics → English letters when requested.
+                            // The FULL list is translated (not a window subset): the
+                            // bake now reads the full list against the absolute song
+                            // position exactly like the editor preview, so the
+                            // indices must stay aligned with it.
+                            val ly = if (romanize && lyRomanized.isNotEmpty()) {
+                                val rom = runCatching { GatewayClient.translateLines(lyRomanized.map { it.second }, true) }.getOrDefault(lyRomanized.map { it.second })
+                                lyRomanized.mapIndexed { i, pr -> pr.first to (rom.getOrNull(i)?.ifBlank { pr.second } ?: pr.second) }
+                            } else lyRomanized
                             val vOk = if (t == "image") {
                                 // AI-edited photo: render the video from the edited bytes, not the raw file.
                                 var imgUri = u!! // u is non-null here: null-checked at `if (u == null)` above, and u is a val
@@ -1267,7 +1270,7 @@ fun GatewayApp() {
                                     editedTmp = File(dir, "edited_$stamp.jpg").also { it.writeBytes(editedBytes) }
                                     imgUri = Uri.fromFile(editedTmp)
                                 }
-                                val ok = MediaTools.photosToVideo(ctx, listOf(imgUri), vFile, durMs, adjusted, lyricY, lyricScale, animStyle, FontStore.appTypeface(ctx)) { }
+                                val ok = MediaTools.photosToVideo(ctx, listOf(imgUri), vFile, durMs, ly, lyricY, lyricScale, animStyle, FontStore.appTypeface(ctx), lyricStartMs = tStart) { }
                                 runCatching { editedTmp?.delete() }
                                 ok
                             } else if (vTrimActive || videoMuted) {

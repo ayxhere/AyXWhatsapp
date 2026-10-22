@@ -37,38 +37,64 @@ object MediaTools {
     // app-selected font (FontStore.appTypeface) so the posted status uses
     // the SAME font as the editor preview. Null keeps the historical
     // DEFAULT_BOLD behaviour.
-    fun photosToVideo(ctx: Context, uris: List<Uri>, out: File, durationMs: Long, lyrics: List<Pair<Long, String>>, lyricY: Float = 0.80f, lyricScale: Float = 1f, animStyle: Int = 0, font: android.graphics.Typeface? = null, onProgress: (Float) -> Unit): Boolean {
-        val W = 720
-        // The canvas follows the FIRST photo's own aspect (720 wide,
-        // proportional height, even, clamped) instead of a fixed 720x1280:
-        // a full-size phone screenshot (9:19.5+) letterboxed into a 9:16
-        // canvas came out shrunk between black side bars — the posted
-        // status no longer matched the full-bleed editor preview, and on
-        // fill-rendering viewers its edges were the first thing eaten.
-        // At its own aspect the photo fills the frame completely (the
-        // FIT in loadScaledFit then has nothing to pad and nothing can be
-        // cropped); a 9:16 photo still gets exactly 720x1280, as before.
-        val H = run {
-            val b = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            val first = uris.firstOrNull()
-            if (first != null) runCatching { ctx.contentResolver.openInputStream(first)?.use { android.graphics.BitmapFactory.decodeStream(it, null, b) } }
-            val raw = if (b.outWidth > 0 && b.outHeight > 0) (W * b.outHeight) / b.outWidth else 1280
-            (raw / 2 * 2).coerceIn(720, 1600)
-        }
+    fun photosToVideo(ctx: Context, uris: List<Uri>, out: File, durationMs: Long, lyrics: List<Pair<Long, String>>, lyricY: Float = 0.80f, lyricScale: Float = 1f, animStyle: Int = 0, font: android.graphics.Typeface? = null, lyricStartMs: Long = 0L, onProgress: (Float) -> Unit): Boolean {
+        // HIGH QUALITY (user: a photo must post "same [as] video" —
+        // no quality drop once lyrics are added). VIDEO statuses are
+        // sample-copied at the source's own resolution and bitrate;
+        // the bake now follows the same policy: the canvas is the
+        // FIRST photo's NATIVE resolution (even-rounded for the
+        // encoder) instead of the old fixed 720-wide frame, which
+        // threw away ~2.8x of a 1080x2400 photo's pixels before a
+        // single lyric was drawn. If the encoder refuses the native
+        // size (level / memory limits), fall back ONCE to the legacy
+        // 720-wide canvas so the post never fails on resolution alone.
+        val nat = photoNativeDims(ctx, uris)
+        if (encodePhotos(ctx, uris, out, durationMs, lyrics, lyricY, lyricScale, animStyle, font, lyricStartMs, nat.first, nat.second, onProgress)) return true
+        val leg = legacyCanvasDims(ctx, uris)
+        if (leg.first == nat.first && leg.second == nat.second) return false
+        return encodePhotos(ctx, uris, out, durationMs, lyrics, lyricY, lyricScale, animStyle, font, lyricStartMs, leg.first, leg.second, onProgress)
+    }
+
+    /** The first photo's own pixel size, even-rounded for the encoder; 720x1280 when unreadable. */
+    private fun photoNativeDims(ctx: Context, uris: List<Uri>): Pair<Int, Int> {
+        val b = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        val first = uris.firstOrNull()
+        if (first != null) runCatching { ctx.contentResolver.openInputStream(first)?.use { android.graphics.BitmapFactory.decodeStream(it, null, b) } }
+        if (b.outWidth <= 0 || b.outHeight <= 0) return 720 to 1280
+        return (b.outWidth / 2 * 2).coerceAtLeast(2) to (b.outHeight / 2 * 2).coerceAtLeast(2)
+    }
+
+    /** The pre-v137 canvas (720 wide at the first photo's aspect, height clamped 720..1600). Encoder-failure fallback only. */
+    private fun legacyCanvasDims(ctx: Context, uris: List<Uri>): Pair<Int, Int> {
+        val (nw, nh) = photoNativeDims(ctx, uris)
+        val raw = (720 * nh) / nw
+        return 720 to (raw / 2 * 2).coerceIn(720, 1600)
+    }
+
+    private fun encodePhotos(ctx: Context, uris: List<Uri>, out: File, durationMs: Long, lyrics: List<Pair<Long, String>>, lyricY: Float, lyricScale: Float, animStyle: Int, font: android.graphics.Typeface?, lyricStartMs: Long, W: Int, H: Int, onProgress: (Float) -> Unit): Boolean {
         // Lyric size, WYSIWYG: the fraction of frame WIDTH the editor's
-        // base text occupies on this device (see LyricsStyleStore) — the
-        // bake takes the same fraction of the canvas width, so the
+        // base text occupies on this device (see LyricsStyleStore) —
+        // the bake takes the same fraction of the canvas width, so the
         // posted status renders lyrics at exactly the relative size the
-        // editor preview showed for the same lyricScale.
+        // editor preview showed for the same lyricScale. The fraction
+        // is resolution-independent, so it stays correct at the native
+        // canvas size too.
         val lyricFrac = LyricsStyleStore.baseFractionOfWidth(ctx)
-        val FPS = 30; val BITRATE = 6_000_000
-        val bmps = uris.mapNotNull { runCatching { loadScaledFit(ctx, it, W, H) }.getOrNull() }
-        if (bmps.isEmpty()) return false
+        val FPS = 30
+        // Bitrate scales with pixel count at the SAME bits-per-pixel
+        // the 720-wide bake used (6 Mbps at 720x1280 = ~0.217 bpp at
+        // 30 fps): a 1080x2400 photo gets ~16.9 Mbps, so the extra
+        // resolution is not starved back into softness. The 48 Mbps
+        // cap stays inside Baseline Level 5.1 bitrate limits.
+        val BITRATE = (6_000_000L * W.toLong() * H.toLong() / (720L * 1280L)).coerceIn(6_000_000L, 48_000_000L).toInt()
+        var bmps: List<Bitmap> = emptyList()
         var encoder: MediaCodec? = null
         var muxer: MediaMuxer? = null
         var egl: EglBase? = null
         var quad: GlQuad? = null
         try {
+            bmps = uris.mapNotNull { runCatching { loadScaledFit(ctx, it, W, H) }.getOrNull() }
+            if (bmps.isEmpty()) return false
             val format = MediaFormat.createVideoFormat("video/avc", W, H).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
                 setInteger(MediaFormat.KEY_BIT_RATE, BITRATE)
@@ -76,9 +102,17 @@ object MediaTools {
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
                 try {
                     setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline)
-                    // 720x1280 is exactly Level 3.1's frame-size ceiling; a
-                    // taller source-aspect canvas needs Level 4.1 headroom.
-                    setInteger(MediaFormat.KEY_LEVEL, if (H > 1280) MediaCodecInfo.CodecProfileLevel.AVCLevel41 else MediaCodecInfo.CodecProfileLevel.AVCLevel31)
+                    // Level by frame size: up to 720x1280 Level 3.1
+                    // (exactly its frame-size ceiling, as before); up
+                    // to ~1080x1920 Level 4.1 (8192-macroblock frame
+                    // ceiling); anything bigger — a native 1080x2400
+                    // screenshot is 10200 macroblocks — needs 5.1.
+                    val px = W.toLong() * H.toLong()
+                    setInteger(MediaFormat.KEY_LEVEL, when {
+                        px <= 720L * 1280L -> MediaCodecInfo.CodecProfileLevel.AVCLevel31
+                        px <= 1920L * 1088L -> MediaCodecInfo.CodecProfileLevel.AVCLevel41
+                        else -> MediaCodecInfo.CodecProfileLevel.AVCLevel51
+                    })
                 } catch (_: Exception) {}
             }
             encoder = MediaCodec.createEncoderByType("video/avc")
@@ -123,17 +157,44 @@ object MediaTools {
                 drain(false)
                 val tMs = frame.toLong() * 1000L / FPS
                 val imgIdx = (frame / perImage).coerceIn(0, bmps.size - 1)
-                val active = lyrics.lastOrNull { it.first <= tMs }
-                val lyric = active?.second ?: ""
-                val lineStart = active?.first ?: 0L
+                // Lyric state EXACTLY as the editor preview computes it
+                // at the same song position. The preview reads the FULL
+                // lyric list against the ABSOLUTE song position
+                // (lyricStartMs + elapsed) and picks the last line at
+                // or before pos + 200 ms. The old bake was fed a
+                // different list — pre-filtered to lines STARTING
+                // inside the window, rebased and pre-shifted -450 ms —
+                // so a line already current when the window opened
+                // vanished (seconds of opening silence the preview
+                // never showed), every boundary landed ~650 ms off
+                // the preview, and the phase math ran on the truncated
+                // list. Same list, same position, same formulas now:
+                // bake == preview by construction.
+                val pos = lyricStartMs + tMs
+                val active = lyrics.lastOrNull { it.first <= pos + 200L }
+                val lyric: String
+                val lineStart: Long
+                if (active != null) { lyric = active.second; lineStart = active.first }
+                else {
+                    // Preview parity: with no line started yet, the
+                    // preview still shows the window's first line,
+                    // settled (its phase runs off lineStart 0). The
+                    // bake shows the same line the same way — never a
+                    // blank the preview didn't have.
+                    lyric = lyrics.firstOrNull { it.first in lyricStartMs..(lyricStartMs + durationMs) }?.second ?: ""
+                    lineStart = 0L
+                }
                 val nextStart = lyrics.firstOrNull { it.first > lineStart }?.first ?: (lineStart + 3000L)
                 val lineDur = (nextStart - lineStart).coerceIn(700L, 6000L)
-                val elapsed = (tMs - lineStart).coerceAtLeast(0L)
-                // Reveal (Instagram) plays across the whole line; typewriter mid-line; others quick entrances
+                val elapsed = (pos - lineStart).coerceAtLeast(0L)
+                // Reveal plays across the whole line at the preview's
+                // own rate (dur x 0.82, no extra coerce); typewriter
+                // mid-line; whole-line styles take the preview's
+                // 450 ms entrance (StyledLyricLine) — was 420 ms here.
                 val window = when (animStyle) {
-                    1 -> (lineDur * 0.82f).toLong().coerceIn(900L, 5000L)
+                    1 -> (lineDur * 0.82f).toLong().coerceAtLeast(1L)
                     4 -> (lineDur * 0.55f).toLong().coerceIn(700L, 2000L)
-                    else -> 420L
+                    else -> 450L
                 }
                 val phase = if (animStyle == 0) 1f else (elapsed.toFloat() / window.toFloat()).coerceIn(0f, 1f)
                 // redraw per word for Reveal, else quantize the phase to a handful of redraws
@@ -157,7 +218,10 @@ object MediaTools {
             drain(true)
             onProgress(1f)
             return true
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            // Throwable, not Exception: a native-size attempt can also
+            // fail with an Error (bitmap OOM on a very large photo) —
+            // the caller's legacy-size retry must still get its chance.
             return false
         } finally {
             try { quad?.release() } catch (_: Exception) {}
@@ -485,9 +549,14 @@ object MediaTools {
     private fun loadScaledFit(ctx: Context, uri: Uri, w: Int, h: Int): Bitmap {
         val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+        // Decode at (or just above) the target size: keep halving only
+        // while BOTH dimensions stay >= the canvas, so the source is
+        // never decoded BELOW the bake's resolution (the old fixed
+        // 2000px ceiling silently downscaled tall photos before the
+        // native-resolution bake ever saw them) and never wastefully
+        // above the next power of two either.
         var sample = 1
-        val big = maxOf(opts.outWidth, opts.outHeight)
-        while (big / sample > 2000) sample *= 2
+        while (opts.outWidth / (sample * 2) >= w && opts.outHeight / (sample * 2) >= h) sample *= 2
         val o2 = BitmapFactory.Options().apply { inSampleSize = sample }
         val src = ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, o2) }
             ?: throw RuntimeException("decode failed")
