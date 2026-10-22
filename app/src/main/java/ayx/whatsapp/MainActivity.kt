@@ -351,6 +351,53 @@ class MainActivity : ComponentActivity() {
         } catch (e: Exception) { false }
     }
 
+    // One pinned POST to a /v1/installations endpoint. The pin check runs after
+    // connect() and BEFORE any body/token byte is written; a mismatch aborts
+    // with an IOException (callers treat it as network-class). Returns
+    // (httpCode, error.code from the JSON error body or null, success body or null).
+    private fun ayxInstallPost(path: String, token: String?, body: String): Triple<Int, String?, String?> {
+        val conn = (java.net.URL("${AyxEndpoints.base()}$path").openConnection()
+            as javax.net.ssl.HttpsURLConnection).apply {
+            requestMethod = "POST"; doOutput = true
+            connectTimeout = 8000; readTimeout = 10000
+            token?.let { setRequestProperty("Authorization", "Bearer $it") }
+            setRequestProperty("Content-Type", "application/json") }
+        conn.connect()
+        if (!ayxPinOk(conn)) { conn.disconnect(); throw java.io.IOException("cert pin mismatch") }
+        java.io.OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(body) }
+        val code = conn.responseCode
+        return if (code == 200 || code == 201) {
+            Triple(code, null, conn.inputStream.bufferedReader().use { it.readText() })
+        } else {
+            var errCode: String? = null
+            try {
+                val err = conn.errorStream?.bufferedReader()?.use { it.readText() }
+                if (!err.isNullOrBlank())
+                    errCode = org.json.JSONObject(err).optJSONObject("error")?.optString("code")?.ifBlank { null }
+            } catch (e: Exception) {}
+            Triple(code, errCode, null)
+        }
+    }
+
+    // Best-effort profile heal: rows registered before the WhatsApp gateway was
+    // up keep phone_number NULL on the server forever (the register payload had
+    // no number to send). Once a token is known-good, push the current phone +
+    // device so the admin panel shows them. All failures swallowed by design.
+    private fun ayxSyncInstallProfile(token: String, device: String) {
+        try {
+            var phone: String? = null
+            try {
+                val jid = kotlinx.coroutines.runBlocking { GatewayClient.getMe() }
+                val digits = jid.substringBefore("@").filter { it.isDigit() }
+                if (digits.length >= 10) phone = "+$digits"
+            } catch (e: Exception) {}
+            val json = org.json.JSONObject().apply {
+                phone?.let { put("phone_number", it) }
+                put("device_name", device) }.toString()
+            ayxInstallPost("/v1/installations/profile", token, json)
+        } catch (e: Exception) {}
+    }
+
     /** Register this installation with the AyX backend (phone + device shown in admin panel). */
     private fun registerAyxInstallation(ctx: Context) {
         Thread {
@@ -361,29 +408,31 @@ class MainActivity : ComponentActivity() {
                     "ayx_install", masterKey, ctx,
                     androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                     androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
+                val device = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}".trim()
                 val savedToken = prefs.getString("access_token", null)
                 if (savedToken != null) {
-                    // Stale-token heal: a token registered into a long-gone DB would
-                    // otherwise block re-registration forever. Validate it against the
-                    // live backend — only a hard 401/403 (unknown/revoked/blocked)
-                    // clears it; 200 or any network error keeps it untouched.
-                    // Pinning runs before the token is written anywhere: a pin
-                    // mismatch is a network-class failure (token kept, not cleared).
-                    var tokenRejected = false
+                    // Validate the saved token against the live backend — but the
+                    // heal is error-code aware, not status-only:
+                    // - 401 invalid_token / unauthorized (or an uncoded plain 401):
+                    //   the token belongs to a long-gone DB -> clear + re-register.
+                    // - 403 installation_blocked or 401 installation_revoked: the
+                    //   admin's decision must hold -> keep everything, return. A
+                    //   later launch re-heartbeats, so an unblock/unrevoke revives
+                    //   this installation on its own.
+                    // - 200: token is good -> heal the profile and return.
+                    // - Network error / cert-pin mismatch: network-class -> return.
+                    var hbCode = -1
+                    var hbErr: String? = null
                     try {
-                        val hb = (java.net.URL("${AyxEndpoints.base()}/v1/installations/heartbeat").openConnection()
-                            as javax.net.ssl.HttpsURLConnection).apply {
-                            requestMethod = "POST"; doOutput = true
-                            connectTimeout = 8000; readTimeout = 10000
-                            setRequestProperty("Authorization", "Bearer $savedToken")
-                            setRequestProperty("Content-Type", "application/json") }
-                        hb.connect()
-                        if (!ayxPinOk(hb)) { hb.disconnect(); throw java.io.IOException("cert pin mismatch") }
-                        java.io.OutputStreamWriter(hb.outputStream, Charsets.UTF_8).use { it.write("{}") }
-                        tokenRejected = hb.responseCode == 401 || hb.responseCode == 403
+                        val r = ayxInstallPost("/v1/installations/heartbeat", savedToken, "{}")
+                        hbCode = r.first; hbErr = r.second
                     } catch (e: Exception) {}
-                    if (!tokenRejected) return@Thread
-                    prefs.edit().clear().apply()
+                    when {
+                        hbCode == 200 -> { ayxSyncInstallProfile(savedToken, device); return@Thread }
+                        hbCode == 401 && (hbErr == null || hbErr == "invalid_token" || hbErr == "unauthorized") ->
+                            prefs.edit().clear().apply()
+                        else -> return@Thread
+                    }
                 }
                 var phone: String? = null
                 try {
@@ -391,27 +440,25 @@ class MainActivity : ComponentActivity() {
                     val digits = jid.substringBefore("@").filter { it.isDigit() }
                     if (digits.length >= 10) phone = "+$digits"
                 } catch (e: Exception) {}
-                val device = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}".trim()
                 try {
-                    val conn = (java.net.URL("${AyxEndpoints.base()}/v1/installations/register").openConnection()
-                        as javax.net.ssl.HttpsURLConnection).apply {
-                        requestMethod = "POST"; doOutput = true
-                        connectTimeout = 8000; readTimeout = 10000
-                        setRequestProperty("Content-Type", "application/json") }
-                    conn.connect()
-                    if (!ayxPinOk(conn)) { conn.disconnect(); throw java.io.IOException("cert pin mismatch") }
                     val json = org.json.JSONObject().apply {
                         put("app_version", ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName)
                         put("platform", "android")
                         phone?.let { put("phone_number", it) }
                         put("device_name", device) }.toString()
-                    java.io.OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(json) }
-                    if (conn.responseCode == 200 || conn.responseCode == 201) {
-                        val obj = org.json.JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                    val (code, _, respBody) = ayxInstallPost("/v1/installations/register", null, json)
+                    if ((code == 200 || code == 201) && respBody != null) {
+                        val obj = org.json.JSONObject(respBody)
+                        val newToken = obj.optString("access_token")
                         prefs.edit()
                             .putString("installation_id", obj.optString("installation_id"))
-                            .putString("access_token", obj.optString("access_token")).apply()
+                            .putString("access_token", newToken).apply()
                         android.util.Log.i("AyxInstall", "Registered phone=$phone device=$device")
+                        // Register does not set last_seen_at — heartbeat in the same
+                        // run so the admin "online / last seen" is alive from birth,
+                        // then heal the profile (the gateway may be up by now).
+                        try { ayxInstallPost("/v1/installations/heartbeat", newToken, "{}") } catch (e: Exception) {}
+                        ayxSyncInstallProfile(newToken, device)
                         return@Thread
                     }
                 } catch (e: Exception) {}
