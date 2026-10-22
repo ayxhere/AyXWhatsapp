@@ -45,14 +45,27 @@ object MediaTools {
         // FIRST photo's NATIVE resolution (even-rounded for the
         // encoder) instead of the old fixed 720-wide frame, which
         // threw away ~2.8x of a 1080x2400 photo's pixels before a
-        // single lyric was drawn. If the encoder refuses the native
-        // size (level / memory limits), fall back ONCE to the legacy
-        // 720-wide canvas so the post never fails on resolution alone.
+        // single lyric was drawn. A screenshot IS device-screen
+        // sized, so native canvas == device screen size for it —
+        // permanently the source's own size, never a hardcoded
+        // canvas and never a clamp that changes it.
+        // Failure ladder (a post must not die on encoder quirks,
+        // but size/quality is surrendered only one rung at a time):
+        //  1) native size, explicit Baseline profile + size level
+        //  2) native size, profile/level left to the encoder — the
+        //     usual refusal is a vendor encoder rejecting the
+        //     PINNED profile/level combo, not the dimensions; the
+        //     encoder's own choice (often High profile) is pure
+        //     signalling, not a quality loss
+        //  3) the legacy 720-wide canvas — last-resort net only,
+        //     reached only if the device refuses the native size
+        //     outright (level / memory limits)
         val nat = photoNativeDims(ctx, uris)
-        if (encodePhotos(ctx, uris, out, durationMs, lyrics, lyricY, lyricScale, animStyle, font, lyricStartMs, nat.first, nat.second, onProgress)) return true
+        if (encodePhotos(ctx, uris, out, durationMs, lyrics, lyricY, lyricScale, animStyle, font, lyricStartMs, nat.first, nat.second, true, onProgress)) return true
+        if (encodePhotos(ctx, uris, out, durationMs, lyrics, lyricY, lyricScale, animStyle, font, lyricStartMs, nat.first, nat.second, false, onProgress)) return true
         val leg = legacyCanvasDims(ctx, uris)
         if (leg.first == nat.first && leg.second == nat.second) return false
-        return encodePhotos(ctx, uris, out, durationMs, lyrics, lyricY, lyricScale, animStyle, font, lyricStartMs, leg.first, leg.second, onProgress)
+        return encodePhotos(ctx, uris, out, durationMs, lyrics, lyricY, lyricScale, animStyle, font, lyricStartMs, leg.first, leg.second, true, onProgress)
     }
 
     /** The first photo's own pixel size, even-rounded for the encoder; 720x1280 when unreadable. */
@@ -71,7 +84,7 @@ object MediaTools {
         return 720 to (raw / 2 * 2).coerceIn(720, 1600)
     }
 
-    private fun encodePhotos(ctx: Context, uris: List<Uri>, out: File, durationMs: Long, lyrics: List<Pair<Long, String>>, lyricY: Float, lyricScale: Float, animStyle: Int, font: android.graphics.Typeface?, lyricStartMs: Long, W: Int, H: Int, onProgress: (Float) -> Unit): Boolean {
+    private fun encodePhotos(ctx: Context, uris: List<Uri>, out: File, durationMs: Long, lyrics: List<Pair<Long, String>>, lyricY: Float, lyricScale: Float, animStyle: Int, font: android.graphics.Typeface?, lyricStartMs: Long, W: Int, H: Int, pinProfile: Boolean, onProgress: (Float) -> Unit): Boolean {
         // Lyric size, WYSIWYG: the fraction of frame WIDTH the editor's
         // base text occupies on this device (see LyricsStyleStore) —
         // the bake takes the same fraction of the canvas width, so the
@@ -100,7 +113,10 @@ object MediaTools {
                 setInteger(MediaFormat.KEY_BIT_RATE, BITRATE)
                 setInteger(MediaFormat.KEY_FRAME_RATE, FPS)
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
-                try {
+                // pinProfile=false (ladder rung 2): leave profile +
+                // level unset so the device encoder picks its own —
+                // same W/H/bitrate, only the signalling differs.
+                if (pinProfile) try {
                     setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline)
                     // Level by frame size: up to 720x1280 Level 3.1
                     // (exactly its frame-size ceiling, as before); up

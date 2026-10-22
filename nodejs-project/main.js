@@ -35,6 +35,45 @@ const AIMEM_FILE = path.join(path.dirname(AUTH_DIR), 'aimemory.json')
 
 const logger = pino({ level: 'warn' })
 
+// v139: Baileys DESTROYS the real reason a media upload fails. Inside
+// getWAUploadToServer, every per-host failure is caught and only
+// logged — logger.warn({ trace, uploadResult }, 'Error in uploading
+// to <host>') — and the caller gets a generic Boom('Media upload
+// failed on all hosts'). The warn goes to this process's stdout as
+// pino JSON; nothing ever reached the gateway log, the /status/post
+// diag, or the app's error banner, so a failed status send was
+// undiagnosable. Capture those warns in a small ring buffer so the
+// routes can surface the LAST real per-host reason (the server's own
+// error body, or the network error's first line). Passive only: the
+// original pino call always runs unchanged.
+const _uploadFailures = []
+function _noteUploadFailure(o, msg) {
+  try {
+    let reason = ''
+    if (o && typeof o === 'object') {
+      if (o.uploadResult !== undefined && o.uploadResult !== null) reason = JSON.stringify(o.uploadResult) || ''
+      else if (o.trace) reason = String(o.trace).split('\n')[0].replace(/^Error:\s*/, '')
+      else if (o.err) reason = String((o.err && o.err.message) || o.err)
+    }
+    _uploadFailures.push({ ts: Date.now(), msg: String(msg || '').slice(0, 140), reason: String(reason).slice(0, 220) })
+    if (_uploadFailures.length > 8) _uploadFailures.shift()
+  } catch (_) {}
+}
+function lastUploadFailure(maxAgeMs = 180000) {
+  const now = Date.now()
+  for (let i = _uploadFailures.length - 1; i >= 0; i--) {
+    if (now - _uploadFailures[i].ts <= maxAgeMs) return _uploadFailures[i]
+  }
+  return null
+}
+for (const _lvl of ['warn', 'error']) {
+  const _orig = logger[_lvl].bind(logger)
+  logger[_lvl] = (...a) => {
+    try { if (typeof a[1] === 'string' && /upload/i.test(a[1])) _noteUploadFailure(a[0], a[1]) } catch (_) {}
+    return _orig(...a)
+  }
+}
+
 let sock = null
 let state = null
 let saveCreds = null
@@ -2376,8 +2415,12 @@ app.post('/sendmedia', async (req, res) => {
         mediaUploads.set(uploadId, { state: 'done', jid, type, id })
         log('sendmedia done', uploadId, 'id=' + id)
       } catch (e) {
-        log('sendmedia bg error', uploadId, e?.message)
-        mediaUploads.set(uploadId, { state: 'error', jid, type, error: e?.message || 'send failed' })
+        // v139: same capture as /status/post — if this was a media
+        // upload failure, carry Baileys' swallowed per-host reason.
+        const f = /upload/i.test(String(e?.message || '')) ? lastUploadFailure() : null
+        const reason = f ? ' [' + (f.reason || f.msg).slice(0, 160) + ']' : ''
+        log('sendmedia bg error', uploadId, e?.message, reason)
+        mediaUploads.set(uploadId, { state: 'error', jid, type, error: (e?.message || 'send failed') + reason })
       }
     })()
     res.json({ ok: true, accepted: true, uploadId })
@@ -2618,6 +2661,41 @@ async function waitForOpen(ms = 15000) {
   return status.connection === 'open'
 }
 
+// v139: send a media status with ONE fresh-mediaConn retry.
+//
+// Why this exists (all provable in the bundled Baileys 7.0.0-rc14
+// source, Utils/messages-media.js + Socket/messages-send.js):
+// getWAUploadToServer starts from refreshMediaConn(false), which
+// returns the CACHED media conn for its whole TTL without asking the
+// server, and snapshots the upload HOST LIST once from that cache.
+// When WhatsApp has rotated the media hosts (or the phone changed
+// networks since the conn was fetched), every POST in the loop goes
+// to a dead hostname while the chat websocket stays perfectly open
+// — the send dies as "Media upload failed on all hosts" with
+// conn=open. The loop DOES call refreshMediaConn(true) after the
+// first host fails, but that only replaces the auth/hosts on its
+// internal state — the loop keeps iterating the STALE snapshot's
+// hostnames, so the current attempt can never heal itself. (The
+// NEXT send would re-snapshot and usually succeed.) Cure at our
+// level: on that exact error, force a fresh media conn via the
+// socket's public refreshMediaConn(true) and retry the whole send
+// once, so the retry snapshots the NEW hosts. An upload-stage
+// failure means no message stanza was ever sent, so the retry
+// cannot duplicate the status. Also passes an explicit per-host
+// upload timeout — nothing in this gateway set one before, so a
+// hung host attempt had no HTTP-layer bound at all.
+async function sendStatusWithUploadRetry(content, opts, onRetry) {
+  const fullOpts = { mediaUploadTimeoutMs: 120000, ...(opts || {}) }
+  try {
+    return await sock.sendMessage('status@broadcast', content, fullOpts)
+  } catch (e1) {
+    if (!/media upload failed/i.test(String((e1 && e1.message) || ''))) throw e1
+    try { if (onRetry) onRetry() } catch (_) {}
+    try { await sock.refreshMediaConn(true) } catch (_) {}
+    return await sock.sendMessage('status@broadcast', content, fullOpts)
+  }
+}
+
 // B+: background zombie check — every 30s, run the same probe WITHOUT
 // blocking any request; a dead socket just kicks a reconnect.
 // Guards: unref'd so it never keeps the process alive on its own; skips
@@ -2675,7 +2753,7 @@ app.post('/status/post', async (req, res) => {
     try { const meJid = sock?.user?.id?.split(':')[0] + '@s.whatsapp.net'; if (meJid && !jids.includes(meJid)) jids.push(meJid) } catch (_) {}
     diag.push('recipients=' + jids.length)
     if (jids.length === 0) { diag.push('WARN:no-recipients'); }
-    const r = await sock.sendMessage('status@broadcast', content, { statusJidList: jids, broadcast: true, backgroundColor: '#000000', font: 3 })
+    const r = await sendStatusWithUploadRetry(content, { statusJidList: jids, broadcast: true, backgroundColor: '#000000', font: 3 }, () => diag.push('upload-retry=fresh-mediaconn'))
     const id = (r && r.key && r.key.id) || null
     diag.push('id=' + id)
     // B3: keep the raw message so "Forward status to anyone" works for my own media statuses
@@ -2695,6 +2773,13 @@ app.post('/status/post', async (req, res) => {
     log('status post ' + diag.join(' '))
     res.json({ ok: !!id, id, recipients: jids.length, diag: diag.join(' ') })
   } catch (e) {
+    // v139: if Baileys' upload loop died, attach the REAL per-host
+    // reason it swallowed (captured from its warns) — the app's
+    // banner shows error + diag, so the user finally sees WHY.
+    const f = lastUploadFailure()
+    if (f && /upload/i.test(String((e && e.message) || '')) && !diag.some(d => d.indexOf('uploadfail=') === 0)) {
+      diag.push('uploadfail=' + (f.reason || f.msg).slice(0, 220))
+    }
     log('status post ERR ' + (e && e.message) + ' | ' + diag.join(' '))
     res.status(500).json({ ok: false, error: (e && e.message) || 'send failed', diag: diag.join(' ') })
   }
@@ -3231,7 +3316,7 @@ app.post('/status/voice', async (req, res) => {
     else jids = Array.from(new Set([...all, ...selJids]))
     try { const meJid = sock?.user?.id?.split(':')[0] + '@s.whatsapp.net'; if (meJid && !jids.includes(meJid)) jids.push(meJid) } catch (_) {}
     const content = { audio: v.buf, mimetype: v.mime, ptt: v.ptt !== false, seconds: estSeconds(text) }
-    const r = await sock.sendMessage('status@broadcast', content, { statusJidList: jids, broadcast: true })
+    const r = await sendStatusWithUploadRetry(content, { statusJidList: jids, broadcast: true })
     const id = (r && r.key && r.key.id) || null
     // B3: keep raw so voice statuses can be forwarded too.
     if (id) storeRawSent(id, r.key, r.message)   // A+: unified 2000 cap + disk backup
