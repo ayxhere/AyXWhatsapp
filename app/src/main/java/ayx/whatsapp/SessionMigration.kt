@@ -3,6 +3,7 @@ package ayx.whatsapp
 import android.content.ContentUris
 import android.content.Context
 import android.net.Uri
+import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
@@ -52,15 +53,23 @@ object SessionMigration {
     }
 
     private fun runOnce(ctx: Context): String {
-        val uri = findUri(ctx) ?: return "no-backup"
         val authDir = File(ctx.noBackupFilesDir, "auth")
-        if (hasPrivateSession(authDir)) {
-            deleteExisting(ctx)
-            Log.i(TAG, "private session present - legacy public backup deleted")
+        val uri = findUri(ctx)
+        // v149: a private creds.json that merely EXISTS ends the discussion.
+        // It is never inspected for a "registered" field — modern Baileys
+        // leaves creds.registered=false on fully paired logins, so v148 read
+        // a live session as "absent", imported the stale public snapshot
+        // OVER it, and broke the very login it meant to protect. Existing
+        // private creds are never overwritten by an import, full stop.
+        if (privateCredsPresent(authDir)) {
+            if (uri != null) deletePublicCopies(ctx)
+            setNoImport(ctx)
+            Log.i(TAG, "private creds present - import barred; public copy purged")
             return "purged-duplicate"
         }
+        if (uri == null) return "no-backup"
         if (noImport(ctx)) {
-            deleteExisting(ctx)
+            deletePublicCopies(ctx)
             Log.i(TAG, "import disabled after logout - legacy public backup deleted")
             return "purged-noimport"
         }
@@ -98,7 +107,7 @@ object SessionMigration {
             Log.w(TAG, "import incomplete - public backup left untouched")
             return "left-as-is"
         }
-        deleteExisting(ctx)
+        deletePublicCopies(ctx)
         setNoImport(ctx) // one-way door: this device never imports again
         Log.i(TAG, "legacy session imported into private auth dir; public backup deleted")
         return "imported"
@@ -113,20 +122,21 @@ object SessionMigration {
     suspend fun purgePublic(ctx: Context) = withContext(Dispatchers.IO) {
         runCatching {
             setNoImport(ctx.applicationContext)
-            deleteExisting(ctx.applicationContext)
+            deletePublicCopies(ctx.applicationContext)
         }
         Unit
     }
 
-    /** A private session counts only when creds.json exists AND is a registered login. */
-    private fun hasPrivateSession(authDir: File): Boolean {
+    /**
+     * v149: presence is ALL that matters — a private creds.json that exists
+     * and is non-empty bars any import, whatever its fields say. (v148 parsed
+     * the JSON and demanded registered==true; real paired creds carry
+     * registered==false with `me` present, so that gate never fired and the
+     * import rolled live auth state back to the stale public snapshot.)
+     */
+    private fun privateCredsPresent(authDir: File): Boolean {
         val creds = File(authDir, "creds.json")
-        if (!creds.isFile || creds.length() == 0L) return false
-        // Unparseable/legacy creds are treated as present (purge the public
-        // duplicate); a present-but-unregistered file (half-finished pairing)
-        // does NOT block the import of a real backed-up login.
-        return runCatching { JSONObject(creds.readText()).optBoolean("registered", true) }
-            .getOrDefault(true)
+        return creds.isFile && creds.length() > 0L
     }
 
     private fun noImport(ctx: Context): Boolean =
@@ -156,7 +166,23 @@ object SessionMigration {
         return null
     }
 
-    private fun deleteExisting(ctx: Context) {
+    /**
+     * Best-effort delete of the legacy public backup via EVERY mechanism:
+     * the MediaStore row AND the direct file path. v148 used MediaStore only
+     * and swallowed the outcome — where that delete throws (e.g. the row is
+     * owned by an older install identity) the file silently stayed behind.
+     * Never throws; callers set the no-import flag regardless of the result,
+     * so a surviving copy can never be used again either way.
+     */
+    private fun deletePublicCopies(ctx: Context) {
         runCatching { findUri(ctx)?.let { ctx.contentResolver.delete(it, null, null) } }
+            .onFailure { Log.w(TAG, "mediastore delete failed: ${it.message}") }
+        runCatching {
+            val dl = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val f = File(dl, "WhatsAyX/session/$FILE")
+            if (f.exists() && !f.delete()) Log.w(TAG, "file delete returned false: ${f.path}")
+            // tidy: drop the session folder itself when it is now empty
+            f.parentFile?.takeIf { it.list()?.isEmpty() == true }?.delete()
+        }.onFailure { Log.w(TAG, "file delete failed: ${it.message}") }
     }
 }

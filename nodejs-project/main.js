@@ -85,6 +85,13 @@ let presenceTimer = null
 
 let status = { connection: 'close', registered: false, me: null, lastError: null, needRelogin: false }
 
+// v149: the paired identity in modern Baileys is creds.me — creds.registered
+// stays false even for a fully paired, working login (proven against a real
+// creds.json: registered:false with me/account present). NEVER use
+// creds.registered as the paired signal: that single misread made the
+// gateway report every real user as unlinked (v148 Link-screen lockup).
+const isPaired = () => { try { return !!(state && state.creds && state.creds.me && state.creds.me.id) } catch (_) { return false } }
+
 let settings = {
   alwaysOnline: false,
   autoRead: false,
@@ -577,8 +584,9 @@ async function loadAuth() {
   const auth = await useMultiFileAuthState(AUTH_DIR)
   state = auth.state
   saveCreds = auth.saveCreds
-  status.registered = !!state.creds.registered
-  log('auth loaded from', AUTH_DIR, 'registered=', status.registered)
+  status.registered = isPaired()
+  if (status.registered) status.me = state.creds.me.id
+  log('auth loaded from', AUTH_DIR, 'paired=', status.registered, 'me=', status.me)
 }
 
 // last-resort: dig through nested message objects for any readable text field
@@ -1555,7 +1563,7 @@ function handleConnUpdate(u) {
   if (connection === 'close') {
     const code = lastDisconnect?.error?.output?.statusCode
     status.lastError = code || (lastDisconnect?.error?.message ?? 'closed')
-    const alreadyLinked = !!state?.creds?.registered
+    const alreadyLinked = isPaired()
     log('closed. code=', code, 'alreadyLinked=', alreadyLinked)
 
     if (code === DisconnectReason.loggedOut) {
@@ -2209,7 +2217,7 @@ app.get('/qr.png', async (req, res) => {
 app.post('/pair', async (req, res) => {
   try {
     const number = String(req.body?.number || '').replace(/\D/g, '')
-    if (state?.creds?.registered) return res.json({ registered: true })
+    if (isPaired()) return res.json({ registered: true })
     if (!number) return res.status(400).json({ error: 'number required' })
     if (pairingCode && pairingNumber === number && sock) return res.json({ code: pairingCode })
     try { await sock?.ws?.close() } catch (_) {}

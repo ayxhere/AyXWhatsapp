@@ -1124,6 +1124,10 @@ fun GatewayApp() {
 
     var status by remember { mutableStateOf(GatewayClient.Status()) }
     var qr by remember { mutableStateOf<ImageBitmap?>(null) }
+    // v149: a paired session exists in the private auth dir (creds.me).
+    // While true, an unregistered gateway status means "still restoring",
+    // never "show the QR screen".
+    var localPaired by remember { mutableStateOf(false) }
     var lastQrHash by remember { mutableStateOf(0) }
     var settings by remember { mutableStateOf(GatewayClient.Settings()) }
     var messages by remember { mutableStateOf(listOf<GatewayClient.Msg>()) }
@@ -1211,7 +1215,10 @@ fun GatewayApp() {
     val homeChatListState = remember { LazyListState() }
     var storyView by remember { mutableStateOf<String?>(null) }
     var myJid by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(status.registered) { if (status.registered) { val j = GatewayClient.getMe(); if (j.isNotBlank()) myJid = j } }
+    // v149: the gateway now reports registered from creds.me at auth load —
+    // possibly BEFORE the socket is open and /me can answer — so fetch myJid
+    // when the connection actually opens, not on the registered flip alone.
+    LaunchedEffect(status.registered, status.connection) { if (status.registered && status.connection == "open" && myJid == null) { val j = GatewayClient.getMe(); if (j.isNotBlank()) myJid = j } }
     var pendingLockOpen by remember { mutableStateOf<String?>(null) }
     val unlockLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == android.app.Activity.RESULT_OK) pendingLockOpen?.let { openChat = it }
@@ -1425,16 +1432,24 @@ fun GatewayApp() {
             } else toldRelogin = false
             if (!status.registered) {
                 settingsLoaded = false; openChat = null
+                // v149: is a paired session saved in the private auth dir?
+                // (creds.me present — the only trustworthy pairing signal;
+                // creds.registered stays false on real paired logins.) While
+                // one is saved, the gateway is merely booting/restoring: the
+                // UI shows the restoring state and we never chase a QR —
+                // Baileys holding creds.me emits none, so the old code spun
+                // on "Generating QR…" forever for exactly these users.
+                localPaired = withContext(Dispatchers.IO) { localPairedSession(ctx) }
                 // v148: no session restore from public storage — the login
                 // lives only in the private auth dir (see SessionMigration,
                 // which runs once inside NodeRuntime before node boots).
-                if (!status.registered) {
+                if (status.needRelogin || !localPaired) {
                     val b = GatewayClient.qrBytes()
                     if (b != null) {
                         val h = b.contentHashCode()
                         if (h != lastQrHash) BitmapFactory.decodeByteArray(b, 0, b.size)?.let { qr = it.asImageBitmap(); lastQrHash = h }
                     }
-                }
+                } else qr = null
             } else {
                 qr = null; lastQrHash = 0
                 if (!settingsLoaded) {
@@ -1810,6 +1825,7 @@ fun GatewayApp() {
         }
     }
     val title = when {
+        !status.registered && localPaired && !status.needRelogin -> "Connecting…"
         !status.registered -> "Link device"
         openChat != null -> chatName ?: "Chat"
         screen == "settings" -> if (settingsPage == "home") "Settings" else settingsTitle(settingsPage)
@@ -2189,6 +2205,13 @@ fun GatewayApp() {
             AyxAnimatedScreen(screenKey = "$screen|$settingsPage") {
             when {
                 // AyX Group system channel — independent of WhatsApp link state.
+                // v149: a paired session is saved on this device and the
+                // gateway has not finished restoring it (and has NOT declared
+                // it dead via needRelogin) — restoring state, never the QR
+                // screen: no QR exists for this user, so LinkScreen could
+                // only spin on "Generating QR…" (the v148 lockup).
+                !status.registered && localPaired && !status.needRelogin -> Box(Modifier.padding(pad)) { RestoringScreen(
+                    onReset = { scope.launch { GatewayClient.logout(); SessionMigration.purgePublic(ctx); notify("reset") } }) }
                 !status.registered -> Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode,
                     onPair = { n -> scope.launch { try { notify("code: " + GatewayClient.pair(n)) } catch (e: Exception) { notify("pair error: ${e.message}") } } },
                     onReset = { scope.launch { GatewayClient.logout(); SessionMigration.purgePublic(ctx); notify("reset") } }) }
@@ -6288,6 +6311,43 @@ private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.weight(1f))
         Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+/**
+ * v149: does the private auth dir hold a PAIRED session? The only honest
+ * signal is creds.me (modern Baileys leaves creds.registered=false even on
+ * fully paired logins — trusting that field was the v148 lockup). Blocking
+ * file IO — call from Dispatchers.IO. Never throws.
+ */
+private fun localPairedSession(ctx: Context): Boolean = runCatching {
+    val creds = File(ctx.noBackupFilesDir, "auth/creds.json")
+    if (!creds.isFile || creds.length() == 0L) return false
+    val me = JSONObject(creds.readText()).optJSONObject("me")
+    !me?.optString("id").isNullOrBlank()
+}.getOrDefault(false)
+
+/**
+ * v149: shown while a paired session exists locally but the gateway has
+ * not finished restoring it. Deliberately has NO QR card and NO pairing
+ * UI — for this user no QR exists. The escape hatch (full logout/reset)
+ * covers a session the server has silently killed without the gateway
+ * raising needRelogin.
+ */
+@Composable
+private fun RestoringScreen(onReset: () -> Unit) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Spacer(Modifier.height(44.dp))
+        Text(APP_NAME, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Text("Restoring your session…", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(36.dp))
+        CircularProgressIndicator(color = AYX_GREEN, strokeWidth = 3.dp)
+        Spacer(Modifier.height(20.dp))
+        Text("Your WhatsApp login is saved on this device — no QR needed.\nConnecting to WhatsApp…", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+        Spacer(Modifier.height(30.dp))
+        TextButton(onClick = onReset) { Text("Taking too long? Log out and link again") }
+        Spacer(Modifier.height(30.dp))
     }
 }
 
