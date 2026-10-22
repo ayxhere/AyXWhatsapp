@@ -437,7 +437,14 @@ object GatewayClient {
             val arr = org.json.JSONArray(); jids.forEach { arr.put(it) }
             val body = JSONObject().put("type", type).put("data", dataB64).put("caption", caption).put("audience", audience).put("jids", arr).toString()
             val c = (URL("$base/status/post").openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"; doOutput = true; connectTimeout = 4000; readTimeout = 180000
+                requestMethod = "POST"; doOutput = true; connectTimeout = 4000
+                // 7 min, NOT the old 3: the gateway's worst case is a
+                // reconnect wait (~15s) + TWO upload attempts at a
+                // 120s per-host media timeout (v139 fresh-conn retry).
+                // A 180s client timeout cut off sends the gateway went
+                // on to complete — the user was told "failed" for a
+                // status that then posted (or never learned it had).
+                readTimeout = 420000
                 setRequestProperty("Content-Type", "application/json")
             }
             c.outputStream.use { it.write(body.toByteArray()) }

@@ -31,6 +31,7 @@ const MESSAGES_FILE = path.join(path.dirname(AUTH_DIR), 'messages.json')
 const NAMES_FILE = path.join(path.dirname(AUTH_DIR), 'names.json')
 const STATUS_FILE = path.join(path.dirname(AUTH_DIR), 'statuses.json')
 const STATUS_DELETED_FILE = path.join(path.dirname(AUTH_DIR), 'status-deleted.json')
+const STATUS_VIEWERS_FILE = path.join(path.dirname(AUTH_DIR), 'status-viewers.json')
 const AIMEM_FILE = path.join(path.dirname(AUTH_DIR), 'aimemory.json')
 
 const logger = pino({ level: 'warn' })
@@ -246,7 +247,47 @@ const chatHistory = new Map()  // jid -> [{ role:'user'|'assistant', content }] 
 const dpCache = new Map()      // jid -> profile picture url (or null)
 const contacts = new Map()     // jid -> { name, notify }
 const presences = new Map()
-const statusViewers = {}  // statusId -> { viewerJid: lastViewMs }    // jid -> { presence, lastSeen }
+let statusViewers = {}  // statusId -> { viewerJid: lastViewMs }    // jid -> { presence, lastSeen }
+// v146: statusViewers is PERSISTED (status-viewers.json) like every
+// other dataset here. It used to live in RAM only — the one dataset
+// that did — so every gateway restart (service lifecycle, reconnect,
+// app update) silently wiped every recorded status view, and WhatsApp
+// never re-delivers status receipts to a companion that missed them.
+// The app then showed "No views yet" for statuses the primary phone
+// correctly showed as viewed. Load at boot, 24h prune like statuses.
+try {
+  const loadedV = JSON.parse(fs.readFileSync(STATUS_VIEWERS_FILE, 'utf8'))
+  const cutoffV = Date.now() - 24 * 3600 * 1000
+  if (loadedV && typeof loadedV === 'object') {
+    for (const [sid, vmap] of Object.entries(loadedV)) {
+      if (!vmap || typeof vmap !== 'object') continue
+      const kept = {}
+      for (const [vj, vt] of Object.entries(vmap)) if (Number(vt) > cutoffV) kept[vj] = Number(vt)
+      if (Object.keys(kept).length) statusViewers[sid] = kept
+    }
+  }
+} catch (_) { statusViewers = {} }
+let _statusViewersTimer = null
+function saveStatusViewersDebounced() {
+  if (_statusViewersTimer) return
+  _statusViewersTimer = setTimeout(() => {
+    _statusViewersTimer = null
+    try {
+      const cutoffV = Date.now() - 24 * 3600 * 1000
+      const out = {}
+      for (const [sid, vmap] of Object.entries(statusViewers)) {
+        const kept = {}
+        for (const [vj, vt] of Object.entries(vmap || {})) if (Number(vt) > cutoffV) kept[vj] = Number(vt)
+        if (Object.keys(kept).length) out[sid] = kept
+      }
+      // keep the newest 200 status ids only (statuses themselves cap at 120)
+      const ids = Object.keys(out).sort((a, b) => Math.max(...Object.values(out[b])) - Math.max(...Object.values(out[a]))).slice(0, 200)
+      const trimmed = {}
+      for (const sid of ids) trimmed[sid] = out[sid]
+      fs.writeFileSync(STATUS_VIEWERS_FILE, JSON.stringify(trimmed))
+    } catch (_) {}
+  }, 1500)
+}
 let statuses = []              // status@broadcast items (newest first)
 try {
   const loaded = JSON.parse(fs.readFileSync(STATUS_FILE, 'utf8'))
@@ -2120,7 +2161,7 @@ async function startSocket() {
             if (t) {
               if (!statusViewers[id]) statusViewers[id] = {}
               const b = baseJid(viewer)
-              if (!(statusViewers[id][b] >= t)) statusViewers[id][b] = t
+              if (!(statusViewers[id][b] >= t)) { statusViewers[id][b] = t; saveStatusViewersDebounced() }
             }
           }
         } else if (k.fromMe && k.id) {
@@ -2975,7 +3016,7 @@ app.post('/cleardata', async (req, res) => {
     groupSubjects = {}
     for (const k of Object.keys(statusViewers)) delete statusViewers[k]
     wipeDirContents(MEDIA_DIR)
-    for (const F of [MESSAGES_FILE, STATUS_FILE, NAMES_FILE, SETTINGS_FILE, GROUP_SUBJECTS_FILE, CHATS_FILE, RAWSTORE_FILE]) { try { fs.rmSync(F, { force: true }) } catch (_) {} }
+    for (const F of [MESSAGES_FILE, STATUS_FILE, NAMES_FILE, SETTINGS_FILE, GROUP_SUBJECTS_FILE, CHATS_FILE, RAWSTORE_FILE, STATUS_VIEWERS_FILE, STATUS_DELETED_FILE]) { try { fs.rmSync(F, { force: true }) } catch (_) {} }
     wipeDirContents(AUTH_DIR)
     status.registered = false
     res.json({ ok: true })

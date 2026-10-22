@@ -102,7 +102,23 @@ object StatusData {
         // keep existing first, then overlay fresh (fresh wins)
         for (s in load()) if (s.ts >= cutoff) map[keyOf(s)] = s
         // SD1: a tombstoned id must not re-enter via the fresh list either (stale gateway copy).
-        for (s in fresh) if (s.ts >= cutoff && !isDeleted(s.id)) map[keyOf(s)] = s
+        for (s in fresh) if (s.ts >= cutoff && !isDeleted(s.id)) {
+            // v146: a gateway tombstone (deleted on WhatsApp) arrives with
+            // NO media fields — but the media itself was downloaded to
+            // this device when the status arrived and the file survives
+            // the revoke. Preserve the cached copy's media linkage (and
+            // caption/bg) onto the tombstone so the viewer keeps playing
+            // the local copy under its "Status Deleted" label instead of
+            // losing the media the moment the sender deletes.
+            val prev = map[keyOf(s)]
+            map[keyOf(s)] = if (s.deleted && prev != null) s.copy(
+                mediaName = s.mediaName ?: prev.mediaName,
+                mediaType = s.mediaType ?: prev.mediaType,
+                thumb = s.thumb ?: prev.thumb,
+                text = s.text.ifBlank { prev.text },
+                bg = s.bg ?: prev.bg,
+            ) else s
+        }
         val merged = map.values.sortedByDescending { it.ts }.take(150)
         save(merged)
         // keep the seen-set bounded: drop ids that are no longer present (expired statuses)

@@ -267,6 +267,8 @@ import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.animation.animateContentSize
@@ -1437,6 +1439,11 @@ fun GatewayApp() {
                         }
                     } else {
                         notify("Creating status video…")
+                        // v146: every bake step used to collapse into one
+                        // vague "video processing failed" toast — the user
+                        // could never tell WHAT failed. Track the stage so
+                        // the failure toast names it.
+                        var bakeFail = "❌ Video processing failed"
                         val finalMp4 = withContext(Dispatchers.IO) {
                             val dir = ctx.cacheDir
                             val stamp = System.currentTimeMillis()
@@ -1476,17 +1483,17 @@ fun GatewayApp() {
                                     true
                                 } else runCatching { ctx.contentResolver.openInputStream(u)?.use { inp -> FileOutputStream(vFile).use { inp.copyTo(it) } }; true }.getOrDefault(false)
                             } else runCatching { ctx.contentResolver.openInputStream(u)?.use { inp -> FileOutputStream(vFile).use { inp.copyTo(it) } }; true }.getOrDefault(false)
-                            if (!vOk) return@withContext null
+                            if (!vOk) { bakeFail = "❌ Video bake failed (photo/video encode)"; return@withContext null }
                             notify("Preparing audio…")
                             // song audio; if it fails, fall back to a silent AAC track so the MP4 always has audio (WhatsApp needs it)
                             val haveSong = song != null && MediaTools.downloadAndTrimAudio(song.url, aFile, tStart, tEnd) && aFile.length() > 0
                             val audioSrc = if (haveSong) aFile else File(dir, "sil_$stamp.m4a").also { MediaTools.makeSilentAac(durMs, it) }
                             notify("Finalizing video…")
                             val muxTmp = File(dir, "mux_$stamp.mp4")
-                            if (!MediaTools.muxVideoAudio(vFile, audioSrc, muxTmp)) return@withContext null
+                            if (!MediaTools.muxVideoAudio(vFile, audioSrc, muxTmp)) { bakeFail = "❌ Audio mix failed (mux)"; return@withContext null }
                             // move moov atom to front (faststart) so WhatsApp can play it; fall back to raw mux if it fails
                             if (!MediaTools.faststart(muxTmp, outFile)) runCatching { muxTmp.copyTo(outFile, overwrite = true) }
-                            if (!MediaTools.isValidMp4(outFile)) return@withContext null
+                            if (!MediaTools.isValidMp4(outFile)) { bakeFail = "❌ Baked video came out invalid"; return@withContext null }
                             runCatching { vFile.delete(); aFile.delete(); muxTmp.delete(); File(dir, "sil_$stamp.m4a").delete() }
                             outFile
                         }
@@ -1497,7 +1504,7 @@ fun GatewayApp() {
                             notify((if (res.first) "✅ " else "❌ ") + res.second)
                             runCatching { finalMp4.delete() }
                             if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) }
-                        } else notify("video processing failed")
+                        } else notify(bakeFail)
                     }
                 } catch (e: Exception) { notify("failed: " + e.message) }
                 finally { statusUploading = false }
@@ -3601,7 +3608,7 @@ private fun ChatGlassHeader(
 }
 
 @Composable
-private fun AudioPlayer(url: String, tint: Color) {
+private fun AudioPlayer(url: String, tint: Color, holdPause: Boolean = false) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     var playing by remember(url) { mutableStateOf(false) }
     var progress by remember(url) { mutableStateOf(0f) }
@@ -3609,6 +3616,22 @@ private fun AudioPlayer(url: String, tint: Color) {
     var wantPlay by remember(url) { mutableStateOf(false) }   // tapped before prepare finished → auto-start
     var retried by remember(url) { mutableStateOf(false) }
     val player = remember(url) { MediaPlayer() }
+    // v146: never keep sounding in the background — this player had NO
+    // lifecycle pause at all (unlike every other player in the app), so
+    // an audio status kept playing after the user left the app.
+    PauseOnBackground(player) { playing = false }
+    // v146: the status viewer's hold-to-pause drives [holdPause] — pause
+    // while held, resume on release only if it was playing when the
+    // hold began.
+    var resumeAfterHold by remember(url) { mutableStateOf(false) }
+    LaunchedEffect(holdPause) {
+        if (holdPause) {
+            if (playing) { resumeAfterHold = true; runCatching { player.pause() }; playing = false }
+        } else if (resumeAfterHold) {
+            resumeAfterHold = false
+            if (ready) { runCatching { player.start() }; playing = true }
+        }
+    }
     DisposableEffect(url) {
         runCatching {
             player.setAudioAttributes(android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_MEDIA).build())
@@ -7927,12 +7950,16 @@ private fun Modifier.viewerGestures(zoom: ViewerZoom, doubleTap: Boolean): Modif
  * One status progress segment drawn as a SQUIGGLY (wavy) track, after
  * the music-player style the user picked: a faint sine wave for the
  * unwatched part, the same wave in bright white up to the progress
- * point, and a short vertical playhead bar standing at that point.
- * While the segment's media is still loading, a bright chunk of wave
- * sweeps across instead (the previous shimmer's timing). The wave's
- * phase is derived from [frac] itself, so it crawls subtly as playback
- * advances on the viewer's existing 40/80 ms progress updates — no
- * extra clock, and the only allocation is one reused [Path].
+ * point. While the segment is in its loading state, a bright chunk of
+ * wave sweeps across instead (the previous shimmer's timing).
+ * v146 polish (user: the styles "didn't look good"): the playhead tick
+ * at the progress point is GONE — the bright wave simply ends there —
+ * and the wave phase runs on a continuous frame-rate clock instead of
+ * being derived from [frac] (the frac-derived phase advanced in the
+ * viewer's 40/80 ms steps and visibly juddered). The fill edge is
+ * animated between progress updates for the same reason, the stroke
+ * is one consistent width for track and fill, and the sine is sampled
+ * twice as densely so the curve is smooth, not polygonal.
  */
 private fun SquigglyProgress(frac: Float, loading: Boolean, modifier: Modifier = Modifier) {
     var sweep = -1f
@@ -7944,6 +7971,12 @@ private fun SquigglyProgress(frac: Float, loading: Boolean, modifier: Modifier =
         )
         sweep = s
     }
+    val phase by rememberInfiniteTransition(label = "squigphase").animateFloat(
+        initialValue = 0f, targetValue = 6.28318f,
+        animationSpec = infiniteRepeatable(tween(2600, easing = LinearEasing), RepeatMode.Restart),
+        label = "squigphase"
+    )
+    val animFrac by animateFloatAsState(frac.coerceIn(0f, 1f), animationSpec = tween(140, easing = LinearEasing), label = "squigfrac")
     val wave = remember { Path() }
     Canvas(modifier) {
         val w = size.width
@@ -7951,13 +7984,12 @@ private fun SquigglyProgress(frac: Float, loading: Boolean, modifier: Modifier =
         val amp = size.height * 0.24f
         val waveLen = 13.dp.toPx().coerceAtLeast(1f)
         val trackW = 2.dp.toPx()
-        val phase = frac * 5.5f   // progress itself drags the wave: a subtle crawl with no extra clock
         fun buildWave(x0: Float, x1: Float) {
             wave.rewind()
             var x = x0
             wave.moveTo(x, midY + amp * kotlin.math.sin((x / waveLen) * 6.28318f + phase))
             while (x < x1) {
-                x = minOf(x + waveLen / 6f, x1)
+                x = minOf(x + waveLen / 12f, x1)
                 wave.lineTo(x, midY + amp * kotlin.math.sin((x / waveLen) * 6.28318f + phase))
             }
         }
@@ -7971,15 +8003,10 @@ private fun SquigglyProgress(frac: Float, loading: Boolean, modifier: Modifier =
                 buildWave(x0, x1)
                 drawPath(wave, Color.White, style = Stroke(width = trackW, cap = StrokeCap.Round))
             }
-        } else if (frac > 0f) {
-            val fx = (frac * w).coerceIn(0f, w)
+        } else if (animFrac > 0f) {
+            val fx = (animFrac * w).coerceIn(0f, w)
             buildWave(0f, fx)
-            drawPath(wave, Color.White, style = Stroke(width = trackW + 0.5.dp.toPx(), cap = StrokeCap.Round))
-            // playhead: short vertical bar at the progress point
-            if (frac < 1f) {
-                val half = 4.5.dp.toPx()
-                drawLine(Color.White, Offset(fx, midY - half), Offset(fx, midY + half), strokeWidth = 2.5.dp.toPx(), cap = StrokeCap.Round)
-            }
+            drawPath(wave, Color.White, style = Stroke(width = trackW, cap = StrokeCap.Round))
         }
     }
 }
@@ -7988,9 +8015,11 @@ private fun SquigglyProgress(frac: Float, loading: Boolean, modifier: Modifier =
 /**
  * "Wavy" status progress segment (Settings → Appearance → Status style):
  * the same contract as SquigglyProgress — faint full track, bright wave
- * up to the progress point with a playhead bar, a sweeping bright chunk
- * while loading — but drawn as one long, gentle sine wave instead of
- * the squiggly's tight music-player wave.
+ * up to the progress point, a sweeping bright chunk while loading — but
+ * drawn as one long, gentle sine wave instead of the squiggly's tight
+ * music-player wave. Same v146 polish: no playhead tick, continuous
+ * clock-driven phase, animated fill edge, one consistent stroke width,
+ * denser sine sampling.
  */
 private fun WavyProgress(frac: Float, loading: Boolean, modifier: Modifier = Modifier) {
     var sweep = -1f
@@ -8002,6 +8031,12 @@ private fun WavyProgress(frac: Float, loading: Boolean, modifier: Modifier = Mod
         )
         sweep = s
     }
+    val phase by rememberInfiniteTransition(label = "wavyphase").animateFloat(
+        initialValue = 0f, targetValue = 6.28318f,
+        animationSpec = infiniteRepeatable(tween(3400, easing = LinearEasing), RepeatMode.Restart),
+        label = "wavyphase"
+    )
+    val animFrac by animateFloatAsState(frac.coerceIn(0f, 1f), animationSpec = tween(140, easing = LinearEasing), label = "wavyfrac")
     val wave = remember { Path() }
     Canvas(modifier) {
         val w = size.width
@@ -8009,13 +8044,12 @@ private fun WavyProgress(frac: Float, loading: Boolean, modifier: Modifier = Mod
         val amp = size.height * 0.30f
         val waveLen = 34.dp.toPx().coerceAtLeast(1f)
         val trackW = 2.dp.toPx()
-        val phase = frac * 3.2f   // progress drags the wave, same trick as the squiggly
         fun buildWave(x0: Float, x1: Float) {
             wave.rewind()
             var x = x0
             wave.moveTo(x, midY + amp * kotlin.math.sin((x / waveLen) * 6.28318f + phase))
             while (x < x1) {
-                x = minOf(x + waveLen / 16f, x1)
+                x = minOf(x + waveLen / 24f, x1)
                 wave.lineTo(x, midY + amp * kotlin.math.sin((x / waveLen) * 6.28318f + phase))
             }
         }
@@ -8029,15 +8063,10 @@ private fun WavyProgress(frac: Float, loading: Boolean, modifier: Modifier = Mod
                 buildWave(x0, x1)
                 drawPath(wave, Color.White, style = Stroke(width = trackW, cap = StrokeCap.Round))
             }
-        } else if (frac > 0f) {
-            val fx = (frac * w).coerceIn(0f, w)
+        } else if (animFrac > 0f) {
+            val fx = (animFrac * w).coerceIn(0f, w)
             buildWave(0f, fx)
-            drawPath(wave, Color.White, style = Stroke(width = trackW + 0.5.dp.toPx(), cap = StrokeCap.Round))
-            // playhead: short vertical bar at the progress point
-            if (frac < 1f) {
-                val half = 4.5.dp.toPx()
-                drawLine(Color.White, Offset(fx, midY - half), Offset(fx, midY + half), strokeWidth = 2.5.dp.toPx(), cap = StrokeCap.Round)
-            }
+            drawPath(wave, Color.White, style = Stroke(width = trackW, cap = StrokeCap.Round))
         }
     }
 }
@@ -8075,6 +8104,74 @@ private fun DefaultProgress(frac: Float, loading: Boolean, modifier: Modifier = 
             drawRoundRect(Color.White, topLeft = Offset(0f, y), size = Size(fx, barH), cornerRadius = corner)
         }
     }
+}
+
+private val STATUS_URL_RE = Regex("""https?://[^\s]+|www\.[^\s]+""")
+
+/** Status text with URLs annotated (href stored in the "URL" annotation,
+ * trailing sentence punctuation excluded from the link itself). */
+private fun buildStatusLinks(raw: String): AnnotatedString = buildAnnotatedString {
+    var last = 0
+    for (m in STATUS_URL_RE.findAll(raw)) {
+        append(raw.substring(last, m.range.first))
+        val full = m.value
+        val href = full.trimEnd('.', ',', '!', '?', ')', ']', '"', '\'')
+        val tail = full.substring(href.length)
+        pushStringAnnotation("URL", if (href.startsWith("www.")) "https://$href" else href)
+        withStyle(SpanStyle(color = Color(0xFF6EC1FF), textDecoration = TextDecoration.Underline)) { append(href) }
+        pop()
+        append(tail)
+        last = m.range.last + 1
+    }
+    append(raw.substring(last))
+}
+
+@Composable
+/**
+ * Status caption / text-status body with tappable links (v146). A tap
+ * on a URL opens it in the browser; a tap anywhere else reports its
+ * x-fraction via [onNavTap] so the caller can reproduce the viewer's
+ * prev/next tap zones (the text itself sits above those zones, so it
+ * must forward plain taps itself); a long press anywhere — including
+ * starting on a link — reports via [onHoldChange] (hold-to-pause wins
+ * over the link: the link only ever fires on a clean tap).
+ */
+private fun StatusLinkText(
+    text: String,
+    style: androidx.compose.ui.text.TextStyle,
+    color: Color,
+    fontWeight: FontWeight? = null,
+    textAlign: TextAlign = TextAlign.Center,
+    maxLines: Int = Int.MAX_VALUE,
+    onNavTap: (Float) -> Unit,
+    onHoldChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val uriHandler = LocalUriHandler.current
+    val annotated = remember(text) { buildStatusLinks(text) }
+    var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    Text(
+        text = annotated,
+        color = color,
+        style = style,
+        fontWeight = fontWeight,
+        textAlign = textAlign,
+        maxLines = maxLines,
+        overflow = TextOverflow.Ellipsis,
+        onTextLayout = { layout = it },
+        modifier = modifier.pointerInput(annotated) {
+            detectTapGestures(
+                onTap = { pos ->
+                    val off = layout?.getOffsetForPosition(pos) ?: -1
+                    val url = if (off >= 0) annotated.getStringAnnotations("URL", off, off).firstOrNull()?.item else null
+                    if (url != null) runCatching { uriHandler.openUri(url) }
+                    else onNavTap(if (size.width > 0) pos.x / size.width.toFloat() else 1f)
+                },
+                onLongPress = { onHoldChange(true) },
+                onPress = { tryAwaitRelease(); onHoldChange(false) },
+            )
+        },
+    )
 }
 
 /**
@@ -8143,13 +8240,28 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
     var progress by remember(si, ii) { mutableStateOf(0f) }
     var videoReady by remember(st.mediaName, si, ii) { mutableStateOf(false) }   // video prepared → drive bar from real position
     var exoPlayer by remember(st.mediaName, si, ii) { mutableStateOf<androidx.media3.exoplayer.ExoPlayer?>(null) }
+    // v146: hold-to-pause — true while the user's finger is held down
+    // anywhere on the viewer (long press in the tap zones / link text).
+    // Pauses playback + the progress countdown and hides all chrome.
+    var held by remember { mutableStateOf(false) }
     // BUG1 hardening: when this viewer leaves the composition (close, back,
     // person switch), stop the current video outright — playback must never
     // continue behind the status list or the next person's status, even if
     // an outer transition keeps the outgoing screen alive a few frames.
+    // v146: stop AND release, here at the viewer level too — the viewer's
+    // own effect used to only stop() and leave release to the child's
+    // dispose; a status (video / image+song) could keep sounding after
+    // the viewer was gone. The viewer owns this reference, so the viewer
+    // kills it on every exit path.
     DisposableEffect(exoPlayer) {
         val pl = exoPlayer
-        onDispose { runCatching { pl?.stop() } }
+        onDispose { runCatching { pl?.stop() }; runCatching { pl?.release() } }
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            runCatching { exoPlayer?.stop() }
+            runCatching { exoPlayer?.release() }
+        }
     }
     var confirmDelete by remember { mutableStateOf<String?>(null) }
     var showViewers by remember { mutableStateOf(false) }
@@ -8192,6 +8304,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
         while (elapsed < dur) {
             delay(step)
             if (showViewers) continue   // paused while the viewers sheet is open
+            if (held) continue   // v146: hold-to-pause freezes the countdown too
             elapsed += step; progress = (elapsed.toFloat() / dur).coerceIn(0f, 1f)
             if (replyText.isNotBlank()) return@LaunchedEffect
         }
@@ -8207,10 +8320,11 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
         }
     }
 
-    // video: pause while the viewers sheet is open, resume when it closes
-    LaunchedEffect(showViewers, exoPlayer, videoReady) {
+    // video: pause while the viewers sheet is open or the user is
+    // holding (v146 hold-to-pause), resume when both clear
+    LaunchedEffect(showViewers, held, exoPlayer, videoReady) {
         val pl = exoPlayer ?: return@LaunchedEffect
-        if (showViewers) runCatching { pl.pause() } else if (videoReady) runCatching { pl.play() }
+        if (showViewers || held) runCatching { pl.pause() } else if (videoReady) runCatching { pl.play() }
     }
 
     // K: overlay inside the activity window (not a Dialog) so it truly covers the status bar + nav bar zones.
@@ -8221,28 +8335,20 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
             Box(Modifier.fillMaxSize().blur(statusBlur).pointerInput(myMine) {
                 if (myMine) { var dyAcc = 0f; detectVerticalDragGestures(onDragEnd = { if (dyAcc < -80f && !zoom.zoomed) showViewers = true; dyAcc = 0f }) { _, dy -> dyAcc += dy } }
             }) {
-                if (st.deleted) {
-                    // SD2: tombstone — this status was deleted on WhatsApp. No
-                    // media exists anymore; show the deleted placeholder in
-                    // place of it (the header already labels it next to the
-                    // time, and the normal 5s timer advances past it like a
-                    // text status — nothing ever plays).
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
-                            AyxIcon(Icons.Filled.Block, null, tint = Color.White.copy(alpha = 0.5f), modifier = Modifier.size(52.dp))
-                            Spacer(Modifier.height(14.dp))
-                            Text("Status Deleted", color = Color.White.copy(alpha = 0.8f), fontWeight = FontWeight.Medium, style = MaterialTheme.typography.titleMedium)
-                            Spacer(Modifier.height(4.dp))
-                            Text("This status was deleted", color = Color.White.copy(alpha = 0.45f), style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                } else if (st.mediaType == "audio" && st.mediaName != null) {
+                // v146: a deleted status is NO LONGER a dead tombstone
+                // screen. The media was downloaded to this device when
+                // the status arrived (and StatusData.merge preserves its
+                // linkage onto the tombstone), so deleted items render
+                // through the SAME chain as live ones below — the header
+                // keeps the "· Status Deleted" label next to the time.
+                // The empty placeholder screen is gone from this path.
+                if (st.mediaType == "audio" && st.mediaName != null) {
                     // voice status → play inline like a voice note
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
                             AyxIcon(Icons.Filled.GraphicEq, null, tint = Color.White, modifier = Modifier.size(56.dp))
                             Spacer(Modifier.height(18.dp))
-                            AudioPlayer(GatewayClient.mediaUrl(st.mediaName!!), Color.White)
+                            AudioPlayer(GatewayClient.mediaUrl(st.mediaName!!), Color.White, holdPause = held)
                         }
                     }
                 } else if (st.mediaType == "video" && st.mediaName != null) {
@@ -8273,8 +8379,10 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                 } else if (bmp != null) {
                     Image(bmp!!, null, Modifier.fillMaxSize().viewerGestures(zoom, doubleTap = false), contentScale = ContentScale.Fit)
                     if (imgLoading) CircularProgressIndicator(Modifier.align(Alignment.Center), color = Color.White.copy(alpha = 0.7f))
-                    // only a blurry thumbnail loaded (full media was deleted) → tap to re-download, like chat media
-                    else if (!fullLoaded && st.mediaName != null) {
+                    // only a blurry thumbnail loaded (full media was deleted) → tap to re-download, like chat media.
+                    // v146: not offered for a deleted status (the local copy on screen IS the copy — re-download
+                    // can't bring back what the sender revoked) and never while the user is holding (chrome hidden).
+                    else if (!fullLoaded && st.mediaName != null && !st.deleted && !held) {
                         Box(Modifier.align(Alignment.Center).clip(CircleShape).background(Color.Black.copy(alpha = 0.55f))
                             .clickable { reloadKey++ }.padding(horizontal = 18.dp, vertical = 12.dp), contentAlignment = Alignment.Center) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -8285,41 +8393,89 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                 } else if (imgLoading) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Color.White) }
                 } else if (st.mediaName != null && st.mediaType != "video") {
-                    // media missing (deleted / not downloaded yet) → tap to download instead of a blank screen
+                    // media missing (not downloaded yet) → tap to download instead of a blank screen
                     Box(Modifier.fillMaxSize().clickable { reloadKey++ }, contentAlignment = Alignment.Center) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        if (!held) Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             AyxIcon(Icons.Filled.Download, null, tint = Color.White, modifier = Modifier.size(44.dp))
                             Spacer(Modifier.height(8.dp)); Text("Tap to download", color = Color.White)
                         }
                     }
                 } else {
-                    // text status → centred on its chosen background colour (WhatsApp-style)
+                    // text status → its chosen background colour fills the
+                    // screen (WhatsApp-style); the TEXT itself renders in
+                    // the overlay layer above the tap zones (StatusLinkText)
+                    // so links in it stay tappable and holds register.
                     val tbg = st.bg?.let { runCatching { Color(android.graphics.Color.parseColor(it)) }.getOrNull() } ?: Color(0xFF128C7E)
-                    Box(Modifier.fillMaxSize().background(tbg), contentAlignment = Alignment.Center) {
-                        Text(st.text.ifBlank { "…" }, color = Color.White, textAlign = TextAlign.Center, fontWeight = FontWeight.SemiBold,
-                            style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(28.dp))
-                    }
+                    Box(Modifier.fillMaxSize().background(tbg))
                 }
                 // BUG2b: while the reply keyboard is up, a tap on the status
                 // dismisses ONLY the keyboard — it must not also navigate.
                 // v144: while the media is zoomed (or a pinch/pan just
                 // ended), taps are swallowed too — they belong to the zoom.
+                // v146: the zones use detectTapGestures (was clickable) so a
+                // LONG PRESS anywhere starts hold-to-pause and the release
+                // ends it; a hold never also fires the tap (navigation), and
+                // taps keep the exact old behaviour via zoneTap.
+                fun zoneTap(right: Boolean) {
+                    if (imeVisible) { keyboard?.hide(); focusManager.clearFocus() }
+                    else if (!zoom.blocksNav()) { if (right) goNext() else goPrev() }
+                }
                 Row(Modifier.fillMaxSize()) {
-                    Box(Modifier.weight(1f).fillMaxHeight().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                        if (imeVisible) { keyboard?.hide(); focusManager.clearFocus() } else if (!zoom.blocksNav()) goPrev()
+                    Box(Modifier.weight(1f).fillMaxHeight().pointerInput(Unit) {
+                        detectTapGestures(
+                            onTap = { zoneTap(false) },
+                            onLongPress = { held = true },
+                            onPress = { tryAwaitRelease(); held = false },
+                        )
                     })
-                    Box(Modifier.weight(1.6f).fillMaxHeight().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                        if (imeVisible) { keyboard?.hide(); focusManager.clearFocus() } else if (!zoom.blocksNav()) goNext()
+                    Box(Modifier.weight(1.6f).fillMaxHeight().pointerInput(Unit) {
+                        detectTapGestures(
+                            onTap = { zoneTap(true) },
+                            onLongPress = { held = true },
+                            onPress = { tryAwaitRelease(); held = false },
+                        )
                     })
                 }
-                // J: header block = solid black from the very top (notification bar) down to the user row.
-                Column(Modifier.fillMaxWidth().background(Color.Black).statusBarsPadding().padding(8.dp)) {
-                    // active segment is "loading" (→ material snake) while media is still coming in or a voice note plays
-                    val activeLoading = when (st.mediaType) {
-                        "audio" -> true                       // voice status → indeterminate snake while it plays
-                        "video" -> !videoReady                 // buffering the clip
-                        else -> imgLoading && bmp == null      // image still downloading (no thumb yet)
+                // v146: text-status body, rendered ABOVE the tap zones so
+                // its links are tappable and its holds register (the zones
+                // would otherwise swallow every touch over the text). Plain
+                // taps forward to the same zone logic by x-fraction
+                // (zone weights 1 : 1.6 → boundary at 1/2.6 ≈ 0.385).
+                if (st.mediaType == null && st.mediaName == null) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        StatusLinkText(
+                            text = st.text.ifBlank { "…" },
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = Color.White,
+                            fontWeight = FontWeight.SemiBold,
+                            onNavTap = { f -> zoneTap(f >= 0.385f) },
+                            onHoldChange = { held = it },
+                            modifier = Modifier.padding(28.dp),
+                        )
                     }
+                }
+                // v146: while held, the chrome (header + bottom stack)
+                // stays COMPOSED but invisible and touch-dead. Removing
+                // it mid-hold would orphan the very press that started
+                // the hold (a hold can start on the caption's own text)
+                // — its release would never be reported and the hold
+                // would stick on forever.
+                val chromeGone = if (held) Modifier.alpha(0f).pointerInput("chromeBlock") {
+                    awaitPointerEventScope { while (true) { awaitPointerEvent().changes.forEach { it.consume() } } }
+                } else Modifier
+                // J: header block = solid black from the very top (notification bar) down to the user row.
+                Column(Modifier.fillMaxWidth().background(Color.Black).statusBarsPadding().padding(8.dp).then(chromeGone)) {
+                    // v146 (user order): the progress line must NEVER flash
+                    // into its loading sweep when a status opens. The old
+                    // rule made EVERY video open sweep (!videoReady) and
+                    // every thumb-less image sweep until its bytes landed.
+                    // Now the line is determinate from the first frame —
+                    // the segment holds at the current fraction (0 until
+                    // playback/display starts; the centre spinner carries
+                    // the "still loading" feedback instead). The sweep
+                    // survives ONLY as the audio style's playing motion,
+                    // which is a playing state, not a load gate.
+                    val activeLoading = st.mediaType == "audio"
                     // Progress segments — renderer picked by Settings →
                     // Appearance → Status style (Default / Wavy / Squiggly;
                     // Squiggly is the shipped look and stays the default).
@@ -8416,9 +8572,10 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                 }
                 // V4: bottom stack — caption in a rounded blur box ABOVE the
                 // reply input (others) / "Viewed by" (mine). Both mine and others.
+                // v146: chrome — invisible + touch-dead while held (chromeGone above).
                 Column(
                     Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-                        .navigationBarsPadding().imePadding().padding(horizontal = 10.dp, vertical = 10.dp),
+                        .navigationBarsPadding().imePadding().padding(horizontal = 10.dp, vertical = 10.dp).then(chromeGone),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
@@ -8430,10 +8587,22 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                                 .padding(horizontal = 16.dp, vertical = 10.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(st.text, color = Color.White, textAlign = TextAlign.Center,
+                            // v146: links in the caption are tappable
+                            // (StatusLinkText); plain taps forward to the
+                            // viewer's zone logic, holds hold-to-pause.
+                            StatusLinkText(
+                                text = st.text,
                                 style = MaterialTheme.typography.bodyMedium,
-                                maxLines = 4, overflow = TextOverflow.Ellipsis)
+                                color = Color.White,
+                                maxLines = 4,
+                                onNavTap = { f -> zoneTap(f >= 0.385f) },
+                                onHoldChange = { held = it },
+                            )
                         }
+                        // v146: extra clearance so the caption rides
+                        // clearly ABOVE the reply pill / Viewed-by row
+                        // and can never crowd or overlap it.
+                        Spacer(Modifier.height(10.dp))
                     }
                     if (myMine) {
                         Column(

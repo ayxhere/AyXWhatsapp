@@ -248,12 +248,40 @@ object MediaTools {
         }
     }
 
+    // Sample-copy buffer for the muxers below. readSampleData THROWS
+    // (BufferTooSmallException) when one encoded sample is larger than
+    // the buffer — the old fixed 1 MB died on native-res bakes (v137:
+    // ~16.9 Mbps, up to 48 Mbps), whose keyframes can exceed 1 MB, so
+    // muxVideoAudio returned false and the whole image+song upload
+    // collapsed into "video processing failed". Size from the track
+    // formats' own max-input-size, floored at 8 MB.
+    private fun sampleBufferSize(vararg fmts: MediaFormat?): Int {
+        var cap = 8 * 1024 * 1024
+        for (f in fmts) {
+            if (f != null && f.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
+                val m = f.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE)
+                if (m * 2 > cap) cap = m * 2
+            }
+        }
+        return cap
+    }
+
     // ---------- public: download song URL + trim to [startMs,endMs] -> AAC .m4a ----------
     fun downloadAndTrimAudio(url: String, out: File, startMs: Long, endMs: Long): Boolean {
         val tmp = File(out.parentFile, "song_dl_${System.currentTimeMillis()}.m4a")
         try {
-            // download
-            URL(url).openStream().use { input -> FileOutputStream(tmp).use { input.copyTo(it) } }
+            // download — with REAL timeouts and a browser UA. The old
+            // URL.openStream() had NO connect/read timeout at all: a
+            // stalled song CDN hung the status upload forever (spinner
+            // that never resolves), and some CDNs 403 the default Java
+            // UA, silently swapping the song for the silent track.
+            val conn = (URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                connectTimeout = 15000
+                readTimeout = 60000
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+            }
+            conn.inputStream.use { input -> FileOutputStream(tmp).use { input.copyTo(it) } }
             return trimAudioFile(tmp.absolutePath, out, startMs, endMs)
         } catch (e: Exception) {
             return false
@@ -458,7 +486,7 @@ object MediaTools {
             val outA = if (aTrack >= 0 && aFmt != null) muxer.addTrack(aFmt) else -1
             if (aTrack >= 0) aEx.selectTrack(aTrack)
             muxer.start()
-            val buf = ByteBuffer.allocate(1024 * 1024)
+            val buf = ByteBuffer.allocate(sampleBufferSize(vFmt, aFmt))
             val info = MediaCodec.BufferInfo()
             // video (defines final duration)
             var videoDurUs = 0L
@@ -532,7 +560,7 @@ object MediaTools {
             ex.selectTrack(vTrack)
             if (outA >= 0) ex.selectTrack(aTrack)
             muxer.start()
-            val buf = ByteBuffer.allocate(1024 * 1024)
+            val buf = ByteBuffer.allocate(sampleBufferSize(vFmt, aFmt))
             val info = MediaCodec.BufferInfo()
             // Seek to the closest sync sample at/after the trim start so the
             // output begins with a key frame (required for playback).
