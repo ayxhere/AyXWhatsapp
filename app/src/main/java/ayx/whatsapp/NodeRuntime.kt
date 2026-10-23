@@ -49,6 +49,12 @@ object NodeRuntime {
         // read it. Runs before the gateway serves any settings.
         AiKeyStore.init(ctx)
 
+        // v170: same early init for the settings mirror (Drive backup's
+        // encrypted source of real key/prompt values, fed by the
+        // GatewayClient.patchSettings choke point) and DriveBackup itself.
+        SettingsMirror.init(ctx)
+        DriveBackup.init(ctx)
+
         val projectDir = File(ctx.filesDir, "nodejs-project")
         extractIfNeeded(ctx, projectDir)
 

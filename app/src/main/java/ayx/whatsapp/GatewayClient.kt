@@ -569,7 +569,16 @@ object GatewayClient {
 
     /** Post a partial settings patch; returns the updated settings. */
     suspend fun patchSettings(patch: JSONObject): Settings = withContext(Dispatchers.IO) {
-        parseSettings(post("/settings", patch))
+        val updated = parseSettings(post("/settings", patch))
+        // v170: THE settings-write choke point — every settings write in
+        // the app flows through this one function (the only other
+        // /settings POST is setRules, which carries no key/prompt fields).
+        // Mirror the whitelisted key/prompt fields app-side (encrypted) so
+        // DriveBackup has real values to back up: since v167 the gateway
+        // only ever returns masks. mirrorPatch itself ignores blanks and
+        // masks; a change offers DriveBackup an auto-sync.
+        if (SettingsMirror.mirrorPatch(patch)) DriveBackup.onMirrorUpdated()
+        updated
     }
 
     /** Run the Image-AI self-test against a built-in test image (may take a while — tries each provider). */

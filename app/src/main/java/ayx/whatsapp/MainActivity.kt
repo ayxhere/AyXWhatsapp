@@ -128,6 +128,10 @@ import androidx.compose.material.icons.filled.DonutLarge
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Crop
@@ -5245,6 +5249,133 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
         AiSettingsFields(ctx, dark = false, onSaved = {})
     }
 
+    // v170: encrypted backup of the keys & prompts above to a Drive folder.
+    DriveBackupSection()
+
+}
+
+/**
+ * v170 — "Drive Backup" section (Settings → AI Assistant, under the key /
+ * prompt settings it protects). Backs up SETTINGS ONLY — API keys + custom
+ * prompts, AES-256-GCM encrypted on-device, key file kept beside the
+ * backup in the same Drive folder (no password, by the user's choice).
+ * Login/session data is never part of it. All heavy work runs on IO via
+ * [DriveBackup]; this composable only holds display state.
+ */
+@Composable
+private fun DriveBackupSection() {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var status by remember { mutableStateOf(DriveBackup.status(ctx)) }
+    var busy by remember { mutableStateOf(false) }
+    var note by remember { mutableStateOf<String?>(null) }
+    var restorePeek by remember { mutableStateOf<DriveBackup.Peek?>(null) }
+
+    fun refresh() { status = DriveBackup.status(ctx) }
+
+    val treePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            runCatching { ctx.contentResolver.takePersistableUriPermission(uri, flags) }
+            DriveBackup.setFolder(ctx, uri)
+            note = "Backup folder selected. “Backup now” will save the encrypted backup there."
+            refresh()
+        }
+    }
+
+    SettingsGroup("Drive Backup") {
+        ActionRow(
+            Icons.Filled.FolderOpen, CAT_AI, "Backup folder",
+            status.folderName?.let { "Google Drive folder: $it — tap to change" }
+                ?: "Choose a Google Drive folder (one-time)"
+        ) { treePicker.launch(null) }
+
+        SettingRow(
+            Icons.Filled.Sync, CAT_AI, "Auto-sync backup",
+            "Quietly re-backup whenever a key or prompt changes",
+            status.autoSync
+        ) { DriveBackup.setAutoSync(ctx, it); refresh() }
+
+        ActionRow(
+            Icons.Filled.CloudUpload, CAT_AI, "Backup now",
+            "Encrypted backup of API keys & prompts — never login data"
+        ) {
+            if (!busy) {
+                busy = true
+                scope.launch {
+                    note = runCatching { withContext(Dispatchers.IO) { DriveBackup.backupNow(ctx) } }
+                        .getOrElse { it.message ?: "Backup failed" }
+                    busy = false
+                    refresh()
+                }
+            }
+        }
+
+        ActionRow(
+            Icons.Filled.CloudDownload, CAT_AI, "Restore from Drive",
+            "Read the backup in the chosen folder and apply it here"
+        ) {
+            if (!busy) {
+                busy = true
+                scope.launch {
+                    val peek = runCatching { withContext(Dispatchers.IO) { DriveBackup.peekBackup(ctx) } }
+                    peek.onSuccess { restorePeek = it }
+                        .onFailure { note = it.message ?: "Restore failed" }
+                    busy = false
+                    refresh()
+                }
+            }
+        }
+
+        val statusLine = when {
+            busy -> "Working…"
+            note != null -> note
+            status.lastError != null -> "Last attempt failed: ${status.lastError}"
+            status.lastBackupAt > 0L ->
+                "Last backup: " + SimpleDateFormat("d MMM yyyy, h:mm a", Locale.US).format(Date(status.lastBackupAt))
+            else -> "The backup file and its key file stay together in the folder — keep both."
+        }
+        Text(
+            statusLine ?: "",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 2.dp, top = 6.dp, bottom = 8.dp),
+        )
+    }
+
+    if (restorePeek != null) {
+        val peek = restorePeek!!
+        val whenText = if (peek.createdAt > 0L)
+            SimpleDateFormat("d MMM yyyy, h:mm a", Locale.US).format(Date(peek.createdAt))
+        else "an unknown date"
+        AlertDialog(
+            onDismissRequest = { restorePeek = null },
+            containerColor = dialogBg(),
+            shape = uiShapeFor(24),
+            title = { Text("Restore settings?") },
+            text = {
+                Text(
+                    "This will replace the current API keys & prompts with the backup from $whenText " +
+                        "(AyX v${peek.appVersion}, ${peek.fieldCount} settings). Your chats and login are not touched."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    restorePeek = null
+                    if (!busy) {
+                        busy = true
+                        scope.launch {
+                            note = runCatching { withContext(Dispatchers.IO) { DriveBackup.restore(ctx) } }
+                                .getOrElse { it.message ?: "Restore failed" }
+                            busy = false
+                            refresh()
+                        }
+                    }
+                }) { Text("Restore") }
+            },
+            dismissButton = { TextButton(onClick = { restorePeek = null }) { Text("Cancel") } },
+        )
+    }
 }
 
 /** AI Lyrics — multiple OpenAI-compatible API configs with automatic failover (tried IN ORDER). */
