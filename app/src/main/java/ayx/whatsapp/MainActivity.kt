@@ -3893,10 +3893,11 @@ private fun ChatGlassHeader(
  * exactly like pruned/never-downloaded media (thumbnail, re-download
  * on open).
  *
- * NOTE: no member count is shown for groups — no gateway response
- * carries one (groupMetadata is fetched gateway-side for the subject
- * only); see the v163 report. The subtitle stays "Group" until the
- * gateway exposes a count.
+ * MEMBER COUNT (v164): the gateway's /groupname now also returns
+ * `participants` (captured from the same groupMetadata call as the
+ * subject, cached alongside it). The group subtitle shows
+ * "N members" when the count is known and falls back to "Group"
+ * when it isn't (0).
  */
 @Composable
 private fun ChatInfoSheet(
@@ -3920,6 +3921,12 @@ private fun ChatInfoSheet(
     var voiceFileCount by remember(jid) { mutableStateOf(0) }
     var voiceBytes by remember(jid) { mutableStateOf(0L) }
     var confirmClear by remember(jid) { mutableStateOf(false) }
+    // v164: group member count (0 = unknown → subtitle stays "Group")
+    var memberCount by remember(jid) { mutableStateOf(0) }
+
+    LaunchedEffect(jid) {
+        if (isGroup) memberCount = runCatching { GatewayClient.getGroupMemberCount(jid) }.getOrDefault(0)
+    }
 
     LaunchedEffect(jid, reloadTick) {
         loading = true
@@ -3960,7 +3967,7 @@ private fun ChatInfoSheet(
     val pv = media.filter { it.mediaType == "image" || it.mediaType == "video" }
     val voice = media.filter { it.mediaType == "audio" }
     val subtitle = when {
-        isGroup -> "Group"
+        isGroup -> if (memberCount > 0) "$memberCount members" else "Group"
         jid.endsWith("@s.whatsapp.net") -> "+" + jid.substringBefore("@").substringBefore(":")
         else -> ""
     }

@@ -24,6 +24,10 @@ import androidx.compose.runtime.mutableStateMapOf
 object GroupNameStore {
     // full group jid -> display name (subject or user alias)
     val map = mutableStateMapOf<String, String>()
+    // v164: full group jid -> member count (gateway /groupname
+    // `participants`, captured from the same groupMetadata fetch as the
+    // subject). 0/absent = unknown — the info page falls back to "Group".
+    val counts = mutableStateMapOf<String, Int>()
     // full group jids where the user set an alias (subjects must not overwrite)
     private val aliases = mutableSetOf<String>()
     private var prefs: android.content.SharedPreferences? = null
@@ -35,6 +39,7 @@ object GroupNameStore {
         prefs = ctx.getSharedPreferences("groupnames", Context.MODE_PRIVATE)
         prefs!!.all.forEach { (k, v) ->
             if (k.startsWith("n:") && v is String && v.isNotBlank()) map[k.removePrefix("n:")] = v
+            if (k.startsWith("c:") && v is Int && v > 0) counts[k.removePrefix("c:")] = v
         }
         prefs!!.getStringSet("aliases", emptySet())?.let { aliases.addAll(it) }
     }
@@ -56,6 +61,18 @@ object GroupNameStore {
     }
 
     fun isAlias(jid: String): Boolean = aliases.contains(jid)
+
+    /** v164: known member count for a group jid; 0 when unknown. */
+    fun countFor(jid: String): Int = counts[jid] ?: 0
+
+    /** v164: store a member count fetched via /groupname. */
+    fun putCount(jid: String, n: Int) {
+        if (jid.isBlank() || n <= 0) return
+        if (counts[jid] != n) {
+            counts[jid] = n
+            prefs?.edit()?.putInt("c:$jid", n)?.apply()
+        }
+    }
 
     /** Store a Baileys group subject. Never overwrites a user alias. */
     fun putSubject(jid: String, name: String) {

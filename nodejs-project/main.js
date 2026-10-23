@@ -517,7 +517,7 @@ function rememberName(jid, name) {
 // message entry carries chatName (the Baileys group subject), and the app
 // can also fetch it on demand via GET /groupname.
 const GROUP_SUBJECTS_FILE = path.join(path.dirname(AUTH_DIR), 'group-subjects.json')
-let groupSubjects = {}   // group jid -> { subject, ts }
+let groupSubjects = {}   // group jid -> { subject, participants, ts } (participants added v164)
 try { groupSubjects = JSON.parse(fs.readFileSync(GROUP_SUBJECTS_FILE, 'utf8')) || {} } catch (_) { groupSubjects = {} }
 let _groupSubjTimer = null
 function saveGroupSubjectsDebounced() {
@@ -527,6 +527,13 @@ function saveGroupSubjectsDebounced() {
 function cachedGroupSubject(jid) {
   const e = groupSubjects[jid]
   return (e && e.subject) ? e.subject : ''
+}
+// v164: member count captured from the SAME groupMetadata call as the
+// subject and cached in the same entry (same 24h TTL / persistence).
+// 0 = unknown (never fetched, or entry predates v164).
+function cachedGroupParticipants(jid) {
+  const e = groupSubjects[jid]
+  return (e && e.participants) ? e.participants : 0
 }
 const _groupSubjectInflight = new Map()   // jid -> Promise, so concurrent callers share one fetch
 // Baileys group subject for a group jid. Cached (24h); stale cache is
@@ -543,8 +550,9 @@ async function fetchGroupSubject(jid) {
       if (!sock || status.connection !== 'open') return cached
       const meta = await sock.groupMetadata(jid)
       const subject = (meta && meta.subject) || ''
+      const participants = (meta && Array.isArray(meta.participants)) ? meta.participants.length : 0
       if (subject) {
-        groupSubjects[jid] = { subject, ts: Date.now() }
+        groupSubjects[jid] = { subject, participants, ts: Date.now() }
         saveGroupSubjectsDebounced()
         return subject
       }
@@ -2279,11 +2287,13 @@ app.get('/presence', async (req, res) => {
 // Group subject (group name) for a group jid — the app's group rows and
 // chat header use this, never the sender's pushName. Returns { name: '' }
 // when unknown (not a group / socket down / fetch failed).
+// v164: additive `participants` field (member count from the same
+// groupMetadata fetch, cached with the subject); 0 when unknown.
 app.get('/groupname', async (req, res) => {
   const jid = String(req.query.jid || '')
-  if (!jid) return res.json({ name: '' })
-  try { res.json({ name: await fetchGroupSubject(jid) }) }
-  catch (_) { res.json({ name: cachedGroupSubject(jid) }) }
+  if (!jid) return res.json({ name: '', participants: 0 })
+  try { res.json({ name: await fetchGroupSubject(jid), participants: cachedGroupParticipants(jid) }) }
+  catch (_) { res.json({ name: cachedGroupSubject(jid), participants: cachedGroupParticipants(jid) }) }
 })
 
 // v148 session privacy: /session/export and /session/import are GONE.

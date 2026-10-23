@@ -684,8 +684,25 @@ object GatewayClient {
             val o = get("/groupname?jid=$enc")
             val name = o.optString("name").ifEmpty { null }
             if (name != null) GroupNameStore.putSubject(jid, name)
+            // v164: the same response carries the member count
+            // (gateway captured it from the same groupMetadata call).
+            val pc = o.optInt("participants", 0)
+            if (pc > 0) GroupNameStore.putCount(jid, pc)
             name
         } catch (e: Exception) { null }
+    }
+
+    /**
+     * v164: group member count for the chat info page. Served from
+     * [GroupNameStore] when a previous /groupname fetch already stored
+     * it; otherwise triggers one fetch via [getGroupName] (same 60s
+     * throttle) and reads the stored value back. 0 = unknown — the
+     * info page then keeps its plain "Group" subtitle.
+     */
+    suspend fun getGroupMemberCount(jid: String): Int = withContext(Dispatchers.IO) {
+        GroupNameStore.countFor(jid).takeIf { it > 0 }?.let { return@withContext it }
+        runCatching { getGroupName(jid) }
+        GroupNameStore.countFor(jid)
     }
 
     data class StatusItem(val sender: String, val name: String, val text: String,
