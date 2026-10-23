@@ -889,7 +889,7 @@ private fun AyxUpdateDialog(info: AyxUpdate.Info, onLater: () -> Unit) {
  * the theme color passed in; no stock-icon look.
  */
 @Composable
-private fun AyxDownloadGlyph(glyphSize: Dp, color: Color, ring: Boolean) {
+private fun AyxDownloadGlyph(glyphSize: androidx.compose.ui.unit.Dp, color: Color, ring: Boolean) {
     Canvas(Modifier.size(glyphSize)) {
         val stroke = (glyphSize.toPx() * 0.085f).coerceAtLeast(1.6f)
         val cx = size.width / 2f
