@@ -82,7 +82,7 @@ object LyricsStyleStore {
         Option(FADE, "Fade", "Each line fades in"),
         Option(PLAIN, "Plain", "Full line at once — no animation"),
         Option(TEXT_MOTION, "Text Motion", "Letters glide in one by one with a bounce — Text Animation style"),
-        Option(LETTERS, "Letters", "Letters appear one by one as they're sung — H, HE, HEL, HELLO"),
+        Option(LETTERS, "Letters", "Letters appear one by one as they're sung, gliding in — H, HE, HEL, HELLO — Text Animation style"),
     )
 
     val style = mutableStateOf(REVEAL)
@@ -94,12 +94,53 @@ object LyricsStyleStore {
         val p = ctx.getSharedPreferences("ayx_lyrics_style", Context.MODE_PRIVATE)
         prefs = p
         style.value = p.getInt("style", REVEAL)
+        colorArgb.value = p.getInt("color", 0)
     }
 
     fun setStyle(v: Int) {
         style.value = v
         prefs?.edit()?.putInt("style", v)?.apply()
     }
+
+    /**
+     * Lyrics colour (v173) — picked from the colour row inside the
+     * double-tap "Lyrics style" dialog, stored next to the style in the
+     * same prefs. 0 = Default: the lyric accent #FF4848 (the v169
+     * colour); any other value is a picked ARGB that tints the lyrics
+     * text in BOTH the editor preview (StyledLyricLine / the Reveal
+     * renderer) and the photo bake (MediaTools.drawComposite reads
+     * [activeColorArgb] exactly like it reads [baseFractionOfWidth]),
+     * so preview and posted status agree. The colour mechanism the user
+     * remembered (a colour choice on the double-tap dialog) did not
+     * exist in the editor — the accent was a hardcoded constant on both
+     * sides — so this state is the rebuild, deliberately minimal:
+     * Default + a fixed palette, no per-post override.
+     */
+    val colorArgb = mutableStateOf(0)
+
+    data class ColorOption(val label: String, val argb: Int)
+
+    /** The dialog's colour row: Default first, then the palette. */
+    val COLOR_OPTIONS = listOf(
+        ColorOption("Default", 0),
+        ColorOption("White", 0xFFFFFFFF.toInt()),
+        ColorOption("Green", 0xFF4ADE80.toInt()),
+        ColorOption("Amber", 0xFFFFB84D.toInt()),
+        ColorOption("Sky", 0xFF4DC3FF.toInt()),
+        ColorOption("Violet", 0xFFB388FF.toInt()),
+        ColorOption("Pink", 0xFFFF7AC8.toInt()),
+        ColorOption("Cyan", 0xFF3EE6D8.toInt()),
+    )
+
+    /** The ARGB lyrics render in right now — the accent when unpicked. */
+    fun activeColorArgb(): Int = if (colorArgb.value != 0) colorArgb.value else 0xFFFF4848.toInt()
+
+    fun setColor(v: Int) {
+        colorArgb.value = v
+        prefs?.edit()?.putInt("color", v)?.apply()
+    }
+
+    fun colorLabel(argb: Int): String = COLOR_OPTIONS.firstOrNull { it.argb == argb }?.label ?: "Custom"
 
     fun label(id: Int): String = OPTIONS.firstOrNull { it.id == id }?.label ?: "Default · Reveal"
 }

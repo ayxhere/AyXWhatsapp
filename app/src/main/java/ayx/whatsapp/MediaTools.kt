@@ -93,6 +93,11 @@ object MediaTools {
         // is resolution-independent, so it stays correct at the native
         // canvas size too.
         val lyricFrac = LyricsStyleStore.baseFractionOfWidth(ctx)
+        // Lyrics colour, same WYSIWYG deal as the size: the pick from
+        // the double-tap dialog (LyricsStyleStore — Default = the
+        // #FF4848 accent), read once per encode and handed to every
+        // drawComposite call, so the bake matches the editor preview.
+        val lyricColor = LyricsStyleStore.activeColorArgb()
         val FPS = 30
         // Bitrate scales with pixel count at the SAME bits-per-pixel
         // the 720-wide bake used (6 Mbps at 720x1280 = ~0.217 bpp at
@@ -219,7 +224,7 @@ object MediaTools {
                 val key = "$imgIdx|$lyric|$pq"
                 if (key != lastKey) {
                     composite?.recycle()
-                    composite = drawComposite(bmps[imgIdx], lyric, W, H, lyricY, lyricScale, animStyle, phase, font, lyricFrac)
+                    composite = drawComposite(bmps[imgIdx], lyric, W, H, lyricY, lyricScale, animStyle, phase, font, lyricFrac, lyricColor)
                     quad!!.uploadBitmap(composite!!)
                     lastKey = key
                 }
@@ -633,7 +638,7 @@ object MediaTools {
     // baked size is locked to the preview at every lyricScale. (Before,
     // size keyed off canvas height: h * 0.052 whole-line, h * 0.056
     // Reveal — 1.4–1.9× the preview's relative size.)
-    private fun drawComposite(base: Bitmap, lyric: String, w: Int, h: Int, yFrac: Float, scale: Float, animStyle: Int = 0, phase: Float = 1f, font: android.graphics.Typeface? = null, baseFrac: Float): Bitmap {
+    private fun drawComposite(base: Bitmap, lyric: String, w: Int, h: Int, yFrac: Float, scale: Float, animStyle: Int = 0, phase: Float = 1f, font: android.graphics.Typeface? = null, baseFrac: Float, lyricColor: Int = LYRIC_ACCENT): Bitmap {
         val bmp = base.copy(Bitmap.Config.ARGB_8888, true)
         if (lyric.isBlank()) return bmp
         val canvas = Canvas(bmp)
@@ -674,11 +679,12 @@ object MediaTools {
             }
             val topY = (h * yFrac.coerceIn(0.05f, 0.9f)) + paint.textSize
             // v169 (user): NO black shadow behind the lyrics, and the
-            // active (newest) word is COLORED — LYRIC_ACCENT, the same
+            // active (newest) word is COLORED — the picked lyric colour
+            // (v173: LyricsStyleStore, Default = LYRIC_ACCENT), the same
             // treatment the editor preview now uses. (Was: a 16f black
             // shadowLayer under white/grey words.)
             for (i in 0 until shown) {
-                paint.color = if (i == shown - 1) LYRIC_ACCENT else android.graphics.Color.WHITE
+                paint.color = if (i == shown - 1) lyricColor else android.graphics.Color.WHITE
                 canvas.drawText(words[i], xs[i], topY + rowOf[i] * lineH, paint)
             }
             return bmp
@@ -698,10 +704,11 @@ object MediaTools {
             9 -> { }   // Letters: baked settled, same as Text Motion — the letter-by-letter build is a live-preview motion driven by the line window; a frame render draws the full line.
         }
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            // v169 (user): the active line is COLORED (LYRIC_ACCENT —
+            // v169 (user): the active line is COLORED (the picked lyric
+            // colour — v173: LyricsStyleStore, Default = LYRIC_ACCENT;
             // the editor preview matches) and carries NO black shadow.
             // (Was: white text over a 10f black shadowLayer.)
-            color = LYRIC_ACCENT; textSize = baseSize * sc; textAlign = Paint.Align.CENTER
+            color = lyricColor; textSize = baseSize * sc; textAlign = Paint.Align.CENTER
             typeface = font ?: android.graphics.Typeface.DEFAULT_BOLD
             this.alpha = (255 * alpha).toInt().coerceIn(0, 255)
         }

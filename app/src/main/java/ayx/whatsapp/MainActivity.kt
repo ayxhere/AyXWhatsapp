@@ -77,6 +77,8 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -243,6 +245,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -4677,7 +4680,7 @@ private fun AlbumBubble(
 private fun settingsTitle(page: String): String = when (page) {
     "general" -> "General"; "autoreply" -> "Auto-reply"; "ai" -> "AI Assistant"; "chat" -> "Chat Settings"
     "imageai" -> "Image AI"; "aimemory" -> "AI Memory"; "voice" -> "AI Voice"; "font" -> "App font"; "emoji" -> "Emoji"
-    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "accent" -> "Accent Color"; "bluranim" -> "Blur & Animation"; "textanim" -> "Text Animation"; "msgmotion" -> "Message Motion"; "iconstyle" -> "Icon Style"; "about" -> "About"; "support" -> "Support Development"; else -> "Settings"
+    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "accent" -> "Accent Color"; "bluranim" -> "Blur & Animation"; "textanim" -> "Text Animation"; "msgmotion" -> "Message Motion"; "iconstyle" -> "Icon Style"; "about" -> "About"; "sync" -> "Sync"; "support" -> "Support Development"; else -> "Settings"
 }
 // parent page for nested back (Wallpaper under Chat Settings; Image AI / AI Memory / Voice under AI Assistant; Font under General)
 private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "general"; "emoji" -> "general"; "textanim" -> "appearance"; "msgmotion" -> "appearance"; "iconstyle" -> "appearance"; "accent" -> "appearance"; "bluranim" -> "appearance"; else -> "home" }
@@ -4708,6 +4711,7 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
             "msgmotion" -> SettingsSubPage { MessageMotionSettingsPage() }
             "iconstyle" -> SettingsSubPage { IconStyleSettingsPage() }
             "about" -> SettingsSubPage { AboutSettings(ctx, onLogout) }
+            "sync" -> SettingsSubPage { DriveBackupSection() }
             "support" -> SettingsSubPage { SupportSettings(ctx) }
             else -> SettingsHome(status) { onPage(it) }
         }
@@ -4738,6 +4742,7 @@ private fun SettingsHome(status: GatewayClient.Status, onOpen: (String) -> Unit)
         CategoryCard(Icons.Filled.GraphicEq, Color(0xFF4DD0C4), "AI Voice", "Voice reply, voice notes & voice artists") { onOpen("voice") }
         CategoryCard(Icons.Filled.Chat, CAT_WALLPAPER, "Chat", "Wallpaper, bubble style and header") { onOpen("chat") }
         CategoryCard(Icons.Filled.Palette, CAT_APPEARANCE, "Appearance", "Theme and accent color") { onOpen("appearance") }
+        CategoryCard(Icons.Filled.Sync, CAT_AI, "Sync", "Drive backup of API keys & prompts") { onOpen("sync") }
         CategoryCard(Icons.Filled.Info, CAT_ABOUT, "About", "App information and reset") { onOpen("about") }
         CategoryCard(Icons.Filled.Favorite, CAT_SUPPORT, "Support Development", "Donate via UPI or crypto to support AyX") { onOpen("support") }
         Spacer(Modifier.height(16.dp))
@@ -5248,16 +5253,12 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
     SettingsGroup("AI image edit") {
         AiSettingsFields(ctx, dark = false, onSaved = {})
     }
-
-    // v171: encrypted backup of the keys & prompts above to the user's
-    // Drive (Google account added once; no folder picking).
-    DriveBackupSection()
-
 }
 
 /**
- * v171 — "Drive Backup" section (Settings → AI Assistant, under the key /
- * prompt settings it protects). WhatsApp-style: add a Google account
+ * v171 — "Drive Backup" section (v173: moved out of Settings → AI
+ * Assistant into its own top-level Settings → Sync page, directly
+ * above About — same composable, same wiring). WhatsApp-style: add a Google account
  * ONCE and backups go straight to an "AyX Backup" folder in that
  * account's Drive — no folder picking, ever (this replaces v170's SAF
  * folder picker; backups left in a manually picked folder are simply
@@ -7402,12 +7403,32 @@ private fun LinkText(text: String, color: Color) {
  * v169 colors (user): the active line is COLORED — the lyric accent
  * 0xFFFF4848 (MediaTools.LYRIC_ACCENT, the bake matches) — instead of
  * plain white, and no shadow is drawn behind the text anywhere.
+ *
+ * v173: (a) the colour is now the pick from LyricsStyleStore (the
+ * double-tap dialog's colour row; Default = the same accent, and the
+ * bake reads the same store, so preview ⇄ post still agree).
+ * (b) SMOOTHING — [posMs] reaches this composable in coarse player-poll
+ * steps (~90 ms), so every ramp derived from it stepped visibly (the
+ * Blur radius jumped ~2 dp at a time). A per-line Animatable chases the
+ * position with a 170 ms LinearOutSlowIn tween; the renderers below
+ * derive their progress from the SMOOTHED position ([dPos]), so blur
+ * and glides interpolate on every frame. The chase is re-keyed on the
+ * line, so a new line starts from its own position — never an
+ * animated rewind.
+ * (c) Letters letters now ENTER with Text Motion's glide (below)
+ * instead of popping in flat — preview only, the bake is untouched.
  */
 @Composable
 private fun StyledLyricLine(text: String, lineStart: Long, posMs: Long, style: Int, scale: Float, modifier: Modifier = Modifier, lineEndMs: Long = 0L) {
+    val posAnim = remember(lineStart, text) { Animatable(posMs.toFloat()) }
+    LaunchedEffect(posMs) {
+        if (posAnim.value != posMs.toFloat()) posAnim.animateTo(posMs.toFloat(), tween(170, LinearOutSlowInEasing))
+    }
+    val dPos = posAnim.value
+    val lyricColor = Color(LyricsStyleStore.activeColorArgb())
     val words = text.trim().uppercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
     if (words.isEmpty()) return
-    val ph = ((posMs - lineStart).toFloat() / 450f).coerceIn(0f, 1f)
+    val ph = ((dPos - lineStart) / 450f).coerceIn(0f, 1f)
     if (style == LyricsStyleStore.LETTERS) {
         // Letters: visible character count = progress through the
         // line's window (lineStart → lineEndMs) × the line's letter
@@ -7424,11 +7445,38 @@ private fun StyledLyricLine(text: String, lineStart: Long, posMs: Long, style: I
         if (posMs >= lineStart && visible < 1) visible = 1
         if (visible <= 0) return
         var left = visible
+        var gi = 0   // this letter's index across the whole line
         FlowRow(modifier, horizontalArrangement = Arrangement.spacedBy(7.dp, Alignment.CenterHorizontally)) {
             for (w in words) {
                 if (left <= 0) break
                 val take = minOf(left, w.length); left -= take
-                Text(w.substring(0, take), color = Color(0xFFFF4848), fontSize = (LyricsStyleStore.LYRIC_BASE_SP * scale).sp, fontWeight = FontWeight.Black, lineHeight = (LyricsStyleStore.LYRIC_LINE_SP * scale).sp)
+                Row {
+                    for (j in 0 until take) {
+                        // v173: the letter ENTERS with Text Motion's
+                        // glide instead of appearing flat — the same
+                        // backOut rise + fade (TextAnimEasing curve 3)
+                        // plus a slight scale and a fading blur trail,
+                        // run over ~300 ms from the letter's own sung
+                        // moment (its slot in the line window) on the
+                        // SMOOTHED position, so the entry interpolates
+                        // between player polls. WHICH letters are
+                        // visible still comes from the real position
+                        // above — only the entry motion is new, and it
+                        // is preview-only: the bake keeps drawing the
+                        // settled full line (MediaTools, style 9).
+                        val appearAt = lineStart + (gi + 1).toFloat() / totalChars.toFloat() * win.toFloat()
+                        val ap = ((dPos - appearAt) / 300f).coerceIn(0f, 1f)
+                        val e = TextAnimEasing.apply(3, ap)
+                        Text(w[j].toString(), color = lyricColor, fontSize = (LyricsStyleStore.LYRIC_BASE_SP * scale).sp, fontWeight = FontWeight.Black, lineHeight = (LyricsStyleStore.LYRIC_LINE_SP * scale).sp,
+                            modifier = Modifier.graphicsLayer {
+                                alpha = ap
+                                translationY = (1f - e) * 44f
+                                scaleX = 0.82f + 0.18f * e
+                                scaleY = 0.82f + 0.18f * e
+                            }.blur(((1f - ap) * 2.5f).dp))
+                        gi++
+                    }
+                }
             }
         }
         return
@@ -7452,11 +7500,11 @@ private fun StyledLyricLine(text: String, lineStart: Long, posMs: Long, style: I
                         val cp = (ph * (1f + (totalChars - 1) * cStep) - ci * cStep).coerceIn(0f, 1f)
                         ci++
                         val e = TextAnimEasing.apply(3, cp)
-                        Text(ch.toString(), color = Color(0xFFFF4848), fontSize = (LyricsStyleStore.LYRIC_BASE_SP * scale).sp, fontWeight = FontWeight.Black, lineHeight = (LyricsStyleStore.LYRIC_LINE_SP * scale).sp,
+                        Text(ch.toString(), color = lyricColor, fontSize = (LyricsStyleStore.LYRIC_BASE_SP * scale).sp, fontWeight = FontWeight.Black, lineHeight = (LyricsStyleStore.LYRIC_LINE_SP * scale).sp,
                             modifier = Modifier.graphicsLayer {
                                 alpha = cp
                                 translationY = (1f - e) * 52f
-                            })
+                            }.blur(((1f - cp) * 2.5f).dp))   // v173: motion-blur trail while the letter glides; 0 once settled
                     }
                 }
             }
@@ -7493,12 +7541,26 @@ private fun StyledLyricLine(text: String, lineStart: Long, posMs: Long, style: I
                     // always ends fully sharp (blur 0, alpha 1) at
                     // every position, the final lines included.
                     val bwp = (ph * (1f + (words.size - 1) * 0.055f) - i * 0.055f).coerceIn(0f, 1f)
-                    Modifier.graphicsLayer { alpha = bwp }.blur(((1f - bwp) * 9f).dp)
+                    // v173 motion blur: bwp rides the SMOOTHED ph (see
+                    // the header — ph is derived from the Animatable-
+                    // chased position, not the raw poll), so the radius
+                    // interpolates continuously across the entrance
+                    // instead of stepping with each ~90 ms poll. The
+                    // radius + alpha run on easeOutCubic of bwp (the
+                    // melt decelerates as it sharpens into place), and
+                    // a 3% settle-scale gives the word a motion trail.
+                    // Settled state is unchanged: blur 0, alpha 1, scale 1.
+                    val be = 1f - (1f - bwp) * (1f - bwp) * (1f - bwp)
+                    Modifier.graphicsLayer {
+                        alpha = be
+                        scaleX = 0.97f + 0.03f * be
+                        scaleY = 0.97f + 0.03f * be
+                    }.blur(((1f - be) * 9f).dp)
                 }
                 LyricsStyleStore.ROTATE -> Modifier.graphicsLayer { alpha = wp; rotationZ = (1f - ease) * -8f; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 1f) }
                 else -> Modifier
             }
-            Text(w, color = Color(0xFFFF4848), fontSize = (LyricsStyleStore.LYRIC_BASE_SP * scale).sp, fontWeight = FontWeight.Black, lineHeight = (LyricsStyleStore.LYRIC_LINE_SP * scale).sp, modifier = m)
+            Text(w, color = lyricColor, fontSize = (LyricsStyleStore.LYRIC_BASE_SP * scale).sp, fontWeight = FontWeight.Black, lineHeight = (LyricsStyleStore.LYRIC_LINE_SP * scale).sp, modifier = m)
         }
     }
 }
@@ -8289,7 +8351,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                         FlowRow(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp),
                                             horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                                             for (i in 0 until shown) {
-                                                Text(words[i], color = if (i == shown - 1) Color(0xFFFF4848) else Color.White,
+                                                Text(words[i], color = if (i == shown - 1) Color(LyricsStyleStore.activeColorArgb()) else Color.White,
                                                     fontSize = (LyricsStyleStore.LYRIC_BASE_SP * lyricScale).sp, fontWeight = FontWeight.Black, lineHeight = (LyricsStyleStore.LYRIC_LINE_SP * lyricScale).sp)
                                             }
                                         }
@@ -8570,18 +8632,48 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
             shape = uiShapeFor(24),
             title = { Text("Lyrics style") },
             text = {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
+                // v173: the dialog used to span nearly the full screen.
+                // It is now capped at ~62% of the screen height, the
+                // header line stays pinned, and the colour + style list
+                // scrolls inside — everything is reachable by scrolling.
+                val maxH = (LocalConfiguration.current.screenHeightDp * 0.62f).dp
+                Column(Modifier.heightIn(max = maxH)) {
                     Text("Applied to the editor preview and baked into photo statuses when posted. Double-tap the preview anytime to reopen this.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                     Spacer(Modifier.height(8.dp))
-                    LyricsStyleStore.OPTIONS.forEach { opt ->
-                        Row(Modifier.fillMaxWidth().clip(uiShapeFor(12)).clickable { LyricsStyleStore.setStyle(opt.id); lyricsStyleOpen = false }
-                            .background(if (animStyle == opt.id) AYX_GREEN.copy(alpha = 0.16f) else Color.Transparent)
-                            .padding(horizontal = 10.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(opt.label, fontWeight = if (animStyle == opt.id) FontWeight.Bold else FontWeight.Normal)
-                                Text(opt.desc, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+                    Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+                        // v173 colour row: the custom colour the user
+                        // looks for on this dialog. The pick lives in
+                        // LyricsStyleStore beside the style and drives
+                        // the preview AND the photo bake; unpicked =
+                        // Default (the accent). A swatch tap applies
+                        // live and keeps the dialog open so a style can
+                        // be picked right after.
+                        val pickedColor = LyricsStyleStore.colorArgb.value
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("Colour", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                            Text(LyricsStyleStore.colorLabel(pickedColor), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+                        }
+                        FlowRow(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            LyricsStyleStore.COLOR_OPTIONS.forEach { opt ->
+                                val swatch = if (opt.argb == 0) Color(0xFFFF4848) else Color(opt.argb)
+                                Box(Modifier.size(38.dp).clip(CircleShape).background(swatch)
+                                    .border(if (pickedColor == opt.argb) 2.5.dp else 1.dp,
+                                        if (pickedColor == opt.argb) Color.White else Color.White.copy(alpha = 0.35f), CircleShape)
+                                    .clickable { LyricsStyleStore.setColor(opt.argb) })
                             }
-                            if (animStyle == opt.id) AyxIcon(Icons.Filled.Check, "selected", tint = AYX_GREEN)
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        LyricsStyleStore.OPTIONS.forEach { opt ->
+                            Row(Modifier.fillMaxWidth().clip(uiShapeFor(12)).clickable { LyricsStyleStore.setStyle(opt.id); lyricsStyleOpen = false }
+                                .background(if (animStyle == opt.id) AYX_GREEN.copy(alpha = 0.16f) else Color.Transparent)
+                                .padding(horizontal = 10.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(opt.label, fontWeight = if (animStyle == opt.id) FontWeight.Bold else FontWeight.Normal)
+                                    Text(opt.desc, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+                                }
+                                if (animStyle == opt.id) AyxIcon(Icons.Filled.Check, "selected", tint = AYX_GREEN)
+                            }
                         }
                     }
                 }
