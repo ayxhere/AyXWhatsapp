@@ -21,7 +21,7 @@ import javax.crypto.spec.SecretKeySpec
  *   encrypted_media_url DES decryption every open-source client uses
  *   (mirrors what the gateway's /music/search already did server-side;
  *   the picker now calls it directly so all providers behave the same).
- * - iTunes / Deezer — keyless search, 30 s preview clips as the audio.
+ * - iTunes — keyless search, 30 s preview clips as the audio.
  * - Spotify — SEARCH ONLY. When the user saved their OWN developer
  *   credentials (Client Credentials flow) the official route is tried
  *   first; ANY failure — notably Spotify's Premium-required 403 — falls
@@ -30,9 +30,9 @@ import javax.crypto.spec.SecretKeySpec
  *   way Spotify's API hands out no audio file, so a picked Spotify track
  *   is resolved to real audio by matching it on JioSaavn (closest
  *   duration wins), falling back to the iTunes preview for the same
- *   title+artist. iTunes/Deezer picks resolve the same way on apply
+ *   title+artist. iTunes picks resolve the same way on apply
  *   (v160) and fall back to their own 30 s preview when JioSaavn has
- *   no match.
+ *   no match. (Deezer was removed in v161 at the user's order.)
  *
  * Every result is a GatewayClient.Song, so the rest of the pipeline
  * (preview player, AudioTrimmer, download/trim/bake at send time) is
@@ -43,10 +43,9 @@ import javax.crypto.spec.SecretKeySpec
 object MusicProviders {
     const val SAAVN = "saavn"
     const val ITUNES = "itunes"
-    const val DEEZER = "deezer"
     const val SPOTIFY = "spotify"
     val PROVIDERS: List<Pair<String, String>> = listOf(
-        SAAVN to "JioSaavn", ITUNES to "iTunes", DEEZER to "Deezer", SPOTIFY to "Spotify")
+        SAAVN to "JioSaavn", ITUNES to "iTunes", SPOTIFY to "Spotify")
 
     private const val UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
 
@@ -120,9 +119,8 @@ object MusicProviders {
             try {
                 when (provider) {
                     ITUNES -> searchItunesList(q) to ""
-                    DEEZER -> searchDeezerList(q) to ""
                     SPOTIFY -> searchSpotifyList(ctx, q) to ""
-                    else -> searchSaavnList(q) to ""
+                    else -> searchSaavnList(q) to ""   // unknown/persisted ids (e.g. removed providers) land on JioSaavn
                 }
             } catch (e: Exception) {
                 emptyList<GatewayClient.Song>() to (e.message ?: "connection error")
@@ -189,37 +187,6 @@ object MusicProviders {
                 it.optString("artworkUrl100").replace("100x100bb.jpg", "600x600bb.jpg").ifEmpty { null },
                 preview,
                 (it.optLong("trackTimeMillis", 0L) / 1000L).toInt()))
-        }
-        return out
-    }
-
-    // ---------- Deezer (30 s preview) ----------
-    private fun searchDeezerList(q: String): List<GatewayClient.Song> {
-        val url = "https://api.deezer.com/search?q=" + enc(q) + "&limit=30"
-        val data = JSONObject(httpText(url))
-        // Deezer reports API failures as HTTP 200 + an "error" object with
-        // NO "data" array (verified live: {"error":{"type":"ParameterException",
-        // "message":"empty parameter","code":500}}). Mapping that to an empty
-        // list hid real errors — e.g. Deezer's per-IP quota on a shared
-        // carrier IP — behind a misleading "No results" (v160 fix: surface it).
-        data.optJSONObject("error")?.let {
-            throw java.io.IOException("Deezer: " + it.optString("message").ifBlank { "API error" })
-        }
-        val results = data.optJSONArray("data") ?: return emptyList()
-        val out = ArrayList<GatewayClient.Song>()
-        for (i in 0 until results.length()) {
-            val it = results.optJSONObject(i) ?: continue
-            val preview = it.optString("preview")
-            if (preview.isBlank()) continue
-            val album = it.optJSONObject("album")
-            var cover: String? = album?.optString("cover_big")?.ifEmpty { null }
-            if (cover == null) cover = album?.optString("cover_medium")?.ifEmpty { null }
-            out.add(GatewayClient.Song(
-                it.optString("title"),
-                it.optJSONObject("artist")?.optString("name") ?: "",
-                cover,
-                preview,
-                it.optInt("duration", 0)))
         }
         return out
     }
@@ -299,21 +266,53 @@ object MusicProviders {
     // /api/token → 400 "not permitted under the Spotify Developer
     // Terms"), but the public embed player page still ships an anonymous
     // accessToken + its expiry timestamp in the page JSON — read it from
-    // there and call the same Web API search. Verified live from a
-    // clean IP on 2026-10-23 (embed token → /v1/search HTTP 200, real
-    // track JSON). Spotify can change or close this at any time; if it
-    // breaks, the Spotify tab simply surfaces the error.
+    // there and call the same Web API search. Spotify can change or
+    // close this at any time; if it breaks, the Spotify tab surfaces
+    // the real error (v161).
+    //
+    // v161 live re-verification (2026-10-23), from evidence not memory:
+    // - Token extraction works with desktop, mobile AND no User-Agent
+    //   (HTTP 200, token + expiry in the page, all variants). The
+    //   open.spotify.com MAIN page carries NO accessToken — the embed
+    //   page is the only working source.
+    // - The fragile point is the SEARCH quota, not the token: from an
+    //   exhausted IP, /v1/search answers HTTP 429 QUOTA_EXCEEDED with
+    //   Retry-After ≈ 75142 s (~21 h). Fresh tokens and different
+    //   embed track ids do NOT help — the quota is per-IP (a carrier
+    //   NAT address is shared with thousands of other users, so on a
+    //   phone this route can be exhausted around the clock; the v160
+    //   one-time pass was a fresh-IP window). A 429 therefore becomes
+    //   a clear message + a cool-down instead of silent retries.
+    // - httpText audit: the headers map is applied AFTER the default
+    //   User-Agent, so the desktop UA below verifiably wins for the
+    //   embed request (setRequestProperty replaces); Accept-Encoding
+    //   is never set manually, so HttpURLConnection's transparent
+    //   gzip decoding stays active. Both were already correct.
     @Volatile private var spAnonToken: String = ""
     @Volatile private var spAnonExpMs: Long = 0L
+    @Volatile private var spAnonQuotaUntilMs: Long = 0L
 
     private fun spotifyAnonSearch(q: String): List<GatewayClient.Song> {
+        if (System.currentTimeMillis() < spAnonQuotaUntilMs)
+            throw java.io.IOException("Spotify free search is rate-limited (HTTP 429) — try again later, or use the JioSaavn tab")
         try {
             return spotifySearchWithToken(spotifyAnonToken(), q)
         } catch (e: java.io.IOException) {
-            if (e.message?.startsWith("HTTP 401") != true) throw e
-            // cached token rejected → drop it, refetch once, retry once
-            synchronized(this) { spAnonToken = ""; spAnonExpMs = 0L }
-            return spotifySearchWithToken(spotifyAnonToken(), q)
+            when {
+                e.message?.startsWith("HTTP 429") == true -> {
+                    // Shared anonymous quota exhausted for this IP
+                    // (Retry-After is measured in HOURS — retrying now
+                    // is pointless). Cool down and say so plainly.
+                    spAnonQuotaUntilMs = System.currentTimeMillis() + 10 * 60_000L
+                    throw java.io.IOException("Spotify free search is rate-limited (HTTP 429) — try again later, or use the JioSaavn tab")
+                }
+                e.message?.startsWith("HTTP 401") == true -> {
+                    // cached token rejected → drop it, refetch once, retry once
+                    synchronized(this) { spAnonToken = ""; spAnonExpMs = 0L }
+                    return spotifySearchWithToken(spotifyAnonToken(), q)
+                }
+                else -> throw e
+            }
         }
     }
 
@@ -324,11 +323,16 @@ object MusicProviders {
             val t2 = System.currentTimeMillis()
             if (spAnonToken.isNotBlank() && t2 < spAnonExpMs) return spAnonToken
             // The embed page is a desktop web-player surface — use the
-            // desktop browser UA the live verification used.
-            val html = httpText("https://open.spotify.com/embed/track/4uLU6hMCjMI75M1A2tKUQC",
-                headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"))
+            // desktop browser UA the live verification used (it replaces
+            // httpText's default UA via the headers map).
+            val html = try {
+                httpText("https://open.spotify.com/embed/track/4uLU6hMCjMI75M1A2tKUQC",
+                    headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"))
+            } catch (e: java.io.IOException) {
+                throw java.io.IOException("Spotify token fetch failed — " + (e.message ?: "network error"))
+            }
             val tok = Regex("""\\?"accessToken\\?"\s*:\s*\\?"([^"\\]+)""").find(html)?.groupValues?.get(1)
-                ?: throw java.io.IOException("Spotify free route unavailable")
+                ?: throw java.io.IOException("Spotify token not found in the embed page — Spotify may have changed it")
             val exp = Regex("""\\?"accessTokenExpirationTimestampMs\\?"\s*:\s*(\d+)""").find(html)?.groupValues?.get(1)?.toLongOrNull()
             spAnonToken = tok
             spAnonExpMs = when {
@@ -364,7 +368,7 @@ object MusicProviders {
         }
 
     /**
-     * iTunes/Deezer rows carry only the 30 s preview URL — on APPLY, the
+     * iTunes rows carry only the 30 s preview URL — on APPLY, the
      * same JioSaavn matcher used for Spotify finds the full-length song
      * (v160). Null = no match; the caller then falls back to the row's
      * own preview URL (the pre-v160 behavior).

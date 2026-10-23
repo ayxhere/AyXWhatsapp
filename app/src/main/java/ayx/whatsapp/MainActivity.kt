@@ -1430,9 +1430,9 @@ fun GatewayApp(updateBlur: Boolean = false) {
         contactsLoading = true
         scope.launch {
             val all = withContext(Dispatchers.IO) { loadDeviceContacts(ctx) }
-            all.forEach { ContactStore.put(it.number, it.name) }
+            all.forEach { ContactStore.putDevice(it.number, it.name) }
             val reg = GatewayClient.onWhatsApp(all.map { it.number })   // number -> lid?
-            all.forEach { c -> reg[c.number]?.let { lid -> if (lid.isNotBlank()) ContactStore.put(lid, c.name) } }
+            all.forEach { c -> reg[c.number]?.let { lid -> if (lid.isNotBlank()) ContactStore.putDevice(lid, c.name) } }
             deviceContacts = if (reg.isEmpty()) all else all.filter { reg.containsKey(it.number) }
             contactsLoading = false
         }
@@ -1526,7 +1526,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
         ContactStore.init(ctx)
         if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
             val all = withContext(Dispatchers.IO) { loadDeviceContacts(ctx) }
-            all.forEach { ContactStore.put(it.number, it.name) }
+            all.forEach { ContactStore.putDevice(it.number, it.name) }
             doLoadContacts()
         } else contactsPerm.launch(Manifest.permission.READ_CONTACTS)
     }
@@ -2011,22 +2011,10 @@ fun GatewayApp(updateBlur: Boolean = false) {
             CenterAlignedTopAppBar(
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
                 title = {
-                    if (searchMode && openChat == null && screen == "chats") {
-                        if (TextAnimSettings.enabled.value) {
-                            AnimatedOutlinedField(searchQuery, { searchQuery = it }, placeholderText = "Search chats",
-                                singleLine = true, shape = uiShapeFor(24),
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                                borderColor = Color.Transparent, focusedBorderColor = Color.Transparent,
-                                leadingIcon = { AyxIcon(Icons.Filled.Search, null, tint = IOS_BLUE) },
-                                modifier = Modifier.fillMaxWidth())
-                        } else {
-                            OutlinedTextField(searchQuery, { searchQuery = it }, placeholder = { Text("Search chats") },
-                                leadingIcon = { AyxIcon(Icons.Filled.Search, null, tint = IOS_BLUE) }, singleLine = true, shape = uiShapeFor(24),
-                                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent,
-                                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant, unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant),
-                                modifier = Modifier.fillMaxWidth())
-                        }
-                    } else if (openChat != null) {
+                    // v161: searching no longer replaces this header — the
+                    // original title stays, and the search box floats under
+                    // it as a light-blur pill (see ChatsWithStatus).
+                    if (openChat != null) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Avatar(openChat!!, chatName ?: "?", dpCache, 38.dp, CircleShape)
                             Spacer(Modifier.width(9.dp))
@@ -2352,6 +2340,8 @@ fun GatewayApp(updateBlur: Boolean = false) {
                     onSaveName = { n -> scope.launch { runCatching { GatewayClient.setProfileName(n) }.onSuccess { notify("name updated") }.onFailure { notify("name: ${it.message}") } } }) }
                 else -> ChatsWithStatus(messages, chats, statuses, dpCache, searchQuery, chatsPage, topInset = pad.calculateTopPadding(),
                     ayxSnippet = ayxSnippet,
+                    searchMode = searchMode,
+                    onSearchQuery = { searchQuery = it },
                     chatListState = homeChatListState,
                     updateBlur = updateBlur,
                     onPageChange = { chatsPage = it },
@@ -3276,7 +3266,7 @@ private fun ChatDetail(
                     if (TextAnimSettings.enabled.value) {
                         AnimatedOutlinedField(searchQuery, { searchQuery = it }, placeholderText = "Search messages",
                             singleLine = true, shape = uiShapeFor(24),
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
                             borderColor = Color.Transparent, focusedBorderColor = Color.Transparent,
                             leadingIcon = { AyxIcon(Icons.Filled.Search, null, tint = IOS_BLUE) },
                             modifier = Modifier.fillMaxWidth())
@@ -3284,7 +3274,7 @@ private fun ChatDetail(
                         OutlinedTextField(searchQuery, { searchQuery = it }, placeholder = { Text("Search messages") },
                             leadingIcon = { AyxIcon(Icons.Filled.Search, null, tint = IOS_BLUE) }, singleLine = true, shape = uiShapeFor(24),
                             colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent,
-                                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant, unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant),
+                                focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f), unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)),
                             modifier = Modifier.fillMaxWidth())
                     }
                 }
@@ -6606,10 +6596,14 @@ private fun NewChatScreen(contacts: List<DeviceContact>, loading: Boolean, dpCac
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, chats: List<GatewayClient.ChatInfo> = emptyList(), statuses: List<GatewayClient.StatusItem>, dpCache: MutableMap<String, ImageBitmap?>, query: String, page: Int, topInset: androidx.compose.ui.unit.Dp, ayxSnippet: String, onPageChange: (Int) -> Unit, onLoadStatuses: () -> Unit, onOpenStatus: (GatewayClient.StatusItem) -> Unit, onToggleStatusReveal: () -> Unit, onToggleChatReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit, chatListState: LazyListState, clearedUnread: Map<String, Long> = emptyMap(), updateBlur: Boolean = false) {
+private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, chats: List<GatewayClient.ChatInfo> = emptyList(), statuses: List<GatewayClient.StatusItem>, dpCache: MutableMap<String, ImageBitmap?>, query: String, page: Int, topInset: androidx.compose.ui.unit.Dp, ayxSnippet: String, onPageChange: (Int) -> Unit, onLoadStatuses: () -> Unit, onOpenStatus: (GatewayClient.StatusItem) -> Unit, onToggleStatusReveal: () -> Unit, onToggleChatReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit, chatListState: LazyListState, clearedUnread: Map<String, Long> = emptyMap(), updateBlur: Boolean = false, searchMode: Boolean = false, onSearchQuery: (String) -> Unit = {}) {
     val pager = rememberPagerState(initialPage = page) { 2 }
     // content scrolls BEHIND the glass header (topInset) and the floating bottom nav (bottom)
     val contentPad = androidx.compose.foundation.layout.PaddingValues(top = topInset + 6.dp, bottom = 118.dp)
+    // v161: the chat-list search box lives HERE (a light-blur pill under
+    // the unchanged glass header) instead of replacing the header title.
+    val homeSearchFocus = remember { FocusRequester() }
+    LaunchedEffect(searchMode) { if (searchMode) { delay(350); runCatching { homeSearchFocus.requestFocus() } } }
     // bottom-nav tap (page) ↔ swipe (pager) stay in sync
     LaunchedEffect(page) { if (pager.currentPage != page) pager.animateScrollToPage(page) }
     LaunchedEffect(pager.currentPage) {
@@ -6652,7 +6646,34 @@ private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, chats: List<Gatew
         Box(Modifier.fillMaxSize().graphicsLayer {
             alpha = tabAlpha; scaleX = tabScale; scaleY = tabScale; translationY = tabOffsetY
         }) {
-            if (pg == 0) ChatList(messages, chats, dpCache, query, contentPad, ayxSnippet, onToggleChatReveal, onDelete, onOpen, chatListState, clearedUnread)
+            if (pg == 0) {
+                if (searchMode) {
+                    Column(Modifier.fillMaxSize()) {
+                        // Light-blur search pill: translucent fill (the
+                        // app's glass treatment) — the header above it is
+                        // the original one, untouched (v161).
+                        Box(Modifier.fillMaxWidth().padding(top = topInset + 6.dp, start = 12.dp, end = 12.dp, bottom = 6.dp)) {
+                            if (TextAnimSettings.enabled.value) {
+                                AnimatedOutlinedField(query, onSearchQuery, placeholderText = "Search chats",
+                                    singleLine = true, shape = uiShapeFor(24),
+                                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
+                                    borderColor = Color.Transparent, focusedBorderColor = Color.Transparent,
+                                    leadingIcon = { AyxIcon(Icons.Filled.Search, null, tint = IOS_BLUE) },
+                                    modifier = Modifier.fillMaxWidth().focusRequester(homeSearchFocus))
+                            } else {
+                                OutlinedTextField(query, onSearchQuery, placeholder = { Text("Search chats") },
+                                    leadingIcon = { AyxIcon(Icons.Filled.Search, null, tint = IOS_BLUE) }, singleLine = true, shape = uiShapeFor(24),
+                                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent,
+                                        focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f), unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)),
+                                    modifier = Modifier.fillMaxWidth().focusRequester(homeSearchFocus))
+                            }
+                        }
+                        Box(Modifier.weight(1f)) {
+                            ChatList(messages, chats, dpCache, query, androidx.compose.foundation.layout.PaddingValues(top = 6.dp, bottom = 118.dp), ayxSnippet, onToggleChatReveal, onDelete, onOpen, chatListState, clearedUnread)
+                        }
+                    }
+                } else ChatList(messages, chats, dpCache, query, contentPad, ayxSnippet, onToggleChatReveal, onDelete, onOpen, chatListState, clearedUnread)
+            }
             else StatusScreen(statuses, contentPad, onOpenStatus, dpCache, onToggleStatusReveal)
         }
     }
@@ -7156,10 +7177,35 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     var headerBackdrop by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
     var headerRect by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
     var capturingHeader by remember { mutableStateOf(false) }
+    // v161: backdrop-capture discipline. mediaRendered flips when the
+    // media has ACTUALLY rendered (image decoded / video first frame);
+    // the capture effects below wait for it — a blind timer froze
+    // whatever was under the editor (the home screen showing through a
+    // not-yet-drawn video surface) into the frost for the whole
+    // session. *Live marks a bitmap captured after the render; *H is
+    // the fixed on-screen height each backdrop is drawn at (its
+    // capture-rect height), so an IME-driven sheet resize can never
+    // re-crop / re-blur it per frame (the visible "disco").
+    var mediaRendered by remember(mediaUri, mediaType) { mutableStateOf(false) }
+    var sheetBackdropFor by remember { mutableStateOf<Uri?>(null) }
+    var headerBackdropFor by remember { mutableStateOf<Uri?>(null) }
+    var sheetBackdropLive by remember { mutableStateOf(false) }
+    var headerBackdropLive by remember { mutableStateOf(false) }
+    var sheetBackdropH by remember { mutableStateOf(0.dp) }
+    var headerBackdropH by remember { mutableStateOf(0.dp) }
+    val backdropDensity = LocalDensity.current
     val sheetView = LocalView.current
-    LaunchedEffect(mediaUri, mediaType) {
-        sheetBackdrop = null   // never show the previous media's snapshot behind this one
-        if (mediaUri == null) return@LaunchedEffect
+    LaunchedEffect(mediaUri, mediaType, mediaRendered) {
+        if (mediaUri == null) { sheetBackdrop = null; sheetBackdropFor = null; return@LaunchedEffect }
+        // New media: never show the previous media's snapshot behind it.
+        if (sheetBackdropFor != mediaUri) { sheetBackdrop = null; sheetBackdropFor = mediaUri; sheetBackdropLive = false }
+        // v161 capture gating (see the state comment above): a LIVE
+        // (post-render) capture for this media is final — keep it. A
+        // pre-render capture is kept only until the render lands; the
+        // mediaRendered flip then restarts this effect and it
+        // re-captures exactly once, live.
+        if (sheetBackdrop != null && sheetBackdropLive) return@LaunchedEffect
+        if (sheetBackdrop != null && !mediaRendered) return@LaunchedEffect
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return@LaunchedEffect
         var ctx: Context = sheetView.context
         var hops = 0
@@ -7168,15 +7214,20 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
         // Wait for the sheet's first settled layout (panelRect is fed by
         // onGloballyPositioned in the sheet below). Rect changes AFTER this
         // (IME, trimmer, song row) are deliberately ignored — this effect
-        // is keyed on the media only and does not restart for them.
+        // does not re-capture for them.
         var settled = panelRect
         var tries = 0
         while ((settled == null || settled.width < 10f || settled.height < 10f) && tries < 24) { delay(50); settled = panelRect; tries++ }
         val settledRect = settled ?: return@LaunchedEffect
         if (settledRect.width < 10f || settledRect.height < 10f) return@LaunchedEffect
+        // Wait (bounded) for the media itself to render before freezing
+        // the backdrop; on timeout capture anyway (previous behavior).
+        var rw = 0
+        while (!mediaRendered && rw < 70) { delay(50); rw++ }
         delay(300)   // let the media render real frames behind the sheet first
         var attempt = 0
-        while (attempt < 2 && sheetBackdrop == null) {
+        var gotSheet = false
+        while (attempt < 2 && !gotSheet) {
             attempt++
             capturingSheet = true
             try {
@@ -7186,8 +7237,13 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                 // Freshest rect at capture time (the sheet may have grown
                 // since settle, e.g. a song row appeared). After this ONE
                 // capture the bitmap is fixed for this media.
-                val bmp = captureWindowRegion(win, panelRect ?: settledRect)
-                if (bmp != null) sheetBackdrop = bmp else if (attempt < 2) delay(400)
+                val capRect = panelRect ?: settledRect
+                val bmp = captureWindowRegion(win, capRect)
+                if (bmp != null) {
+                    sheetBackdrop = bmp; gotSheet = true
+                    sheetBackdropLive = mediaRendered
+                    sheetBackdropH = with(backdropDensity) { capRect.height.toDp() }
+                } else if (attempt < 2) delay(400)
             } catch (e: Exception) {
                 // Snapshot is best-effort decoration; the scrim carries the look.
                 if (attempt < 2) delay(400)
@@ -7203,9 +7259,15 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     // on the media only). While a capture runs, the header's backdrop
     // layers hide (capturingHeader), so the snapshot sees the media
     // itself, not the bar's own rendering — same trick as the sheet.
-    LaunchedEffect(mediaUri, mediaType) {
-        headerBackdrop = null   // never show the previous media's snapshot behind this one
-        if (mediaUri == null) return@LaunchedEffect
+    LaunchedEffect(mediaUri, mediaType, mediaRendered) {
+        if (mediaUri == null) { headerBackdrop = null; headerBackdropFor = null; return@LaunchedEffect }
+        // New media: never show the previous media's snapshot behind it.
+        if (headerBackdropFor != mediaUri) { headerBackdrop = null; headerBackdropFor = mediaUri; headerBackdropLive = false }
+        // Same v161 gating as the sheet capture: a live (post-render)
+        // capture is final; a pre-render capture is upgraded once when
+        // the render lands.
+        if (headerBackdrop != null && headerBackdropLive) return@LaunchedEffect
+        if (headerBackdrop != null && !mediaRendered) return@LaunchedEffect
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return@LaunchedEffect
         var hctx: Context = sheetView.context
         var hhops = 0
@@ -7218,17 +7280,26 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
         while ((hsettled == null || hsettled.width < 10f || hsettled.height < 10f) && htries < 24) { delay(50); hsettled = headerRect; htries++ }
         val hsettledRect = hsettled ?: return@LaunchedEffect
         if (hsettledRect.width < 10f || hsettledRect.height < 10f) return@LaunchedEffect
+        // Bounded wait for the media render (see the sheet effect).
+        var hrw = 0
+        while (!mediaRendered && hrw < 70) { delay(50); hrw++ }
         delay(300)   // let the media render real frames behind the header first
         var hattempt = 0
-        while (hattempt < 2 && headerBackdrop == null) {
+        var hgot = false
+        while (hattempt < 2 && !hgot) {
             hattempt++
             capturingHeader = true
             try {
                 androidx.compose.runtime.withFrameNanos { }
                 androidx.compose.runtime.withFrameNanos { }
                 delay(40)
-                val hbmp = captureWindowRegion(hwin, headerRect ?: hsettledRect)
-                if (hbmp != null) headerBackdrop = hbmp else if (hattempt < 2) delay(400)
+                val hcapRect = headerRect ?: hsettledRect
+                val hbmp = captureWindowRegion(hwin, hcapRect)
+                if (hbmp != null) {
+                    headerBackdrop = hbmp; hgot = true
+                    headerBackdropLive = mediaRendered
+                    headerBackdropH = with(backdropDensity) { hcapRect.height.toDp() }
+                } else if (hattempt < 2) delay(400)
             } catch (e: Exception) {
                 // Snapshot is best-effort decoration; the scrim carries the look.
                 if (hattempt < 2) delay(400)
@@ -7304,6 +7375,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                         else if (mediaType == "image") {
                             val editedBmp = remember(editedBytes) { editedBytes?.let { runCatching { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }.getOrNull() } }
                             val bmp = editedBmp ?: remember(curUri) { runCatching { ctx.contentResolver.openInputStream(curUri)?.use { BitmapFactory.decodeStream(it)?.asImageBitmap() } }.getOrNull() }
+                            LaunchedEffect(bmp) { if (bmp != null) mediaRendered = true }   // v161: gates the backdrop captures
                             if (bmp != null) Image(bmp, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit) else Text("Preview unavailable", color = Color.White)
                             // LEFT-side X: remove the photo (below the overlaid top bar).
                             IconButton(onClick = { mediaUri = null; editedBytes = null }, modifier = Modifier.align(Alignment.TopStart).padding(top = overlayTopPad, start = 8.dp)) {
@@ -7322,6 +7394,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                     autoPlay = true,
                                     muted = videoMuted,
                                     onPlayer = { exoPlayer = it; runCatching { it.seekTo(vTrimStart) } },
+                                    onReady = { mediaRendered = true },   // v161: gates the backdrop captures
                                     // V1: surface preview errors instead of showing a grey/blank view silently.
                                     onError = { msg ->
                                         runCatching { exoPlayer?.pause() }
@@ -7566,8 +7639,12 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                     Box(Modifier.matchParentSize().alpha(if (capturingHeader) 0f else 1f)) {
                         val hb = headerBackdrop
                         if (hb != null) {
+                            // v161: drawn at its CAPTURE height, top-anchored
+                            // — the bar's layout can never re-crop/re-blur it.
                             Image(hb.asImageBitmap(), null,
-                                Modifier.fillMaxSize().ayxBlurBackground(true, 10.dp),
+                                Modifier.align(Alignment.TopCenter).fillMaxWidth()
+                                    .then(if (headerBackdropH > 0.dp) Modifier.height(headerBackdropH) else Modifier.fillMaxSize())
+                                    .ayxBlurBackground(true, 10.dp),
                                 contentScale = ContentScale.Crop)
                         }
                         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
@@ -7621,8 +7698,15 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                     Box(Modifier.matchParentSize().alpha(if (capturingSheet) 0f else 1f)) {
                         val sb = sheetBackdrop
                         if (sb != null) {
+                            // v161: drawn at its CAPTURE height, top-anchored.
+                            // The sheet's height changes with the IME (its
+                            // column ends in .imePadding()), which used to
+                            // re-crop this bitmap on every keyboard-animation
+                            // frame — the flicker. Capture size never moves.
                             Image(sb.asImageBitmap(), null,
-                                Modifier.fillMaxSize().ayxBlurBackground(true, 10.dp),
+                                Modifier.align(Alignment.TopCenter).fillMaxWidth()
+                                    .then(if (sheetBackdropH > 0.dp) Modifier.height(sheetBackdropH) else Modifier.fillMaxSize())
+                                    .ayxBlurBackground(true, 10.dp),
                                 contentScale = ContentScale.Crop)
                         }
                         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
@@ -9080,11 +9164,16 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
     LaunchedEffect(autoFocus) { if (autoFocus) { kotlinx.coroutines.delay(350); runCatching { searchFocus.requestFocus() } } }
     // a reliable popular artist so the suggested list is never empty on open ("default songs")
     val defaultQ = remember { listOf("arijit singh", "pritam", "atif aslam", "neha kakkar", "honey singh", "shreya ghoshal").random() }
-    // ---- v159: multi-provider search (JioSaavn full / iTunes + Deezer previews / Spotify search-only) ----
+    // ---- multi-provider search (JioSaavn full / iTunes preview / Spotify search-only; Deezer removed in v161) ----
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val musicPrefs = remember { ctx.getSharedPreferences("ayx_music", android.content.Context.MODE_PRIVATE) }
-    var provider by remember { mutableStateOf(musicPrefs.getString("provider", MusicProviders.SAAVN) ?: MusicProviders.SAAVN) }
+    var provider by remember {
+        // A persisted provider that no longer exists (Deezer, removed in
+        // v161) must not strand the picker on a dead tab — fall back to JioSaavn.
+        val savedProv = musicPrefs.getString("provider", MusicProviders.SAAVN) ?: MusicProviders.SAAVN
+        mutableStateOf(if (MusicProviders.PROVIDERS.any { it.first == savedProv }) savedProv else MusicProviders.SAAVN)
+    }
     val spotifyReady = remember { MusicProviders.spotifyConfigured(ctx) }
     // Spotify rows carry no audio URL; resolved audio (JioSaavn match → iTunes
     // preview) is cached per song so preview + apply share one resolution.
@@ -9123,10 +9212,10 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
         if (resolvingKey != null) return
         resolvingKey = key
         scope.launch {
-            // Spotify rows have no audio URL at all; iTunes/Deezer rows
+            // Spotify rows have no audio URL at all; iTunes rows
             // only the 30 s preview. Both resolve the FULL song on
-            // JioSaavn before applying (v160). iTunes/Deezer fall back
-            // to their own preview when JioSaavn has no match; Spotify
+            // JioSaavn before applying (v160). iTunes falls back
+            // to its own preview when JioSaavn has no match; Spotify
             // keeps its "couldn't find audio" toast.
             val r = if (provider == MusicProviders.SPOTIFY) MusicProviders.resolveSpotifyAudio(ctx, sg)
                     else MusicProviders.resolveFullAudio(ctx, sg)
@@ -9198,10 +9287,16 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 8.dp))
                         }
                         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
-                        if (!loading && results.isEmpty() && q.trim().length >= 2) {
-                            Text(if (error.isNotBlank()) "No songs (" + error.take(120) + ")" else "No results", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 8.dp))
-                        }
                         if (q.trim().length < 2) Text("Suggested", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp, start = 2.dp))
+                        // v161: a failed search shows its REAL reason in EVERY
+                        // state — the Suggested (default) list used to fail
+                        // silently, so a broken provider (e.g. Spotify's
+                        // rate limit) looked like a dead, empty tab.
+                        if (!loading && results.isEmpty() && error.isNotBlank()) {
+                            Text("No songs (" + error.take(120) + ")", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 8.dp))
+                        } else if (!loading && results.isEmpty() && q.trim().length >= 2) {
+                            Text("No results", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 8.dp))
+                        }
                     }
                     Spacer(Modifier.height(6.dp))
                     LazyColumn(Modifier.fillMaxSize()) {
