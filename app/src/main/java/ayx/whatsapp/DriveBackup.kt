@@ -1,11 +1,14 @@
 package ayx.whatsapp
 
 import android.content.Context
-import android.net.Uri
-import android.provider.DocumentsContract
 import android.util.Base64
 import android.util.Log
+import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
 import java.security.SecureRandom
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
@@ -15,21 +18,26 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * Encrypted settings backup to a user-picked Google Drive folder (v170).
+ * Encrypted settings backup to the user's Google Drive (v170; v171
+ * replaced the SAF folder picker with a WhatsApp-style Google-account
+ * flow — same payload, crypto, key file and restore semantics).
  *
  * The user's locked decisions, implemented exactly:
  *  - SETTINGS ONLY (API keys + custom prompts, mirrored app-side by
  *    [SettingsMirror]). Login/session material NEVER enters the payload —
  *    the WhatsApp session never leaves the device (v148 rule).
  *  - NO password (he rejected one, twice). The payload is AES-256-GCM
- *    encrypted with a random app-generated key; the KEY FILE lives in the
- *    same picked folder as a SEPARATE file, so a format / new phone can
- *    restore by picking the same folder again.
- *  - Drive access is the Storage Access Framework (one-time folder pick,
- *    persisted URI permission) — no Google Cloud/OAuth setup exists for
- *    this app, so no Drive REST API.
+ *    encrypted with a random app-generated key; the KEY FILE lives in
+ *    Drive beside the backup as a SEPARATE file, so a format / new phone
+ *    restores by signing in with the same Google account — no folder
+ *    picking, ever (v171).
+ *  - Transport is Drive v3 REST over the account added once in Settings
+ *    (see [GoogleDriveAuth], drive.file scope: the app only ever sees
+ *    the "AyX Backup" folder it creates). The two logical files stay
+ *    [BACKUP_FILE] + [KEY_FILE]; v170 backups left in a manually picked
+ *    SAF folder are superseded, not migrated.
  *
- * All functions are BLOCKING (SAF + crypto); callers run them on IO.
+ * All functions are BLOCKING (network + crypto); callers run them on IO.
  */
 object DriveBackup {
     private const val TAG = "DriveBackup"
@@ -37,11 +45,15 @@ object DriveBackup {
     const val KEY_FILE = "ayx-backup-key.ayxkey"
     private const val BACKUP_MIME = "application/octet-stream"
     private const val KEY_MIME = "application/json"
-    private const val PAYLOAD_APP_VERSION = "7.06"
+    private const val PAYLOAD_APP_VERSION = "7.07"
+
+    private const val FOLDER_NAME = "AyX Backup"
+    private const val FOLDER_MIME = "application/vnd.google-apps.folder"
+    private const val DRIVE_API = "https://www.googleapis.com/drive/v3"
+    private const val DRIVE_UPLOAD = "https://www.googleapis.com/upload/drive/v3"
 
     private const val PREFS = "ayx_drive_backup"
-    private const val P_TREE_URI = "tree_uri"
-    private const val P_TREE_NAME = "tree_name"
+    private const val P_ACCOUNT_EMAIL = "account_email"
     private const val P_AUTO_SYNC = "auto_sync"
     private const val P_LAST_OK = "last_backup_ok_ms"
     private const val P_LAST_ERROR = "last_error"
@@ -49,9 +61,11 @@ object DriveBackup {
     /** A failure with a user-readable message (shown as-is in the UI). */
     class BackupError(message: String) : Exception(message)
 
+    /** A Drive HTTP failure; [code] is the HTTP status. */
+    private class DriveHttpException(val code: Int) : Exception("Drive HTTP $code")
+
     data class Status(
-        val folderUri: String?,
-        val folderName: String?,
+        val accountEmail: String?,
         val autoSync: Boolean,
         val lastBackupAt: Long,
         val lastError: String?,
@@ -70,21 +84,33 @@ object DriveBackup {
 
     fun status(ctx: Context): Status {
         val p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        // The live Google account is the truth; the pref is its display
+        // cache (and what auto-sync gates on). Reconcile when they differ.
+        val live = GoogleDriveAuth.signedInAccount(ctx)?.email
+        val stored = p.getString(P_ACCOUNT_EMAIL, null)
+        if (live != null && live != stored) {
+            p.edit().putString(P_ACCOUNT_EMAIL, live).apply()
+        }
         return Status(
-            folderUri = p.getString(P_TREE_URI, null),
-            folderName = p.getString(P_TREE_NAME, null),
+            accountEmail = live ?: stored,
             autoSync = p.getBoolean(P_AUTO_SYNC, false),
             lastBackupAt = p.getLong(P_LAST_OK, 0L),
             lastError = p.getString(P_LAST_ERROR, null)?.ifEmpty { null },
         )
     }
 
-    fun setFolder(ctx: Context, uri: Uri) {
-        val name = runCatching { queryFolderName(ctx, uri) }.getOrNull()
+    /** Record the account the user just signed in with. */
+    fun setAccount(ctx: Context, email: String) {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(P_TREE_URI, uri.toString())
-            .putString(P_TREE_NAME, name ?: "Selected folder")
+            .putString(P_ACCOUNT_EMAIL, email)
             .remove(P_LAST_ERROR)
+            .apply()
+    }
+
+    /** Forget the recorded account (sign-out). */
+    fun clearAccount(ctx: Context) {
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .remove(P_ACCOUNT_EMAIL)
             .apply()
     }
 
@@ -105,36 +131,40 @@ object DriveBackup {
             .putString(P_LAST_ERROR, msg).apply()
     }
 
-    private fun folder(ctx: Context): Uri =
-        status(ctx).folderUri?.let { Uri.parse(it) }
-            ?: throw BackupError("No folder chosen yet — tap “Backup folder” and pick a Google Drive folder first.")
+    /** The signed-in account's email, or a clean "add account" failure. */
+    private fun requireAccount(ctx: Context): String =
+        GoogleDriveAuth.signedInAccount(ctx)?.email
+            ?: ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(P_ACCOUNT_EMAIL, null)
+            ?: throw BackupError("Add your Google account first — tap “Google account”. Backups then go straight to Drive.")
 
     // ---------------- Backup ----------------
 
     /**
-     * Write the encrypted backup (+ the key file, if the folder has none
-     * yet). Returns a success message; throws [BackupError] with a clean
-     * message on any failure. Nothing is written unless the payload built
-     * and encrypted successfully.
+     * Write the encrypted backup (+ the key file, if Drive has none yet)
+     * into the "AyX Backup" folder of the signed-in account. Returns a
+     * success message; throws [BackupError] with a clean message on any
+     * failure. Nothing is written unless the payload built and encrypted
+     * successfully.
      */
     fun backupNow(ctx: Context): String {
         try {
             SettingsMirror.init(ctx)
-            val tree = folder(ctx)
+            requireAccount(ctx)
             if (!SettingsMirror.hasAnyField()) {
                 throw BackupError(
                     "Nothing to back up yet. The app learns your keys & prompts when you save them — " +
                         "save your AI API key / prompts once in Settings → AI Assistant, then back up."
                 )
             }
-            val key = resolveKeyForBackup(ctx, tree)
+            val key = resolveKeyForBackup(ctx)
             val payload = JSONObject()
                 .put("v", 1)
                 .put("createdAt", System.currentTimeMillis())
                 .put("appVersion", PAYLOAD_APP_VERSION)
                 .put("fields", SettingsMirror.snapshotFields())
             val envelope = encrypt(key, payload.toString().toByteArray(Charsets.UTF_8))
-            writeChild(ctx, tree, BACKUP_FILE, BACKUP_MIME, envelope.toString().toByteArray(Charsets.UTF_8))
+            writeRemote(ctx, BACKUP_FILE, BACKUP_MIME, envelope.toString().toByteArray(Charsets.UTF_8))
             recordSuccess(ctx)
             return "Backup saved to Drive."
         } catch (e: BackupError) {
@@ -149,12 +179,12 @@ object DriveBackup {
 
     // ---------------- Restore ----------------
 
-    /** Decrypt the backup in the picked folder WITHOUT applying anything. */
+    /** Decrypt the backup in Drive WITHOUT applying anything. */
     fun peekBackup(ctx: Context): Peek {
         try {
             SettingsMirror.init(ctx)
-            val tree = folder(ctx)
-            val payload = readPayload(ctx, tree)
+            requireAccount(ctx)
+            val payload = readPayload(ctx)
             val fields = payload.optJSONObject("fields")
                 ?: throw BackupError("The backup file is damaged (no settings inside). Nothing was restored.")
             return Peek(
@@ -178,8 +208,8 @@ object DriveBackup {
     suspend fun restore(ctx: Context): String {
         try {
             SettingsMirror.init(ctx)
-            val tree = folder(ctx)
-            val payload = readPayload(ctx, tree)
+            requireAccount(ctx)
+            val payload = readPayload(ctx)
             val fields = payload.optJSONObject("fields")
                 ?: throw BackupError("The backup file is damaged (no settings inside). Nothing was restored.")
             if (payload.optInt("v", 0) != 1) {
@@ -223,10 +253,10 @@ object DriveBackup {
         }
     }
 
-    private fun readPayload(ctx: Context, tree: Uri): JSONObject {
-        val key = resolveKeyForRestore(ctx, tree)
-        val raw = readChild(ctx, tree, BACKUP_FILE)
-            ?: throw BackupError("No backup found in this folder ($BACKUP_FILE is missing). Nothing was restored.")
+    private fun readPayload(ctx: Context): JSONObject {
+        val key = resolveKeyForRestore(ctx)
+        val raw = readRemote(ctx, BACKUP_FILE)
+            ?: throw BackupError("No backup found in Drive ($BACKUP_FILE is missing). Nothing was restored.")
         val envelope = try {
             JSONObject(String(raw, Charsets.UTF_8))
         } catch (e: Exception) {
@@ -235,7 +265,7 @@ object DriveBackup {
         val plain = try {
             decrypt(key, envelope)
         } catch (e: Exception) {
-            throw BackupError("This backup cannot be opened with the key file in this folder — the backup and its key file do not belong together. Nothing was restored.")
+            throw BackupError("This backup cannot be opened with the key file in Drive — the backup and its key file do not belong together. Nothing was restored.")
         }
         return try {
             JSONObject(String(plain, Charsets.UTF_8))
@@ -255,13 +285,13 @@ object DriveBackup {
 
     /**
      * Called from the settings-write choke point whenever the mirror
-     * changed. With auto-sync ON and a folder picked, schedules ONE
+     * changed. With auto-sync ON and an account added, schedules ONE
      * debounced silent backup; failures only update the status line.
      */
     fun onMirrorUpdated() {
         val ctx = appCtx ?: return
         val st = status(ctx)
-        if (!st.autoSync || st.folderUri == null) return
+        if (!st.autoSync || st.accountEmail == null) return
         synchronized(this) {
             pendingAuto?.cancel(false)
             pendingAuto = scheduler.schedule({
@@ -274,13 +304,13 @@ object DriveBackup {
     // ---------------- Key handling ----------------
 
     /**
-     * The key for a backup write: the folder's key file WINS when present
+     * The key for a backup write: the key file in Drive WINS when present
      * (so backups stay readable by the very file a future restore will
-     * use); otherwise the app's cached/generated key, written to the
-     * folder as the key file.
+     * use); otherwise the app's cached/generated key, uploaded as the
+     * key file.
      */
-    private fun resolveKeyForBackup(ctx: Context, tree: Uri): ByteArray {
-        readChild(ctx, tree, KEY_FILE)?.let { raw ->
+    private fun resolveKeyForBackup(ctx: Context): ByteArray {
+        readRemote(ctx, KEY_FILE)?.let { raw ->
             val k = parseKeyFile(raw)
             if (k != null) {
                 SettingsMirror.cacheBackupKey(k)
@@ -288,22 +318,22 @@ object DriveBackup {
             }
             // An unreadable key file must not be silently overwritten —
             // it may belong to backups this phone hasn't seen.
-            throw BackupError("The key file in this folder ($KEY_FILE) cannot be read. Backup stopped so nothing is overwritten.")
+            throw BackupError("The key file in Drive ($KEY_FILE) cannot be read. Backup stopped so nothing is overwritten.")
         }
         val key = SettingsMirror.cachedBackupKey() ?: ByteArray(32).also {
             SecureRandom().nextBytes(it)
             SettingsMirror.cacheBackupKey(it)
         }
         val keyJson = JSONObject().put("v", 1).put("k", Base64.encodeToString(key, Base64.NO_WRAP))
-        writeChild(ctx, tree, KEY_FILE, KEY_MIME, keyJson.toString().toByteArray(Charsets.UTF_8))
+        writeRemote(ctx, KEY_FILE, KEY_MIME, keyJson.toString().toByteArray(Charsets.UTF_8))
         return key
     }
 
-    private fun resolveKeyForRestore(ctx: Context, tree: Uri): ByteArray {
-        val raw = readChild(ctx, tree, KEY_FILE)
-            ?: throw BackupError("Key file not found in this folder ($KEY_FILE). Restore is impossible without it — the backup and its key file must stay together.")
+    private fun resolveKeyForRestore(ctx: Context): ByteArray {
+        val raw = readRemote(ctx, KEY_FILE)
+            ?: throw BackupError("Key file not found in Drive ($KEY_FILE). Restore is impossible without it — the backup and its key file must stay together.")
         val k = parseKeyFile(raw)
-            ?: throw BackupError("The key file in this folder ($KEY_FILE) cannot be read. Nothing was restored.")
+            ?: throw BackupError("The key file in Drive ($KEY_FILE) cannot be read. Nothing was restored.")
         SettingsMirror.cacheBackupKey(k)
         return k
     }
@@ -337,55 +367,134 @@ object DriveBackup {
         return cipher.doFinal(data)
     }
 
-    // ---------------- SAF plumbing (raw DocumentsContract; no extra dep) -
+    // ---------------- Drive REST backend (v171; replaces v170's SAF) ----
 
-    private fun queryFolderName(ctx: Context, tree: Uri): String? {
-        val doc = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
-        ctx.contentResolver.query(
-            doc,
-            arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME),
-            null, null, null,
-        )?.use { c -> if (c.moveToFirst()) return c.getString(0) }
-        return null
+    /** Run [block] with a Drive access token; on a 401, refresh once. */
+    private fun <T> withToken(ctx: Context, block: (String) -> T): T {
+        var token = freshToken(ctx)
+        try {
+            return block(token)
+        } catch (e: DriveHttpException) {
+            if (e.code != 401) throw e
+            GoogleDriveAuth.invalidateToken(ctx, token)
+            token = freshToken(ctx)
+            return block(token)
+        }
     }
 
-    private fun findChildId(ctx: Context, tree: Uri, name: String): String? {
-        val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
-        ctx.contentResolver.query(
-            children,
-            arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME),
-            null, null, null,
-        )?.use { c ->
-            while (c.moveToNext()) {
-                if (c.getString(1) == name) return c.getString(0)
+    private fun freshToken(ctx: Context): String = try {
+        GoogleDriveAuth.accessToken(ctx)
+    } catch (e: GoogleDriveAuth.AuthException) {
+        throw BackupError(e.message ?: GoogleDriveAuth.MSG_SIGN_IN_AGAIN)
+    }
+
+    private fun readRemote(ctx: Context, name: String): ByteArray? =
+        withToken(ctx) { token -> driveRead(token, name) }
+
+    private fun writeRemote(ctx: Context, name: String, mime: String, bytes: ByteArray) {
+        withToken(ctx) { token -> driveWrite(token, name, mime, bytes) }
+    }
+
+    /** The "AyX Backup" folder in the account's Drive root — found or created. */
+    private fun driveFolderId(token: String): String {
+        val query = "name = '$FOLDER_NAME' and mimeType = '$FOLDER_MIME' and 'root' in parents and trashed = false"
+        driveListFirst(token, query)?.let { return it.getString("id") }
+        val meta = JSONObject().put("name", FOLDER_NAME).put("mimeType", FOLDER_MIME)
+        val (code, bytes) = driveHttp(
+            "POST", "$DRIVE_API/files?fields=id", token,
+            meta.toString().toByteArray(Charsets.UTF_8), "application/json; charset=UTF-8",
+        )
+        if (code !in 200..299) throw DriveHttpException(code)
+        return JSONObject(String(bytes, Charsets.UTF_8)).getString("id")
+    }
+
+    private fun driveFindChildId(token: String, folderId: String, name: String): String? {
+        val query = "'$folderId' in parents and name = '$name' and trashed = false"
+        return driveListFirst(token, query)?.optString("id")?.ifEmpty { null }
+    }
+
+    private fun driveRead(token: String, name: String): ByteArray? {
+        val folderId = driveFolderId(token)
+        val id = driveFindChildId(token, folderId, name) ?: return null
+        val (code, bytes) = driveHttp("GET", "$DRIVE_API/files/$id?alt=media", token)
+        return when {
+            code in 200..299 -> bytes
+            code == 404 -> null
+            else -> throw DriveHttpException(code)
+        }
+    }
+
+    private fun driveWrite(token: String, name: String, mime: String, bytes: ByteArray) {
+        val folderId = driveFolderId(token)
+        val id = driveFindChildId(token, folderId, name) ?: run {
+            val meta = JSONObject()
+                .put("name", name)
+                .put("mimeType", mime)
+                .put("parents", JSONArray().put(folderId))
+            val (code, created) = driveHttp(
+                "POST", "$DRIVE_API/files?fields=id", token,
+                meta.toString().toByteArray(Charsets.UTF_8), "application/json; charset=UTF-8",
+            )
+            if (code !in 200..299) throw DriveHttpException(code)
+            JSONObject(String(created, Charsets.UTF_8)).getString("id")
+        }
+        val (code, _) = driveHttp(
+            "PATCH", "$DRIVE_UPLOAD/files/$id?uploadType=media", token, bytes, mime,
+        )
+        if (code !in 200..299) throw DriveHttpException(code)
+    }
+
+    private fun driveListFirst(token: String, query: String): JSONObject? {
+        val url = "$DRIVE_API/files?q=${enc(query)}&fields=${enc("files(id,name)")}&pageSize=1"
+        val (code, bytes) = driveHttp("GET", url, token)
+        return when {
+            code in 200..299 -> {
+                val files = JSONObject(String(bytes, Charsets.UTF_8)).optJSONArray("files")
+                if (files != null && files.length() > 0) files.getJSONObject(0) else null
+            }
+            code == 404 -> null
+            else -> throw DriveHttpException(code)
+        }
+    }
+
+    /**
+     * One Drive HTTP call. Returns (status, body). HTTP error statuses
+     * are NOT exceptions here — callers decide (404 = missing is normal).
+     */
+    private fun driveHttp(
+        method: String,
+        url: String,
+        token: String,
+        body: ByteArray? = null,
+        contentType: String? = null,
+    ): Pair<Int, ByteArray> {
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = method
+            connectTimeout = 20_000
+            readTimeout = 60_000
+            setRequestProperty("Authorization", "Bearer $token")
+            if (body != null) {
+                doOutput = true
+                if (contentType != null) setRequestProperty("Content-Type", contentType)
             }
         }
-        return null
+        if (body != null) conn.outputStream.use { it.write(body); it.flush() }
+        val code = conn.responseCode
+        val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+        val bytes = stream?.use { it.readBytes() } ?: ByteArray(0)
+        return code to bytes
     }
 
-    private fun readChild(ctx: Context, tree: Uri, name: String): ByteArray? {
-        val id = findChildId(ctx, tree, name) ?: return null
-        val uri = DocumentsContract.buildDocumentUriUsingTree(tree, id)
-        return ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-    }
-
-    private fun writeChild(ctx: Context, tree: Uri, name: String, mime: String, bytes: ByteArray) {
-        val existing = findChildId(ctx, tree, name)
-        val uri = if (existing != null) {
-            DocumentsContract.buildDocumentUriUsingTree(tree, existing)
-        } else {
-            val parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
-            DocumentsContract.createDocument(ctx.contentResolver, parent, mime, name)
-                ?: throw BackupError("Could not create $name in the chosen folder.")
-        }
-        val out = ctx.contentResolver.openOutputStream(uri, "wt")
-            ?: throw BackupError("Could not open $name for writing.")
-        out.use { it.write(bytes); it.flush() }
-    }
+    private fun enc(s: String): String = URLEncoder.encode(s, "UTF-8")
 
     private fun friendly(e: Exception): String = when (e) {
-        is SecurityException ->
-            "Folder access was lost (permission revoked or folder moved). Pick the backup folder again."
+        is DriveHttpException -> when (e.code) {
+            401 -> GoogleDriveAuth.MSG_SIGN_IN_AGAIN
+            403 -> "Google refused Drive access (quota or permission). Try again later, or sign in again from “Google account”."
+            404 -> "Something in Drive was moved or deleted — try again."
+            else -> "Drive answered with an error (HTTP ${e.code}) — try again in a bit."
+        }
+        is IOException -> GoogleDriveAuth.MSG_NETWORK
         else -> "Drive backup failed: ${e.message ?: "unknown error"}"
     }
 }

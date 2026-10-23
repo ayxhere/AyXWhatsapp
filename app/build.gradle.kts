@@ -11,8 +11,8 @@ android {
         applicationId = "ayx.whatsapp"
         minSdk = 24
         targetSdk = 34
-        versionCode = 170
-        versionName = "7.06"
+        versionCode = 171
+        versionName = "7.07"
 
         ndk {
             // Ship arm64 only for the spike (covers essentially all modern phones).
@@ -113,6 +113,7 @@ dependencies {
     implementation("com.google.zxing:core:3.5.3")   // QR generation for Support Development
     implementation("androidx.emoji2:emoji2:1.5.0")   // consistent colour emoji (downloadable, no APK size)
     implementation("androidx.security:security-crypto:1.0.0")       // EncryptedSharedPreferences for the AyX Group token
+    implementation("com.google.android.gms:play-services-auth:21.3.0")   // Google sign-in + Drive token for Drive Backup (v171; no web client ID needed — resolves the Android OAuth client by package + SHA-1)
     implementation("androidx.work:work-runtime-ktx:2.9.0")          // periodic AyX updates sync (no Firebase in this app)
     // Media3 ExoPlayer — replaces the laggy VideoView/MediaPlayer for all video playback
     // (chat viewer, composer preview, status editor, status viewer).

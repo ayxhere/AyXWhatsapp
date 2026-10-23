@@ -5249,18 +5249,24 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
         AiSettingsFields(ctx, dark = false, onSaved = {})
     }
 
-    // v170: encrypted backup of the keys & prompts above to a Drive folder.
+    // v171: encrypted backup of the keys & prompts above to the user's
+    // Drive (Google account added once; no folder picking).
     DriveBackupSection()
 
 }
 
 /**
- * v170 — "Drive Backup" section (Settings → AI Assistant, under the key /
- * prompt settings it protects). Backs up SETTINGS ONLY — API keys + custom
- * prompts, AES-256-GCM encrypted on-device, key file kept beside the
- * backup in the same Drive folder (no password, by the user's choice).
- * Login/session data is never part of it. All heavy work runs on IO via
- * [DriveBackup]; this composable only holds display state.
+ * v171 — "Drive Backup" section (Settings → AI Assistant, under the key /
+ * prompt settings it protects). WhatsApp-style: add a Google account
+ * ONCE and backups go straight to an "AyX Backup" folder in that
+ * account's Drive — no folder picking, ever (this replaces v170's SAF
+ * folder picker; backups left in a manually picked folder are simply
+ * superseded). Backs up SETTINGS ONLY — API keys + custom prompts,
+ * AES-256-GCM encrypted on-device, key file kept beside the backup in
+ * Drive (no password, by the user's choice). Login/session data is
+ * never part of it. All heavy work runs on IO via [DriveBackup]; this
+ * composable only holds display state. Sign-in failures land as calm
+ * status-line notes, never crashes (see [GoogleDriveAuth]).
  */
 @Composable
 private fun DriveBackupSection() {
@@ -5270,25 +5276,51 @@ private fun DriveBackupSection() {
     var busy by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf<String?>(null) }
     var restorePeek by remember { mutableStateOf<DriveBackup.Peek?>(null) }
+    var accountOpen by remember { mutableStateOf(false) }
 
     fun refresh() { status = DriveBackup.status(ctx) }
 
-    val treePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        if (uri != null) {
-            val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            runCatching { ctx.contentResolver.takePersistableUriPermission(uri, flags) }
-            DriveBackup.setFolder(ctx, uri)
-            note = "Backup folder selected. “Backup now” will save the encrypted backup there."
-            refresh()
+    val signInLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        runCatching { GoogleDriveAuth.accountFromResult(result.data) }
+            .onSuccess { email ->
+                DriveBackup.setAccount(ctx, email)
+                note = if (GoogleDriveAuth.hasDrivePermission(ctx))
+                    "Google account added — backups now go straight to your Drive."
+                else
+                    "Account added, but Drive access wasn't allowed — tap “Google account” and allow Drive."
+            }
+            .onFailure { note = it.message ?: "Sign-in failed — please try again." }
+        refresh()
+    }
+
+    fun launchSignIn() {
+        val problem = GoogleDriveAuth.playServicesProblem(ctx)
+        if (problem != null) {
+            note = problem
+            return
         }
+        runCatching { signInLauncher.launch(GoogleDriveAuth.client(ctx).signInIntent) }
+            .onFailure { note = GoogleDriveAuth.MSG_SETUP_PENDING }
+    }
+
+    /** Backup/Restore gate: signed out → explain, then start sign-in. */
+    fun needsSignIn(): Boolean {
+        if (status.accountEmail != null) return false
+        note = "Add your Google account first — one sign-in, then backups go straight to Drive."
+        launchSignIn()
+        return true
     }
 
     SettingsGroup("Drive Backup") {
         ActionRow(
-            Icons.Filled.FolderOpen, CAT_AI, "Backup folder",
-            status.folderName?.let { "Google Drive folder: $it — tap to change" }
-                ?: "Choose a Google Drive folder (one-time)"
-        ) { treePicker.launch(null) }
+            Icons.Filled.Person, CAT_AI, "Google account",
+            status.accountEmail?.let { "$it — backups go to this account's Drive" }
+                ?: "Add your Gmail once — no folders to manage"
+        ) {
+            if (status.accountEmail == null) launchSignIn() else accountOpen = true
+        }
 
         SettingRow(
             Icons.Filled.Sync, CAT_AI, "Auto-sync backup",
@@ -5300,7 +5332,7 @@ private fun DriveBackupSection() {
             Icons.Filled.CloudUpload, CAT_AI, "Backup now",
             "Encrypted backup of API keys & prompts — never login data"
         ) {
-            if (!busy) {
+            if (!busy && !needsSignIn()) {
                 busy = true
                 scope.launch {
                     note = runCatching { withContext(Dispatchers.IO) { DriveBackup.backupNow(ctx) } }
@@ -5313,9 +5345,9 @@ private fun DriveBackupSection() {
 
         ActionRow(
             Icons.Filled.CloudDownload, CAT_AI, "Restore from Drive",
-            "Read the backup in the chosen folder and apply it here"
+            "Read the backup from Drive and apply it here"
         ) {
-            if (!busy) {
+            if (!busy && !needsSignIn()) {
                 busy = true
                 scope.launch {
                     val peek = runCatching { withContext(Dispatchers.IO) { DriveBackup.peekBackup(ctx) } }
@@ -5333,13 +5365,54 @@ private fun DriveBackupSection() {
             status.lastError != null -> "Last attempt failed: ${status.lastError}"
             status.lastBackupAt > 0L ->
                 "Last backup: " + SimpleDateFormat("d MMM yyyy, h:mm a", Locale.US).format(Date(status.lastBackupAt))
-            else -> "The backup file and its key file stay together in the folder — keep both."
+            status.accountEmail == null -> "One sign-in and backups save themselves to Drive — no folders, ever."
+            else -> "The backup and its key file stay together in the “AyX Backup” folder in your Drive."
         }
         Text(
             statusLine ?: "",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 2.dp, top = 6.dp, bottom = 8.dp),
+        )
+    }
+
+    if (accountOpen) {
+        val email = status.accountEmail ?: ""
+        AlertDialog(
+            onDismissRequest = { accountOpen = false },
+            containerColor = dialogBg(),
+            shape = uiShapeFor(24),
+            title = { Text("Google account") },
+            text = {
+                Text(
+                    "Backups go to the “AyX Backup” folder in $email's Drive. " +
+                        "Switch to move future backups to another account. Signing out stops " +
+                        "Drive backup on this phone — backups already in Drive stay there."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    accountOpen = false
+                    GoogleDriveAuth.signOut(ctx) {
+                        DriveBackup.clearAccount(ctx)
+                        note = "Signed out of Google on this phone."
+                        refresh()
+                    }
+                }) { Text("Sign out", color = AYX_RED) }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        accountOpen = false
+                        GoogleDriveAuth.signOut(ctx) {
+                            DriveBackup.clearAccount(ctx)
+                            refresh()
+                            launchSignIn()
+                        }
+                    }) { Text("Switch account") }
+                    TextButton(onClick = { accountOpen = false }) { Text("Cancel") }
+                }
+            },
         )
     }
 
