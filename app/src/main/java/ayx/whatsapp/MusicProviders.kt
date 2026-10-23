@@ -99,7 +99,7 @@ object MusicProviders {
             try {
                 when (provider) {
                     ITUNES -> searchItunesList(q) to ""
-                    SPOTIFY -> searchSpotifyList(q) to ""
+                    SPOTIFY -> searchSpotifyWithFallback(q) to ""
                     else -> searchSaavnList(q) to ""   // unknown/persisted ids (e.g. removed providers) land on JioSaavn
                 }
             } catch (e: Exception) {
@@ -170,6 +170,34 @@ object MusicProviders {
         }
         return out
     }
+
+    /**
+     * v163 — the Spotify tab must never dead-end (user: "Spotify
+     * unlimited free krde, bina error ke chalta rahe"). Spotify results
+     * when the anonymous route answers; on ANY failure (per-IP 429
+     * quota, token failure, network) or an empty result, SILENTLY fall
+     * back in the same search to JioSaavn, then iTunes, for the same
+     * query — deduped by normalized title+artist, JioSaavn first. The
+     * caller always gets an empty error string here, so no Spotify HTTP
+     * error can ever render on this tab; only when every source yields
+     * nothing does the sheet show its plain "No results". Fallback
+     * songs carry real audio URLs already, so preview/apply need no
+     * Spotify-style resolution for them.
+     */
+    private fun searchSpotifyWithFallback(q: String): List<GatewayClient.Song> {
+        val sp = runCatching { searchSpotifyList(q) }.getOrDefault(emptyList())
+        if (sp.isNotEmpty()) return sp
+        val out = ArrayList<GatewayClient.Song>()
+        val seen = HashSet<String>()
+        fun addAll(list: List<GatewayClient.Song>) {
+            for (s in list) if (seen.add(songKey(s))) out.add(s)
+        }
+        addAll(runCatching { searchSaavnList(q) }.getOrDefault(emptyList()))
+        addAll(runCatching { searchItunesList(q) }.getOrDefault(emptyList()))
+        return out
+    }
+
+    private fun songKey(s: GatewayClient.Song) = normTitle(s.title) + "|" + normTitle(s.artist)
 
     // ---------- Spotify (search only; audio resolved separately) ----------
     // v162: the ONLY route is the free anonymous one below — no login,

@@ -1298,6 +1298,8 @@ fun GatewayApp(updateBlur: Boolean = false) {
     var viewImg by remember { mutableStateOf<Pair<ImageBitmap, GatewayClient.Msg>?>(null) }
     var viewVideoUrl by remember { mutableStateOf<Pair<String, GatewayClient.Msg>?>(null) }
     var dpView by remember { mutableStateOf<String?>(null) }   // jid whose profile photo is previewed full-screen
+    var infoChat by remember { mutableStateOf<String?>(null) }   // v163: jid whose chat/group info page is open
+    var infoTitle by remember { mutableStateOf("") }             // v163: display title captured when the info page opens
     var toast by remember { mutableStateOf<String?>(null) }
     val optimistic = remember { mutableStateListOf<OptMsg>() }
     // S4: media uploads in progress — shown with progress in the chat.
@@ -1608,10 +1610,11 @@ fun GatewayApp(updateBlur: Boolean = false) {
     }
     LaunchedEffect(toast) { if (toast != null) { delay(2500); toast = null } }
 
-    BackHandler(enabled = viewImg != null || viewVideoUrl != null || openChat != null || storyView != null || screen == "settings" || screen == "newchat" || screen == "profile") {
+    BackHandler(enabled = viewImg != null || viewVideoUrl != null || infoChat != null || openChat != null || storyView != null || screen == "settings" || screen == "newchat" || screen == "profile") {
         when {
             viewImg != null -> viewImg = null
             viewVideoUrl != null -> viewVideoUrl = null
+            infoChat != null -> infoChat = null
             openChat != null && chatSelMode -> exitChatSel()
             openChat != null -> openChat = null
             storyView != null -> storyView = null
@@ -1812,6 +1815,23 @@ fun GatewayApp(updateBlur: Boolean = false) {
         )
     }
 
+
+    // v163: chat/group info page (header name tap / menu → Info). Rendered
+    // below the media viewers in z-order so a gallery tap can open the
+    // full image/video viewer on top of it, exactly like from a bubble.
+    infoChat?.let { ij ->
+        ChatInfoSheet(
+            jid = ij,
+            title = infoTitle,
+            isGroup = ij.endsWith("@g.us"),
+            dpCache = dpCache,
+            previewCache = previewCache,
+            onClose = { infoChat = null },
+            onAvatarClick = { dpView = ij },
+            onOpenMedia = { openMedia(it) },
+            onNotify = { notify(it) },
+        )
+    }
 
     // image viewer (full screen) — B7: proper header (back + title + download/share), not just the bare image.
     // v144: single-tap on the image no longer closes the viewer (user
@@ -2296,6 +2316,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
                 onBlock = { scope.launch { runCatching { GatewayClient.blockChat(ocChat, true) }.onSuccess { notify("blocked"); blockedJids = blockedJids + ocChat; blkPrefs.edit().putStringSet("blocked", blockedJids).apply() }.onFailure { notify("failed: ${it.message}") } } },
                 onUnblock = { scope.launch { runCatching { GatewayClient.blockChat(ocChat, false) }.onSuccess { notify("unblocked"); blockedJids = blockedJids - ocChat; blkPrefs.edit().putStringSet("blocked", blockedJids).apply() }.onFailure { notify("failed: ${it.message}") } } },
                 onAvatarClick = { dpView = ocChat },
+                onInfo = { infoChat = ocChat; infoTitle = title },
                 onSearch = { chatSearchOpen = true },
                 // U2: selection mode renders inside the header (3-dot replaced by delete + select-all).
                 selCount = if (chatSelMode) chatSelIds.size else 0,
@@ -3793,6 +3814,8 @@ private fun ChatGlassHeader(
     onBlock: () -> Unit,
     onUnblock: () -> Unit,
     onAvatarClick: () -> Unit,
+    /** v163: opens the chat/group info page (name column + menu → Info). */
+    onInfo: () -> Unit = {},
     /** Opens the in-chat message search bar (state hoisted to the parent). */
     onSearch: () -> Unit = {},
     /** U2: >0 while messages are selected — the 3-dot menu is REPLACED by delete + select-all. */
@@ -3825,7 +3848,7 @@ private fun ChatGlassHeader(
                 IconButton(onClick = onBack) { AyxIcon(Icons.AutoMirrored.Filled.ArrowBack, "back", tint = onPill) }
                 Box(Modifier.clip(CircleShape).clickable { onAvatarClick() }) { Avatar(jid, name, dpCache, 38.dp, CircleShape) }
                 Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f)) {
+                Column(Modifier.weight(1f).clickable { onInfo() }) {
                     Text(name, maxLines = 1, fontWeight = FontWeight.Bold, color = onPill,
                         style = MaterialTheme.typography.titleMedium, modifier = Modifier.basicMarquee())
                     val sub = presence?.let { pr -> if (pr.online) "online" else if (pr.lastSeen > 0) "last seen " + fmt(pr.lastSeen * 1000) else "" } ?: ""
@@ -3834,6 +3857,7 @@ private fun ChatGlassHeader(
                 Box {
                     IconButton(onClick = { menu = true }) { AyxIcon(Icons.Filled.MoreVert, "menu", tint = onPill) }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(text = { Text("Info") }, onClick = { menu = false; onInfo() })
                         DropdownMenuItem(text = { Text("Search") }, leadingIcon = { AyxIcon(Icons.Filled.Search, null) }, onClick = { menu = false; onSearch() })
                         DropdownMenuItem(text = { Text("Set name") }, leadingIcon = { AyxIcon(Icons.Filled.Edit, null) }, onClick = { menu = false; onEdit() })
                         DropdownMenuItem(text = { Text("Change wallpaper") }, onClick = { menu = false; onWallpaper() })
@@ -3843,6 +3867,278 @@ private fun ChatGlassHeader(
                 }
                 }
             }
+        }
+    }
+}
+
+/**
+ * v163 — chat / group info page (chat header name tap, or header menu →
+ * Info). Shows the chat's identity, its on-device storage, and the
+ * per-chat media gallery.
+ *
+ * MEDIA MODEL (verified in code): every downloaded media file lives in
+ * the gateway media dir — AppStorage.mediaDir(ctx) = filesDir/media,
+ * the same dir NodeRuntime exports as WAGW_MEDIA_DIR — named
+ * "<msgId>.<ext>" (Msg.mediaName). The gateway prunes that dir itself
+ * (300 MB cap, files older than 25 h), so a message whose file is gone
+ * is a NORMAL state here: bubbles fall back to the embedded thumbnail
+ * and GET /media/<name> re-downloads on demand. The gallery therefore
+ * enumerates the chat's messages (paged via getChatMessages) and keeps
+ * mediaType image/video/audio — stickers are EXCLUDED by spec — while
+ * storage counts only files that actually exist on disk.
+ *
+ * "Clear photos & videos" deletes ONLY this chat's image/video files
+ * (plus their in-memory previewCache entries). Message records, voice
+ * files and sticker files are never touched; cleared bubbles render
+ * exactly like pruned/never-downloaded media (thumbnail, re-download
+ * on open).
+ *
+ * NOTE: no member count is shown for groups — no gateway response
+ * carries one (groupMetadata is fetched gateway-side for the subject
+ * only); see the v163 report. The subtitle stays "Group" until the
+ * gateway exposes a count.
+ */
+@Composable
+private fun ChatInfoSheet(
+    jid: String,
+    title: String,
+    isGroup: Boolean,
+    dpCache: MutableMap<String, ImageBitmap?>,
+    previewCache: MutableMap<String, ImageBitmap?>,
+    onClose: () -> Unit,
+    onAvatarClick: () -> Unit,
+    onOpenMedia: (GatewayClient.Msg) -> Unit,
+    onNotify: (String) -> Unit,
+) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var media by remember(jid) { mutableStateOf<List<GatewayClient.Msg>>(emptyList()) }
+    var loading by remember(jid) { mutableStateOf(true) }
+    var reloadTick by remember(jid) { mutableStateOf(0) }
+    var pvFileCount by remember(jid) { mutableStateOf(0) }
+    var pvBytes by remember(jid) { mutableStateOf(0L) }
+    var voiceFileCount by remember(jid) { mutableStateOf(0) }
+    var voiceBytes by remember(jid) { mutableStateOf(0L) }
+    var confirmClear by remember(jid) { mutableStateOf(false) }
+
+    LaunchedEffect(jid, reloadTick) {
+        loading = true
+        val acc = ArrayList<GatewayClient.Msg>()
+        withContext(Dispatchers.IO) {
+            var before = 0L
+            while (true) {
+                val page = runCatching { GatewayClient.getChatMessages(jid, before, 500) }.getOrDefault(emptyList())
+                if (page.isEmpty()) break
+                acc += page
+                // Bound the scan: the gateway log is finite, but a huge
+                // group history must not page forever on the info page.
+                if (page.size < 500 || acc.size >= 6000) break
+                val nb = page.minOf { it.ts }
+                if (nb <= 0L || nb == before) break
+                before = nb
+            }
+        }
+        val filtered = acc.filter {
+            it.mediaName != null && !it.deleted &&
+                (it.mediaType == "image" || it.mediaType == "video" || it.mediaType == "audio")
+        }.distinctBy { it.mediaName }.sortedByDescending { it.ts }
+        media = filtered
+        val dir = AppStorage.mediaDir(ctx)
+        withContext(Dispatchers.IO) {
+            var c = 0; var b = 0L; var vc = 0; var vb = 0L
+            for (m in filtered) {
+                val f = File(dir, m.mediaName!!)
+                if (f.exists()) {
+                    if (m.mediaType == "audio") { vc++; vb += f.length() } else { c++; b += f.length() }
+                }
+            }
+            pvFileCount = c; pvBytes = b; voiceFileCount = vc; voiceBytes = vb
+        }
+        loading = false
+    }
+
+    val pv = media.filter { it.mediaType == "image" || it.mediaType == "video" }
+    val voice = media.filter { it.mediaType == "audio" }
+    val subtitle = when {
+        isGroup -> "Group"
+        jid.endsWith("@s.whatsapp.net") -> "+" + jid.substringBefore("@").substringBefore(":")
+        else -> ""
+    }
+
+    val doClear: () -> Unit = {
+        scope.launch {
+            val dir = AppStorage.mediaDir(ctx)
+            var n = 0; var freed = 0L
+            val names = ArrayList<String>()
+            withContext(Dispatchers.IO) {
+                for (m in pv) {
+                    val name = m.mediaName ?: continue
+                    val f = File(dir, name)
+                    if (f.exists()) {
+                        val len = f.length()
+                        if (f.delete()) { n++; freed += len; names.add(name) }
+                    }
+                }
+            }
+            names.forEach { previewCache.remove(it) }
+            confirmClear = false
+            onNotify("Cleared $n photos & videos · ${AppStorage.fmtSize(freed)} freed")
+            reloadTick++
+        }
+    }
+
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        LazyColumn(Modifier.fillMaxSize().statusBarsPadding()) {
+            item {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onClose) { AyxIcon(Icons.AutoMirrored.Filled.ArrowBack, "back") }
+                    Text(if (isGroup) "Group info" else "Chat info", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                }
+            }
+            item {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(Modifier.clip(CircleShape).clickable { onAvatarClick() }) { Avatar(jid, title, dpCache, 96.dp, CircleShape) }
+                    Spacer(Modifier.height(12.dp))
+                    Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
+                    if (subtitle.isNotEmpty()) Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            item {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
+                    Text("Storage", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.height(8.dp))
+                    InfoRow("Photos & videos", if (pvFileCount > 0) "$pvFileCount · ${AppStorage.fmtSize(pvBytes)}" else "0")
+                    Spacer(Modifier.height(6.dp))
+                    InfoRow("Voice messages", if (voiceFileCount > 0) "$voiceFileCount · ${AppStorage.fmtSize(voiceBytes)}" else "0")
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedButton(onClick = { confirmClear = true }, enabled = pvFileCount > 0, modifier = Modifier.fillMaxWidth()) {
+                        Text("Clear photos & videos")
+                    }
+                    Text(
+                        "Only this chat's saved photos and videos are deleted. Messages, voice notes and stickers stay.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
+            }
+            item {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Media, links, and docs", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+                    if (!loading) Text("${pv.size + voice.size}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            if (loading) {
+                item {
+                    Box(Modifier.fillMaxWidth().padding(28.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                }
+            } else if (pv.isEmpty() && voice.isEmpty()) {
+                item {
+                    Text("No media in this chat yet", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                }
+            }
+            items(pv.chunked(3)) { rowMsgs ->
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    for (m in rowMsgs) {
+                        InfoGalleryCell(m, previewCache, Modifier.weight(1f)) { onOpenMedia(m) }
+                    }
+                    repeat(3 - rowMsgs.size) { Spacer(Modifier.weight(1f)) }
+                }
+            }
+            if (voice.isNotEmpty()) {
+                item {
+                    Text("Voice messages", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp))
+                }
+                items(voice) { m ->
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+                        if (isGroup && !m.fromMe) {
+                            Text(groupSenderName(m), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.weight(1f)) { AudioPlayer(GatewayClient.mediaUrl(m.mediaName!!), MaterialTheme.colorScheme.onSurface) }
+                            Spacer(Modifier.width(8.dp))
+                            Text(fmt(m.ts), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+            item { Spacer(Modifier.height(32.dp)) }
+        }
+    }
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text("Clear photos & videos?") },
+            text = { Text("Delete $pvFileCount photos & videos (${AppStorage.fmtSize(pvBytes)}) saved for this chat? Messages, voice notes and stickers are not touched. Deleted media can be downloaded again from the chat.") },
+            confirmButton = { TextButton(onClick = doClear) { Text("Clear") } },
+            dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Cancel") } },
+        )
+    }
+}
+
+/** One photo/video tile of the info page gallery: same preview pipeline
+ * as chat bubbles (shared previewCache, embedded-thumb fallback); video
+ * tiles carry a play badge. Tapping opens the parent media viewer. */
+@Composable
+private fun InfoGalleryCell(m: GatewayClient.Msg, previewCache: MutableMap<String, ImageBitmap?>, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val ctx = LocalContext.current
+    val name = m.mediaName ?: return
+    var bmp by remember(name) { mutableStateOf(previewCache[name] ?: decodeThumb(m.thumb)) }
+    LaunchedEffect(name) {
+        if (!previewCache.containsKey(name)) {
+            val p = loadPreview(ctx, m)
+            if (p != null) { previewCache[name] = p; bmp = p }
+        }
+    }
+    Box(modifier.aspectRatio(1f).clip(uiShapeFor(8)).background(MaterialTheme.colorScheme.surfaceVariant).clickable { onClick() }) {
+        if (bmp != null) Image(bmp!!, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        if (m.mediaType == "video") {
+            Box(Modifier.align(Alignment.BottomStart).padding(4.dp).size(20.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.55f)), contentAlignment = Alignment.Center) {
+                AyxIcon(Icons.Filled.PlayArrow, "video", tint = Color.White, modifier = Modifier.size(14.dp))
+            }
+        }
+    }
+}
+
+/**
+ * v163 — "Wavy" voice-note progress line (Settings → Appearance →
+ * Voice note style): the status styles' Wavy renderer adapted to the
+ * bubble — a faint full wave in the unplayed tint, the bright wave in
+ * the played tint up to the progress point, same continuous
+ * clock-driven phase and animated fill edge as WavyProgress. Playback
+ * is untouched; this only draws the line.
+ */
+@Composable
+private fun VoiceNoteWave(progress: Float, tint: Color, modifier: Modifier = Modifier) {
+    val phase by rememberInfiniteTransition(label = "voicewavephase").animateFloat(
+        initialValue = 0f, targetValue = 6.28318f,
+        animationSpec = infiniteRepeatable(tween(3400, easing = LinearEasing), RepeatMode.Restart),
+        label = "voicewavephase"
+    )
+    val animFrac by animateFloatAsState(progress.coerceIn(0f, 1f), animationSpec = tween(140, easing = LinearEasing), label = "voicewavefrac")
+    val wave = remember { Path() }
+    Canvas(modifier) {
+        val w = size.width
+        val midY = size.height / 2f
+        val amp = size.height * 0.30f
+        val waveLen = 34.dp.toPx().coerceAtLeast(1f)
+        val trackW = 2.dp.toPx()
+        fun buildWave(x0: Float, x1: Float) {
+            wave.rewind()
+            var x = x0
+            wave.moveTo(x, midY + amp * kotlin.math.sin((x / waveLen) * 6.28318f + phase))
+            while (x < x1) {
+                x = minOf(x + waveLen / 24f, x1)
+                wave.lineTo(x, midY + amp * kotlin.math.sin((x / waveLen) * 6.28318f + phase))
+            }
+        }
+        // faint full wave track (unplayed)
+        buildWave(0f, w)
+        drawPath(wave, tint.copy(alpha = 0.3f), style = Stroke(width = trackW, cap = StrokeCap.Round))
+        if (animFrac > 0f) {
+            val fx = (animFrac * w).coerceIn(0f, w)
+            buildWave(0f, fx)
+            drawPath(wave, tint, style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round))
         }
     }
 }
@@ -3910,7 +4206,13 @@ private fun AudioPlayer(url: String, tint: Color, holdPause: Boolean = false) {
             if (!ready && wantPlay) CircularProgressIndicator(Modifier.size(20.dp), color = tint, strokeWidth = 2.dp)
             else AyxIcon(if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "play", tint = tint, modifier = Modifier.size(24.dp))
         }
-        LinearProgressIndicator(progress = { progress }, modifier = Modifier.weight(1f).height(4.dp), color = tint, trackColor = tint.copy(alpha = 0.3f))
+        // v163: Voice note style — "wavy" swaps the straight progress
+        // line for VoiceNoteWave; "default" is the shipped line, unchanged.
+        if (ThemeStore.voiceNoteStyle.value == "wavy") {
+            VoiceNoteWave(progress = progress, tint = tint, modifier = Modifier.weight(1f).height(14.dp))
+        } else {
+            LinearProgressIndicator(progress = { progress }, modifier = Modifier.weight(1f).height(4.dp), color = tint, trackColor = tint.copy(alpha = 0.3f))
+        }
     }
 }
 
@@ -5326,6 +5628,45 @@ private fun StatusStyleGrid() {
     }
 }
 
+// Settings → Appearance → Voice note style: renderer for the progress
+// line in voice message bubbles. Stored in ThemeStore (persisted) next
+// to Status style; "default" is the shipped straight line.
+private val VOICE_NOTE_STYLES = listOf(
+    "default" to "Default", "wavy" to "Wavy"
+)
+
+@Composable
+private fun VoiceNoteStyleGrid() {
+    val current = ThemeStore.voiceNoteStyle.value
+    Column(Modifier.padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        for (row in VOICE_NOTE_STYLES.chunked(2)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                for ((k, lbl) in row) {
+                    val sel = current == k
+                    StyledSurface(
+                        onClick = { ThemeStore.setVoiceNoteStyle(k) },
+                        shape = uiShapeFor(16),
+                        color = if (sel) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(10.dp).clip(CircleShape)
+                                .background(if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)))
+                            Spacer(Modifier.width(10.dp))
+                            Text(lbl, style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                        }
+                    }
+                }
+                // Keep the grid aligned when the row has one item.
+                if (row.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+}
+
 @Composable
 private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -> Unit, onOpenIconStyle: () -> Unit, onOpenAccentColor: () -> Unit, onOpenBlurAnim: () -> Unit) {
     val accent = ThemeStore.accent.value
@@ -5421,6 +5762,17 @@ private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         StatusStyleGrid()
+        Text(
+            "Voice note style",
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.padding(top = 14.dp),
+        )
+        Text(
+            "Progress line shown in voice message bubbles",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        VoiceNoteStyleGrid()
     }
 
 }

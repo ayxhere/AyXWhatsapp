@@ -23,6 +23,11 @@ object ThemeStore {
     // (Settings → Appearance → Status style). Default stays "squiggly" so
     // the shipped look never changes unless the user switches it.
     val statusProgressStyle = mutableStateOf("squiggly")
+    // voice-note progress line style: default | wavy
+    // (Settings → Appearance → Voice note style, next to Status style).
+    // Default stays "default" so the shipped straight line is unchanged
+    // until the user switches it.
+    val voiceNoteStyle = mutableStateOf("default")
 
     /**
      * Legacy: delegates to UiStyleStore.uiStyle.
@@ -72,6 +77,7 @@ object ThemeStore {
         }
         accent.value = prefs!!.getString("accent", "purple") ?: "purple"
         statusProgressStyle.value = prefs!!.getString("status_progress_style", "squiggly") ?: "squiggly"
+        voiceNoteStyle.value = prefs!!.getString("voice_note_style", "default") ?: "default"
         // Migrate legacy appearance_style to UiStyleStore if present
         val legacy = prefs!!.getString("appearance_style", null)
         if (legacy != null && UiStyleStore.uiStyle.value == "default") {
@@ -96,5 +102,10 @@ object ThemeStore {
     fun setStatusProgressStyle(s: String) {
         statusProgressStyle.value = s
         prefs?.edit()?.putString("status_progress_style", s)?.apply()
+    }
+
+    fun setVoiceNoteStyle(s: String) {
+        voiceNoteStyle.value = s
+        prefs?.edit()?.putString("voice_note_style", s)?.apply()
     }
 }
