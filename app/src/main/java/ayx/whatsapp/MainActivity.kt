@@ -1819,6 +1819,8 @@ fun GatewayApp(updateBlur: Boolean = false) {
     // v163: chat/group info page (header name tap / menu → Info). Rendered
     // below the media viewers in z-order so a gallery tap can open the
     // full image/video viewer on top of it, exactly like from a bubble.
+    // v165: the sheet lifts itself above the Scaffold via zIndex(50f) in
+    // its root (this emission precedes the Scaffold — see ChatInfoSheet).
     infoChat?.let { ij ->
         ChatInfoSheet(
             jid = ij,
@@ -3994,7 +3996,16 @@ private fun ChatInfoSheet(
         }
     }
 
-    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+    // v165 ROOT-CAUSE FIX: this page is emitted BEFORE the Scaffold in
+    // GatewayApp, so without a zIndex the Scaffold (drawn later, opaque,
+    // touch-consuming) paints OVER the page — both entry points set the
+    // state correctly but the page sat buried and untouchable under the
+    // chat. Every other pre-Scaffold overlay lifts itself (viewers via
+    // fullscreenOverlay zIndex 100f, status viewer via zIndex(100f)).
+    // zIndex(50f) puts the page above the Scaffold but still below the
+    // media viewers (100f), so gallery taps keep opening them on top;
+    // the tap blocker stops touches leaking to the chat underneath.
+    Box(Modifier.fillMaxSize().zIndex(50f).background(MaterialTheme.colorScheme.background).pointerInput(Unit) { detectTapGestures { } }) {
         LazyColumn(Modifier.fillMaxSize().statusBarsPadding()) {
             item {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
