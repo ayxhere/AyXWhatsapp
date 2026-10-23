@@ -325,12 +325,22 @@ object GatewayClient {
     /** AI Lyrics API configs in failover order. Migrates the old single key (GroqKeyDialog / API configuration) as the first "Groq" entry so nothing is lost. */
     private suspend fun lyricApis(): List<LyricApi> {
         val s = runCatching { getSettings() }.getOrNull() ?: return emptyList()
-        val list = s.aiLyricsApis.filter { it.url.isNotBlank() && it.key.isNotBlank() }
+        // v168: never use a v167 mask ("••••••••…") as a key — it would 401.
+        // (The gateway list itself is not redacted, but a mask can land in it
+        // via the settings-screen migration of the single key.)
+        val list = s.aiLyricsApis.filter { it.url.isNotBlank() && it.key.isNotBlank() && !AiKeyStore.isMask(it.key.trim()) }
         if (list.isNotEmpty()) return list
-        if (s.aiApiKey.isNotBlank()) return listOf(LyricApi(
+        // Legacy single-key fallback: since v167, settings.aiApiKey is only a
+        // mask, so prefer the real key from the app-side encrypted copy
+        // (AiKeyStore); fall back to the settings value only if it is a real
+        // (non-mask) key.
+        val legacyKey = AiKeyStore.getCached().ifBlank {
+            s.aiApiKey.trim().takeUnless { AiKeyStore.isMask(it) } ?: ""
+        }
+        if (legacyKey.isNotBlank()) return listOf(LyricApi(
             name = "Groq",
             url = s.aiApiUrl.ifBlank { "https://api.groq.com/openai/v1/chat/completions" },
-            key = s.aiApiKey,
+            key = legacyKey,
             model = s.aiModel.ifBlank { "openai/gpt-oss-20b" }))
         return emptyList()
     }

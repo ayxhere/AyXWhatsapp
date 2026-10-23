@@ -44,6 +44,11 @@ object NodeRuntime {
         // (Chat composer and .vv are frozen — this init lives at app startup.)
         Reschedule.init(ctx.applicationContext)
 
+        // v168: cache the app context for AiKeyStore (app-side encrypted copy
+        // of the real aiApiKey) so context-less callers (GatewayClient) can
+        // read it. Runs before the gateway serves any settings.
+        AiKeyStore.init(ctx)
+
         val projectDir = File(ctx.filesDir, "nodejs-project")
         extractIfNeeded(ctx, projectDir)
 

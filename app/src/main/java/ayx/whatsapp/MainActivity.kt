@@ -5186,6 +5186,11 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
     fun saveApi() {
         onToggle(JSONObject().put("aiApiUrl", url.trim()).put("aiApiKey", key.trim()).put("aiModel", model.trim())
             .put("aiSystemPrompt", sys))
+        // v168: keep the app-side encrypted copy (AiKeyStore) in sync for the
+        // features that call the AI directly (Reschedule, lyrics fallback) —
+        // the gateway returns only a mask since v167. save() itself ignores
+        // blanks and masks, so an untouched (masked) field can't corrupt it.
+        AiKeyStore.save(ctx, key)
         Toast.makeText(ctx, "AI settings saved", Toast.LENGTH_SHORT).show()
     }
     StyledSurface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
@@ -5201,6 +5206,20 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
                 visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
                 trailingIcon = { IconButton(onClick = { showKey = !showKey }) { AyxIcon(if (showKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, "toggle key") } },
                 modifier = Modifier.fillMaxWidth())
+            // v168: explicit key removal. Since v167 a blank field on save
+            // means "keep the stored key", so removal needs its own signal:
+            // "aiApiKeyClear": true tells the gateway to wipe the stored key,
+            // and the app-side encrypted copy (AiKeyStore) is wiped with it.
+            if (key.isNotBlank()) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = {
+                        onToggle(JSONObject().put("aiApiKey", "").put("aiApiKeyClear", true))
+                        AiKeyStore.clear(ctx)
+                        key = ""
+                        Toast.makeText(ctx, "API key removed", Toast.LENGTH_SHORT).show()
+                    }) { Text("Remove key", color = AYX_RED) }
+                }
+            }
             OutlinedTextField(model, { model = it }, label = { Text("Model (text)") }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
             OutlinedTextField(sys, { sys = it }, label = { Text("System prompt (optional)") }, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
         }
@@ -8544,7 +8563,13 @@ private fun GroqKeyDialog(ctx: Context, onClose: () -> Unit) {
                                 GatewayClient.patchSettings(JSONObject().put("aiApiUrl", url.trim()).put("aiApiKey", key.trim()).put("aiModel", model.trim()).put("aiLyricsApis", arr))
                             }.isSuccess
                             saving = false
-                            if (ok) { Toast.makeText(ctx, "API settings saved", Toast.LENGTH_SHORT).show(); onClose() }
+                            if (ok) {
+                                // v168: this dialog writes a REAL aiApiKey to the
+                                // gateway — mirror it into the app-side encrypted
+                                // copy (AiKeyStore) for direct AI calls.
+                                AiKeyStore.save(ctx, key.trim())
+                                Toast.makeText(ctx, "API settings saved", Toast.LENGTH_SHORT).show(); onClose()
+                            }
                             else err = "Could not reach the gateway — is AyX connected?"
                         }
                     }, enabled = !saving) { Text(if (saving) "Saving…" else "Save") }

@@ -490,6 +490,21 @@ object Reschedule {
     // Fail-open everywhere: any doubt or failure → the message sends normally.
 
     /**
+     * The REAL aiApiKey for this feature's direct AI calls (v168). Since v167
+     * the gateway only returns a mask ("••••••••…") for settings.aiApiKey, and
+     * sending that mask as the Bearer key 401s — reminders silently stopped.
+     * Prefer the app-side encrypted copy (AiKeyStore, written whenever the
+     * user saves a real key); use the settings value only when it is a real
+     * (non-mask) key. "" = no usable key; callers keep failing open.
+     */
+    private fun realApiKey(ctx: Context, settings: GatewayClient.Settings): String {
+        val stored = AiKeyStore.get(ctx)
+        if (stored.isNotBlank()) return stored
+        val fromSettings = settings.aiApiKey.trim()
+        return if (AiKeyStore.isMask(fromSettings)) "" else fromSettings
+    }
+
+    /**
      * Entry point for outgoing text. Returns true if [text] was consumed as a
      * reminder and must not be delivered as a WhatsApp message.
      */
@@ -501,7 +516,7 @@ object Reschedule {
             GatewayClient.getSettings()
         } catch (_: Exception) { return false } // gateway not up: fail open
         val apiUrl = settings.aiApiUrl.trim()
-        val apiKey = settings.aiApiKey.trim()
+        val apiKey = realApiKey(ctx, settings)
         if (apiUrl.isEmpty() || apiKey.isEmpty()) return false // no AI configured: send normally
         val model = settings.aiModel.trim().ifEmpty { "openai/gpt-oss-20b" }
         val ext = try {
@@ -601,7 +616,7 @@ object Reschedule {
                 }
             }
             val apiUrl = settings.aiApiUrl.trim()
-            val apiKey = settings.aiApiKey.trim()
+            val apiKey = realApiKey(ctx, settings)
             if (apiUrl.isEmpty() || apiKey.isEmpty()) {
                 failTask(ctx, taskId, task, "AI not configured")
                 return Result.failure()

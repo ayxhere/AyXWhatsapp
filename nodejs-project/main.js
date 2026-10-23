@@ -3320,7 +3320,11 @@ app.post('/settings', (req, res) => {
   if (Array.isArray(b.autoReplyRules)) settings.autoReplyRules = b.autoReplyRules
   if (typeof b.aiReplyEnabled === 'boolean') settings.aiReplyEnabled = b.aiReplyEnabled
   if (typeof b.aiApiUrl === 'string') settings.aiApiUrl = b.aiApiUrl
-  if (typeof b.aiApiKey === 'string' && !isMaskOrBlank('aiApiKey', b.aiApiKey)) settings.aiApiKey = b.aiApiKey
+  // v168: explicit key removal. Blank/mask still means "keep the stored key"
+  // (v167), so the app's Remove action sends aiApiKeyClear: true — wipe the
+  // stored key. The flag is consumed here only; it is never persisted.
+  if (b.aiApiKeyClear === true) settings.aiApiKey = ''
+  else if (typeof b.aiApiKey === 'string' && !isMaskOrBlank('aiApiKey', b.aiApiKey)) settings.aiApiKey = b.aiApiKey
   if (typeof b.aiModel === 'string') settings.aiModel = b.aiModel
   if (typeof b.groupAiEnabled === 'boolean') settings.groupAiEnabled = b.groupAiEnabled
   if (typeof b.aiSystemPrompt === 'string') settings.aiSystemPrompt = b.aiSystemPrompt
