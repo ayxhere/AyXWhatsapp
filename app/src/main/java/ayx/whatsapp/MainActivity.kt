@@ -4905,6 +4905,27 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
     SettingsGroup("AI image edit") {
         AiSettingsFields(ctx, dark = false, onSaved = {})
     }
+
+    // Spotify song search (v159) — the user's OWN Spotify developer credentials,
+    // used only for search (Client Credentials). Stored in EncryptedSharedPreferences
+    // on-device (MusicProviders), never sent to the gateway. Spotify serves no
+    // audio file, so picked tracks are matched to audio on JioSaavn by the picker.
+    SettingsGroup("Spotify (song search)") {
+        var spId by remember { mutableStateOf(MusicProviders.spotifyCreds(ctx).first) }
+        var spSecret by remember { mutableStateOf(MusicProviders.spotifyCreds(ctx).second) }
+        var showSpSecret by remember { mutableStateOf(false) }
+        Text("Optional — lets the status song picker search Spotify too. Create a free app at developer.spotify.com, then paste its Client ID & Secret here. Keys stay encrypted on this phone.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 4.dp))
+        OutlinedTextField(spId, { spId = it }, label = { Text("Spotify Client ID") }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(spSecret, { spSecret = it }, label = { Text("Spotify Client Secret") }, singleLine = true, shape = uiShapeFor(14),
+            visualTransformation = if (showSpSecret) VisualTransformation.None else PasswordVisualTransformation(),
+            trailingIcon = { IconButton(onClick = { showSpSecret = !showSpSecret }) { AyxIcon(if (showSpSecret) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, "toggle secret") } },
+            modifier = Modifier.fillMaxWidth())
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            FilledTonalButton(onClick = { MusicProviders.saveSpotifyCreds(ctx, spId, spSecret); Toast.makeText(ctx, "Spotify keys saved", Toast.LENGTH_SHORT).show() }) { Text("Save") }
+        }
+    }
 }
 
 /** AI Lyrics — multiple OpenAI-compatible API configs with automatic failover (tried IN ORDER). */
@@ -7245,6 +7266,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     ForceLightSystemBarIcons()
     Box(Modifier.fullscreenOverlay()) {
         val focusManager = LocalFocusManager.current
+        val view = LocalView.current
         Surface(Modifier.fillMaxSize(), color = Color.Black) {
             // ---- Full-bleed overlay layout: media fills the screen; top bar + controls float above it ----
             Box(Modifier.fillMaxSize().blur(editorBlur)) {
@@ -7334,8 +7356,20 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                 indication = null
                             ) {
                                 focusManager.clearFocus()
+                                // Keyboard up (caption typing): the tap ONLY
+                                // dismisses the keyboard — it must not ALSO
+                                // pause the video (user: "just keyboard down
+                                // hoga; agar firse tap kya to video pause
+                                // hoga"). IME visibility is read imperatively
+                                // at tap time from the window insets — a
+                                // WindowInsets.ime composition read here would
+                                // recompose this whole video branch on every
+                                // frame of the keyboard animation (the storm
+                                // CaptionFieldTint's leaf-scope read avoids).
+                                val imeUp = androidx.core.view.ViewCompat.getRootWindowInsets(view)
+                                    ?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime()) == true
                                 val pl = exoPlayer
-                                if (pl != null) {
+                                if (!imeUp && pl != null) {
                                     runCatching {
                                         if (pl.playWhenReady) { pl.pause(); videoPlaying = false; centerFlash = true }
                                         else {
@@ -9046,11 +9080,59 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
     LaunchedEffect(autoFocus) { if (autoFocus) { kotlinx.coroutines.delay(350); runCatching { searchFocus.requestFocus() } } }
     // a reliable popular artist so the suggested list is never empty on open ("default songs")
     val defaultQ = remember { listOf("arijit singh", "pritam", "atif aslam", "neha kakkar", "honey singh", "shreya ghoshal").random() }
+    // ---- v159: multi-provider search (JioSaavn full / iTunes + Deezer previews / Spotify search-only) ----
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val musicPrefs = remember { ctx.getSharedPreferences("ayx_music", android.content.Context.MODE_PRIVATE) }
+    var provider by remember { mutableStateOf(musicPrefs.getString("provider", MusicProviders.SAAVN) ?: MusicProviders.SAAVN) }
+    val spotifyReady = remember { MusicProviders.spotifyConfigured(ctx) }
+    // Spotify rows carry no audio URL; resolved audio (JioSaavn match → iTunes
+    // preview) is cached per song so preview + apply share one resolution.
+    val resolvedSongs = remember { mutableStateMapOf<String, GatewayClient.Song>() }
+    var resolvingKey by remember { mutableStateOf<String?>(null) }
+    fun playPreview(url: String) {
+        runCatching {
+            player.reset(); player.setDataSource(url)
+            player.setOnPreparedListener { p -> if (previewUrl == url) runCatching { p.start() } }
+            player.setOnErrorListener { _, _, _ -> previewUrl = null; true }
+            player.prepareAsync(); previewUrl = url
+        }
+    }
+    fun previewSong(sg: GatewayClient.Song) {
+        val key = sg.title + "|" + sg.artist
+        val eff = resolvedSongs[key] ?: sg
+        if (eff.url.isNotBlank()) {
+            if (previewUrl == eff.url) { runCatching { player.pause() }; previewUrl = null } else playPreview(eff.url)
+            return
+        }
+        if (resolvingKey != null) return
+        resolvingKey = key
+        scope.launch {
+            val r = MusicProviders.resolveSpotifyAudio(ctx, sg)
+            resolvingKey = null
+            if (r != null) { resolvedSongs[key] = r; playPreview(r.url) }
+            else Toast.makeText(ctx, "Couldn't find audio for this song", Toast.LENGTH_LONG).show()
+        }
+    }
+    fun selectSong(sg: GatewayClient.Song) {
+        val key = sg.title + "|" + sg.artist
+        val eff = resolvedSongs[key] ?: sg
+        if (eff.url.isNotBlank()) { runCatching { player.stop() }; onSelect(eff); return }
+        if (resolvingKey != null) return
+        resolvingKey = key
+        scope.launch {
+            val r = MusicProviders.resolveSpotifyAudio(ctx, sg)
+            resolvingKey = null
+            if (r != null) { resolvedSongs[key] = r; runCatching { player.stop() }; onSelect(r) }
+            else Toast.makeText(ctx, "Couldn't find audio for this song", Toast.LENGTH_LONG).show()
+        }
+    }
     DisposableEffect(Unit) { onDispose { runCatching { player.release() }; onQueryChange(qState.value) } }
-    LaunchedEffect(q) {
+    LaunchedEffect(q, provider) {
         val query = q.trim()
-        if (query.length >= 2) { loading = true; delay(450); val r = GatewayClient.searchMusic(query); results = r.first; error = r.second; loading = false }
-        else { loading = true; val r = GatewayClient.searchMusic(defaultQ); results = r.first; error = r.second; loading = false }   // default/suggested songs
+        if (provider == MusicProviders.SPOTIFY && !spotifyReady) { results = emptyList(); error = ""; loading = false }
+        else if (query.length >= 2) { loading = true; delay(450); val r = MusicProviders.search(provider, query, ctx); results = r.first; error = r.second; loading = false }
+        else { loading = true; val r = MusicProviders.search(provider, defaultQ, ctx); results = r.first; error = r.second; loading = false }   // default/suggested songs
     }
     // check lyrics availability for the visible songs (cached, throttled)
     LaunchedEffect(results) {
@@ -9087,7 +9169,24 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
                             IconButton(onClick = { runCatching { player.stop() }; onClose() }) { AyxIcon(Icons.Filled.Close, "close") }
                         }
                         Spacer(Modifier.height(8.dp))
+                        // Provider selector — persisted; results below always come from the picked provider.
+                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            MusicProviders.PROVIDERS.forEach { p ->
+                                FilterChip(selected = provider == p.first, onClick = {
+                                    if (provider != p.first) {
+                                        provider = p.first
+                                        runCatching { musicPrefs.edit().putString("provider", p.first).apply() }
+                                        runCatching { player.stop() }; previewUrl = null
+                                    }
+                                }, label = { Text(p.second) })
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
                         OutlinedTextField(q, { q = it }, placeholder = { Text("Search songs…") }, leadingIcon = { AyxIcon(Icons.Filled.Search, null) }, singleLine = true, shape = uiShapeFor(16), modifier = Modifier.fillMaxWidth().focusRequester(searchFocus))
+                        if (provider == MusicProviders.SPOTIFY && !spotifyReady) {
+                            Text("Spotify needs your own keys: Settings → AI → “Spotify (song search)” — add the free Client ID & Secret from developer.spotify.com. Spotify gives no audio file, so picked songs are matched to audio on JioSaavn automatically.",
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 8.dp))
+                        }
                         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
                         if (!loading && results.isEmpty() && q.trim().length >= 2) {
                             Text(if (error.isNotBlank()) "No songs (" + error.take(120) + ")" else "No results", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 8.dp))
@@ -9097,16 +9196,13 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
                     Spacer(Modifier.height(6.dp))
                     LazyColumn(Modifier.fillMaxSize()) {
                         itemsIndexed(results) { _, sg ->
-                        Row(Modifier.fillMaxWidth().clickable { runCatching { player.stop() }; onSelect(sg) }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = {
-                                if (previewUrl == sg.url) { runCatching { player.pause() }; previewUrl = null }
-                                else runCatching {
-                                    player.reset(); player.setDataSource(sg.url)
-                                    player.setOnPreparedListener { it.start() }
-                                    player.setOnErrorListener { _, _, _ -> previewUrl = null; true }
-                                    player.prepareAsync(); previewUrl = sg.url
-                                }
-                            }) { AyxIcon(if (previewUrl == sg.url) Icons.Filled.Close else Icons.Filled.PlayArrow, "preview", tint = IOS_BLUE) }
+                        Row(Modifier.fillMaxWidth().clickable { selectSong(sg) }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            val sKey = sg.title + "|" + sg.artist
+                            val effUrl = (resolvedSongs[sKey] ?: sg).url
+                            IconButton(onClick = { previewSong(sg) }, enabled = resolvingKey != sKey) {
+                                if (resolvingKey == sKey) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = IOS_BLUE)
+                                else AyxIcon(if (previewUrl != null && previewUrl == effUrl) Icons.Filled.Close else Icons.Filled.PlayArrow, "preview", tint = IOS_BLUE)
+                            }
                             Column(Modifier.weight(1f)) {
                                 Text(sg.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text(sg.artist, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
