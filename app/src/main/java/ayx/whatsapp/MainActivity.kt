@@ -8512,7 +8512,28 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                             // keyboard opens; the overlay's imePadding() keeps the whole row just above the keyboard.
                             Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                                 // Keyboard open → SOLID background behind the caption/keyboard zone (the video used to bleed through the transparent gradient); keyboard closed keeps the gradient scrim over the full-bleed media.
-                                Box(Modifier.weight(1f).clip(uiShapeFor(24)).background(CaptionFieldTint())) {
+                                Box(Modifier.weight(1f).clip(uiShapeFor(24))) {
+                                    // v172 (user): the caption box carries the SAME
+                                    // frosted backdrop as the song panel. Its own
+                                    // tint is only ~13% white, so wherever the
+                                    // sheet's fixed-height backdrop bitmap does not
+                                    // reach (IME-open sheet growth; rows added
+                                    // after the backdrop settled), the bare photo
+                                    // ghosted straight through the type box. The
+                                    // frost is drawn HERE from the same settled
+                                    // bitmap — no new capture, so the v132/161/169
+                                    // capture discipline is untouched — under the
+                                    // sheet's scrim strength, so the zone reads
+                                    // identical in every state (keyboard open or
+                                    // closed, photo or video). Hidden for the one
+                                    // video-capture frame, exactly like the
+                                    // sheet's own backdrop layers.
+                                    Box(Modifier.matchParentSize().alpha(if (capturingSheet) 0f else 1f)) {
+                                        val csb = sheetBackdrop
+                                        if (csb != null) Image(csb.asImageBitmap(), null, Modifier.matchParentSize().ayxBlurBackground(true, 10.dp), contentScale = ContentScale.Crop)
+                                        Box(Modifier.matchParentSize().background(Color.Black.copy(alpha = 0.45f)))
+                                    }
+                                    Box(Modifier.matchParentSize().background(CaptionFieldTint()))
                                     if (TextAnimSettings.enabled.value) {
                                         AnimatedOutlinedField(caption, { caption = it }, placeholderText = "Add a caption…", maxLines = 3, shape = uiShapeFor(24),
                                             textColor = Color(0xFFFF4848), hintColor = Color.White.copy(alpha = 0.6f), accentColor = Color.White,
@@ -10076,7 +10097,17 @@ private fun AudioTrimmer(song: GatewayClient.Song, initialStart: Long = 0L, init
         // Cached lyrics: re-selecting an already-fetched song (e.g. tapping
         // "replace" and picking the same song) loads instantly — no spinner,
         // no refetch. A different song misses the cache and fetches normally.
-        lyrics = getCachedLyrics(song.title, song.artist, lyricsFetchDurSec)
+        val fetchedLyrics = getCachedLyrics(song.title, song.artist, lyricsFetchDurSec)
+        // v172: an empty result must never WIPE lyrics already on screen.
+        // The v166 measured-duration refresh re-runs this effect with a
+        // different duration key, and that pick can come back empty for a
+        // song whose first fetch succeeded (the gateway ranks candidates
+        // by closest duration and can land on a lyrics-less one) — the old
+        // unconditional assignment blanked the list to "Lyrics not found"
+        // and handed EMPTY lyrics to the editor on Done, even though the
+        // picker had shown "© lyrics" for the song. A non-empty refresh
+        // still swaps in (better sync); an empty one keeps what is shown.
+        if (fetchedLyrics.isNotEmpty() || lyrics.isEmpty()) lyrics = fetchedLyrics
         lyricsLoaded = true
     }
     // v166: ONE measured-duration lyrics refresh per song load. Fires only
