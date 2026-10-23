@@ -19,6 +19,13 @@ import androidx.compose.runtime.mutableStateOf
  *   TextAnim's own easing family — the photo bake draws its settled
  *   end-state (full line, sharp), since a frame render has no live
  *   per-character timeline.
+ *   9 Letters (v169, additive): the current line's LETTERS appear one
+ *   by one WITH the singing — visible character count = progress
+ *   through the line's own window (line start → next line start; the
+ *   last line runs to the trim end) × line length, so "Hello" builds
+ *   H → HE → HEL → HELL → HELLO with no spaces inserted. Display-side
+ *   math only (the synced (timeMs, line) list is untouched); the photo
+ *   bake again draws the settled end-state (full line).
  *
  * Scope, honestly: this only decides how an already-synced line is DRAWN.
  * The lyrics fetch / parse / sync / cache pipeline (the LYRICS LOCK) is
@@ -38,6 +45,7 @@ object LyricsStyleStore {
     const val BLUR = 6
     const val ROTATE = 7
     const val TEXT_MOTION = 8
+    const val LETTERS = 9
 
     /**
      * THE shared lyric size definition (editor preview ⇄ photo bake).
@@ -74,6 +82,7 @@ object LyricsStyleStore {
         Option(FADE, "Fade", "Each line fades in"),
         Option(PLAIN, "Plain", "Full line at once — no animation"),
         Option(TEXT_MOTION, "Text Motion", "Letters glide in one by one with a bounce — Text Animation style"),
+        Option(LETTERS, "Letters", "Letters appear one by one as they're sung — H, HE, HEL, HELLO"),
     )
 
     val style = mutableStateOf(REVEAL)

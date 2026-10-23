@@ -234,6 +234,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
@@ -2028,7 +2029,16 @@ fun GatewayApp(updateBlur: Boolean = false) {
         topBar = {
             // Glass header: translucent so the list scrolls behind it. Chat screen has its own header.
             if (openChat == null) {
-            StyledSurface(color = MaterialTheme.colorScheme.surface.copy(alpha = ayxGlassAlpha(0.80f, BlurElement.NAVIGATION)), shadowElevation = 6.dp, tonalElevation = 0.dp,
+            // v169 (user): the bar is tinted with the PAGE's own background
+            // color (the Scaffold container color), not `surface` — on the
+            // light/white theme surface≠background made the bar read as a
+            // SECOND, different background floating over the page (on dark
+            // themes the two colors nearly match, so only the elevation
+            // shadow showed there). shadowElevation is 0 for the same
+            // reason: its black Material shadow ringed the bar on dark
+            // themes. The glass alpha (his Blur & Animation setting) is
+            // unchanged.
+            StyledSurface(color = MaterialTheme.colorScheme.background.copy(alpha = ayxGlassAlpha(0.80f, BlurElement.NAVIGATION)), shadowElevation = 0.dp, tonalElevation = 0.dp,
                 shape = RoundedCornerShape(bottomStart = 26.dp, bottomEnd = 26.dp), modifier = Modifier.fillMaxWidth().offset(y = (-4).dp)) {
             CenterAlignedTopAppBar(
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
@@ -7179,12 +7189,46 @@ private fun LinkText(text: String, color: Color) {
  * TextAnim's own easing family. Blur (6) and Text Motion both use a
  * word/char-count-NORMALIZED stagger, so the entrance always completes —
  * the active line always ends fully sharp (see the BLUR branch).
+ * Letters (9, v169) is the other exception: NO entrance window — the
+ * line's letters appear one by one across the line's OWN window
+ * ([lineEndMs] = the next line's start, or the trim end for the last
+ * line), tracking the singing itself. [lineEndMs] is only read by that
+ * branch; every other style ignores it.
+ *
+ * v169 colors (user): the active line is COLORED — the lyric accent
+ * 0xFFFF4848 (MediaTools.LYRIC_ACCENT, the bake matches) — instead of
+ * plain white, and no shadow is drawn behind the text anywhere.
  */
 @Composable
-private fun StyledLyricLine(text: String, lineStart: Long, posMs: Long, style: Int, scale: Float, modifier: Modifier = Modifier) {
+private fun StyledLyricLine(text: String, lineStart: Long, posMs: Long, style: Int, scale: Float, modifier: Modifier = Modifier, lineEndMs: Long = 0L) {
     val words = text.trim().uppercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
     if (words.isEmpty()) return
     val ph = ((posMs - lineStart).toFloat() / 450f).coerceIn(0f, 1f)
+    if (style == LyricsStyleStore.LETTERS) {
+        // Letters: visible character count = progress through the
+        // line's window (lineStart → lineEndMs) × the line's letter
+        // count (letters only — word gaps are the FlowRow spacing, no
+        // spaces are inserted into the words). The count only ever
+        // grows within the line, the full line is the settled state,
+        // and the next line takes over at its own start — exactly how
+        // the other styles hand over. At least the first letter shows
+        // once the line has started, so the line never blinks blank.
+        val totalChars = words.sumOf { it.length }.coerceAtLeast(1)
+        val win = (lineEndMs - lineStart).coerceAtLeast(1L)
+        val prog = ((posMs - lineStart).toFloat() / win.toFloat()).coerceIn(0f, 1f)
+        var visible = (prog * totalChars).toInt()
+        if (posMs >= lineStart && visible < 1) visible = 1
+        if (visible <= 0) return
+        var left = visible
+        FlowRow(modifier, horizontalArrangement = Arrangement.spacedBy(7.dp, Alignment.CenterHorizontally)) {
+            for (w in words) {
+                if (left <= 0) break
+                val take = minOf(left, w.length); left -= take
+                Text(w.substring(0, take), color = Color(0xFFFF4848), fontSize = (LyricsStyleStore.LYRIC_BASE_SP * scale).sp, fontWeight = FontWeight.Black, lineHeight = (LyricsStyleStore.LYRIC_LINE_SP * scale).sp)
+            }
+        }
+        return
+    }
     if (style == LyricsStyleStore.TEXT_MOTION) {
         // Text Motion: per-CHARACTER glide-in on TextAnim's own easing
         // family (TextAnimEasing curve 3 = backOut, the overshoot curve
@@ -7204,7 +7248,7 @@ private fun StyledLyricLine(text: String, lineStart: Long, posMs: Long, style: I
                         val cp = (ph * (1f + (totalChars - 1) * cStep) - ci * cStep).coerceIn(0f, 1f)
                         ci++
                         val e = TextAnimEasing.apply(3, cp)
-                        Text(ch.toString(), color = Color.White, fontSize = (LyricsStyleStore.LYRIC_BASE_SP * scale).sp, fontWeight = FontWeight.Black, lineHeight = (LyricsStyleStore.LYRIC_LINE_SP * scale).sp,
+                        Text(ch.toString(), color = Color(0xFFFF4848), fontSize = (LyricsStyleStore.LYRIC_BASE_SP * scale).sp, fontWeight = FontWeight.Black, lineHeight = (LyricsStyleStore.LYRIC_LINE_SP * scale).sp,
                             modifier = Modifier.graphicsLayer {
                                 alpha = cp
                                 translationY = (1f - e) * 52f
@@ -7250,7 +7294,7 @@ private fun StyledLyricLine(text: String, lineStart: Long, posMs: Long, style: I
                 LyricsStyleStore.ROTATE -> Modifier.graphicsLayer { alpha = wp; rotationZ = (1f - ease) * -8f; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 1f) }
                 else -> Modifier
             }
-            Text(w, color = Color.White, fontSize = (LyricsStyleStore.LYRIC_BASE_SP * scale).sp, fontWeight = FontWeight.Black, lineHeight = (LyricsStyleStore.LYRIC_LINE_SP * scale).sp, modifier = m)
+            Text(w, color = Color(0xFFFF4848), fontSize = (LyricsStyleStore.LYRIC_BASE_SP * scale).sp, fontWeight = FontWeight.Black, lineHeight = (LyricsStyleStore.LYRIC_LINE_SP * scale).sp, modifier = m)
         }
     }
 }
@@ -7568,6 +7612,16 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
         if (mediaUri == null) { sheetBackdrop = null; sheetBackdropFor = null; return@LaunchedEffect }
         // New media: never show the previous media's snapshot behind it.
         if (sheetBackdropFor != mediaUri) { sheetBackdrop = null; sheetBackdropFor = mediaUri; sheetBackdropLive = false }
+        // v169: IMAGE media never reaches the PixelCopy capture below.
+        // The old capture froze the PANEL'S SCREEN REGION — but the
+        // photo is ContentScale.Fit (letterboxed), so wherever the
+        // panel didn't overlap the fitted photo the snapshot was the
+        // black letterbox, and with the tall song panel open the WHOLE
+        // backdrop came out black ("blur invisible ho gaya" — user).
+        // The image branch now derives the backdrop from the decoded
+        // bitmap itself (race-free, letterbox-proof); PixelCopy stays
+        // for VIDEO only, whose SurfaceView pixels exist nowhere else.
+        if (mediaType == "image") return@LaunchedEffect
         // v161 capture gating (see the state comment above): a LIVE
         // (post-render) capture for this media is final — keep it. A
         // pre-render capture is kept only until the render lands; the
@@ -7632,6 +7686,9 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
         if (mediaUri == null) { headerBackdrop = null; headerBackdropFor = null; return@LaunchedEffect }
         // New media: never show the previous media's snapshot behind it.
         if (headerBackdropFor != mediaUri) { headerBackdrop = null; headerBackdropFor = mediaUri; headerBackdropLive = false }
+        // v169: images derive the header backdrop from the bitmap too
+        // (see the sheet capture above) — PixelCopy is video-only now.
+        if (mediaType == "image") return@LaunchedEffect
         // Same v161 gating as the sheet capture: a live (post-render)
         // capture is final; a pre-render capture is upgraded once when
         // the render lands.
@@ -7744,7 +7801,33 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                         else if (mediaType == "image") {
                             val editedBmp = remember(editedBytes) { editedBytes?.let { runCatching { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }.getOrNull() } }
                             val bmp = editedBmp ?: remember(curUri) { runCatching { ctx.contentResolver.openInputStream(curUri)?.use { BitmapFactory.decodeStream(it)?.asImageBitmap() } }.getOrNull() }
-                            LaunchedEffect(bmp) { if (bmp != null) mediaRendered = true }   // v161: gates the backdrop captures
+                            LaunchedEffect(bmp) {
+                                if (bmp != null) {
+                                    mediaRendered = true   // v161: gates the backdrop captures
+                                    // v169: IMAGE backdrops (sheet + header) are
+                                    // derived from the decoded bitmap ITSELF —
+                                    // the same 6× downscale the PixelCopy path
+                                    // used — instead of a snapshot of the panel's
+                                    // screen region. No capture race (the bitmap
+                                    // is already in hand), and no letterbox
+                                    // black: the frost is the photo's own pixels
+                                    // wherever the panel sits. Marked live so
+                                    // nothing upgrades/replaces it; the draw
+                                    // height is the settled panel/header height
+                                    // when already known (the v161 fixed-height,
+                                    // top-anchored draw is unchanged). An edit
+                                    // (crop / AI) swaps bmp → this refires and
+                                    // the frost follows the edited photo.
+                                    val ab = bmp.asAndroidBitmap()
+                                    val small = runCatching { android.graphics.Bitmap.createScaledBitmap(ab, (ab.width / 6).coerceAtLeast(1), (ab.height / 6).coerceAtLeast(1), true) }.getOrNull()
+                                    if (small != null) {
+                                        sheetBackdrop = small; sheetBackdropFor = curUri; sheetBackdropLive = true
+                                        panelRect?.let { sheetBackdropH = with(backdropDensity) { it.height.toDp() } }
+                                        headerBackdrop = small; headerBackdropFor = curUri; headerBackdropLive = true
+                                        headerRect?.let { headerBackdropH = with(backdropDensity) { it.height.toDp() } }
+                                    }
+                                }
+                            }
                             if (bmp != null) Image(bmp, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit) else Text("Preview unavailable", color = Color.White)
                             // LEFT-side X: remove the photo (below the overlaid top bar).
                             IconButton(onClick = { mediaUri = null; editedBytes = null }, modifier = Modifier.align(Alignment.TopStart).padding(top = overlayTopPad, start = 8.dp)) {
@@ -7856,7 +7939,15 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                         // tap on the preview, so with lyrics showing, the
                         // video underneath could never be tapped to play.)
                         var lyricAreaH by remember { mutableStateOf(0) }
-                        Box(Modifier.fillMaxSize().onGloballyPositioned { lyricAreaH = it.size.height }.pointerInput(Unit) {
+                        // v169: the STABLE full height of the media area —
+                        // the tallest height the overlay area ever reports.
+                        // The IME only ever shrinks the area, so the max is
+                        // the no-keyboard height; the lyric block is
+                        // anchored against THIS, never against the shrunk
+                        // current height, so opening/closing the keyboard
+                        // cannot move the text.
+                        var lyricAreaFullH by remember { mutableStateOf(0) }
+                        Box(Modifier.fillMaxSize().onGloballyPositioned { lyricAreaH = it.size.height; if (it.size.height > lyricAreaFullH) lyricAreaFullH = it.size.height }.pointerInput(Unit) {
                             // TWO-FINGER pinch for the lyrics, tracked at the
                             // WHOLE preview area. It used to live only on the
                             // lyric-lines box below — a box barely one line
@@ -7933,7 +8024,12 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                     if (consumedCount < 2 && prevDist > 1f && dist > 1f) {
                                         lyricScale = (lyricScale * (dist / prevDist)).coerceIn(0.5f, 2.5f)
                                         if (consumedCount == 0) {
-                                            lyricY = (lyricY + (cy - prevCy) / size.height.toFloat()).coerceIn(0.06f, 0.9f)
+                                            // v169: pan divides by the FULL area
+                                            // height (not the possibly
+                                            // IME-shrunk detector height), so a
+                                            // drag means the same lyricY delta
+                                            // with the keyboard up or down.
+                                            lyricY = (lyricY + (cy - prevCy) / (if (lyricAreaFullH > 0) lyricAreaFullH else size.height).toFloat()).coerceIn(0.06f, 0.9f)
                                         }
                                         ev.changes.forEach { runCatching { it.consume() } }
                                     }
@@ -7942,7 +8038,22 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                             }
                         }) {
                             if (line.isNotBlank()) {
-                                Box(Modifier.align(BiasAlignment(if (animStyle == LyricsStyleStore.REVEAL) -1f else 0f, lyricY * 2f - 1f))
+                                // v169 (user: "dono mein text upar jaata ha"):
+                                // the block's TOP edge is pinned at lyricY ×
+                                // the media area's FULL height, and the block
+                                // grows DOWNWARD from there. The old
+                                // BiasAlignment positioned the block by
+                                // proportional interpolation between the
+                                // area's top and bottom, so (a) a line that
+                                // wrapped to more rows — a TALLER block —
+                                // rode UP (and dropped back for short lines),
+                                // and (b) when the keyboard shrank the area,
+                                // the same lyricY landed higher on screen.
+                                // Top-edge anchoring kills both, and matches
+                                // the photo bake, whose block also starts at
+                                // h * lyricY and stacks downward.
+                                Box(Modifier.align(if (animStyle == LyricsStyleStore.REVEAL) Alignment.TopStart else Alignment.TopCenter)
+                                    .offset(y = with(LocalDensity.current) { (lyricY * (if (lyricAreaFullH > lyricAreaH) lyricAreaFullH else lyricAreaH)).toDp() })
                                     .fillMaxWidth(0.92f)
                                     .pointerInput(Unit) {
                                         detectTransformGestures { _, pan, zoom, _ ->
@@ -7950,9 +8061,11 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                             // box's height (the box is only as tall as
                                             // the lyric lines — dividing by it would
                                             // fling lyricY across the screen). The
-                                            // preview height is lyricAreaH, measured
-                                            // on the full-area overlay itself.
-                                            val hPx = if (lyricAreaH > 0) lyricAreaH.toFloat() else size.height.toFloat()
+                                            // preview height is the area's FULL
+                                            // height (lyricAreaFullH, v169 — the
+                                            // IME-shrunk current height would
+                                            // over-pan with the keyboard open).
+                                            val hPx = when { lyricAreaFullH > 0 -> lyricAreaFullH.toFloat(); lyricAreaH > 0 -> lyricAreaH.toFloat(); else -> size.height.toFloat() }
                                             lyricY = (lyricY + pan.y / hPx).coerceIn(0.06f, 0.9f)
                                             lyricScale = (lyricScale * zoom).coerceIn(0.5f, 2.5f)
                                         }
@@ -7962,7 +8075,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                     }
                                     .padding(vertical = 12.dp)) {
                                     if (animStyle == LyricsStyleStore.REVEAL) {
-                                        // Reveal (the default style): words build left→right, newest word grey, UPPERCASE bold
+                                        // Reveal (the default style): words build left→right, newest word in the accent color (v169; was grey), UPPERCASE bold, no shadow
                                         val lineStart = active?.first ?: 0L
                                         val nextStart = displayLyrics.firstOrNull { it.first > lineStart }?.first ?: (lineStart + 3000L)
                                         val dur = (nextStart - lineStart).coerceIn(700L, 6000L)
@@ -7972,14 +8085,20 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                         FlowRow(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp),
                                             horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                                             for (i in 0 until shown) {
-                                                Text(words[i], color = if (i == shown - 1) Color(0xFFAAAAAA) else Color.White,
+                                                Text(words[i], color = if (i == shown - 1) Color(0xFFFF4848) else Color.White,
                                                     fontSize = (LyricsStyleStore.LYRIC_BASE_SP * lyricScale).sp, fontWeight = FontWeight.Black, lineHeight = (LyricsStyleStore.LYRIC_LINE_SP * lyricScale).sp)
                                             }
                                         }
 
                                     } else {
-                                        StyledLyricLine(line, active?.first ?: 0L, previewPos, animStyle, lyricScale,
-                                            Modifier.fillMaxWidth().padding(horizontal = 8.dp))
+                                        // Letters (9) needs the line's window end:
+                                        // the next line's start, or the trim end
+                                        // for the last line. Other styles get
+                                        // the same value and ignore it.
+                                        val ls = active?.first ?: 0L
+                                        val le = displayLyrics.firstOrNull { it.first > ls }?.first ?: trimEnd
+                                        StyledLyricLine(line, ls, previewPos, animStyle, lyricScale,
+                                            Modifier.fillMaxWidth().padding(horizontal = 8.dp), lineEndMs = le)
                                     }
                                 }
                             }
@@ -8192,14 +8311,17 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                 Box(Modifier.weight(1f).clip(uiShapeFor(24)).background(CaptionFieldTint())) {
                                     if (TextAnimSettings.enabled.value) {
                                         AnimatedOutlinedField(caption, { caption = it }, placeholderText = "Add a caption…", maxLines = 3, shape = uiShapeFor(24),
-                                            textColor = Color.White, hintColor = Color.White.copy(alpha = 0.6f), accentColor = Color.White,
+                                            textColor = Color(0xFFFF4848), hintColor = Color.White.copy(alpha = 0.6f), accentColor = Color.White,
                                             borderColor = Color.White.copy(alpha = 0.10f), focusedBorderColor = Color.White.copy(alpha = 0.22f),
                                             modifier = Modifier.fillMaxWidth())
                                     } else {
                                         OutlinedTextField(caption, { caption = it }, placeholder = { Text("Add a caption…", color = Color.White.copy(alpha = 0.6f)) }, maxLines = 3, shape = uiShapeFor(24),
                                             colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.White.copy(alpha = 0.22f), unfocusedBorderColor = Color.White.copy(alpha = 0.10f),
                                                 focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
-                                                focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White),
+                                                // v169 (user): his own typed text gets the
+                                                // same colored treatment as the lyrics —
+                                                // the lyric accent instead of plain white.
+                                                focusedTextColor = Color(0xFFFF4848), unfocusedTextColor = Color(0xFFFF4848), cursorColor = Color(0xFFFF4848)),
                                             modifier = Modifier.fillMaxWidth())
                                     }
                                 }

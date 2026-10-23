@@ -32,7 +32,7 @@ import java.nio.FloatBuffer
 object MediaTools {
 
     // ---------- public: PHOTO(S) -> silent MP4 ----------
-    // animStyle (= LyricsStyleStore ids): 0=Plain, 1=Reveal, 2=Pop, 3=Slide up, 4=Typewriter, 5=Fade, 6=Blur, 7=Rotate
+    // animStyle (= LyricsStyleStore ids): 0=Plain, 1=Reveal, 2=Pop, 3=Slide up, 4=Typewriter, 5=Fade, 6=Blur, 7=Rotate, 8=Text Motion (settled), 9=Letters (settled)
     // [font]: the typeface lyrics are baked in — the caller passes the
     // app-selected font (FontStore.appTypeface) so the posted status uses
     // the SAME font as the editor preview. Null keeps the historical
@@ -620,7 +620,7 @@ object MediaTools {
 
     private val LYRIC_ACCENT = android.graphics.Color.rgb(255, 72, 72)   // highlight word (#FF4848), like the AM template
 
-    // animStyle: 0=Plain, 1=Reveal (word-by-word + two-tone + pop, the good one), 2=Pop, 3=Slide, 4=Type, 5=Fade, 6=Blur, 7=Rotate, 8=Text Motion (baked settled — see the when below)
+    // animStyle: 0=Plain, 1=Reveal (word-by-word + two-tone + pop, the good one), 2=Pop, 3=Slide, 4=Type, 5=Fade, 6=Blur, 7=Rotate, 8=Text Motion (baked settled — see the when below), 9=Letters (baked settled, same treatment)
     // [font]: the app-selected typeface the editor preview renders lyrics
     // with. This bake used to ignore it entirely (DEFAULT_BOLD for the
     // whole-line styles, SANS_SERIF bold for Reveal), so the uploaded
@@ -645,7 +645,7 @@ object MediaTools {
 
         if (animStyle == 1) {
             // Instagram-style karaoke: words build up LEFT-aligned, wrapping + stacking downward.
-            // The newest word is grey, the rest white, UPPERCASE heavy. Works with any script.
+            // The newest word is the accent color (v169; was grey), the rest white, UPPERCASE heavy. Works with any script.
             val words = lyric.trim().uppercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
             if (words.isEmpty()) return bmp
             val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -673,12 +673,14 @@ object MediaTools {
                 curX += wW + spaceW
             }
             val topY = (h * yFrac.coerceIn(0.05f, 0.9f)) + paint.textSize
-            paint.setShadowLayer(16f, 0f, 3f, android.graphics.Color.argb(185, 0, 0, 0))
+            // v169 (user): NO black shadow behind the lyrics, and the
+            // active (newest) word is COLORED — LYRIC_ACCENT, the same
+            // treatment the editor preview now uses. (Was: a 16f black
+            // shadowLayer under white/grey words.)
             for (i in 0 until shown) {
-                paint.color = if (i == shown - 1) android.graphics.Color.rgb(170, 170, 170) else android.graphics.Color.WHITE
+                paint.color = if (i == shown - 1) LYRIC_ACCENT else android.graphics.Color.WHITE
                 canvas.drawText(words[i], xs[i], topY + rowOf[i] * lineH, paint)
             }
-            paint.clearShadowLayer()
             return bmp
         }
 
@@ -693,16 +695,19 @@ object MediaTools {
             6 -> { alpha = ease }   // Blur: softness via the white shadowLayer below (sharpens as the phase completes — and the phase always completes within its 420 ms window, so the baked line ends sharp exactly like the fixed editor renderer)
             7 -> { alpha = ease }   // Rotate: tilt applied at draw time below
             8 -> { }   // Text Motion: baked as its SETTLED end-state. The per-character glide is a live-preview motion (StyledLyricLine, TextAnimEasing); a baked frame has no per-character timeline, so the full line is drawn at once, sharp — the same end-state the preview settles into.
+            9 -> { }   // Letters: baked settled, same as Text Motion — the letter-by-letter build is a live-preview motion driven by the line window; a frame render draws the full line.
         }
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.WHITE; textSize = baseSize * sc; textAlign = Paint.Align.CENTER
+            // v169 (user): the active line is COLORED (LYRIC_ACCENT —
+            // the editor preview matches) and carries NO black shadow.
+            // (Was: white text over a 10f black shadowLayer.)
+            color = LYRIC_ACCENT; textSize = baseSize * sc; textAlign = Paint.Align.CENTER
             typeface = font ?: android.graphics.Typeface.DEFAULT_BOLD
-            setShadowLayer(10f, 0f, 3f, android.graphics.Color.argb((200 * alpha).toInt().coerceIn(0, 255), 0, 0, 0))
             this.alpha = (255 * alpha).toInt().coerceIn(0, 255)
         }
-        // Blur (6): while the line is still entering, swap the dark drop
-        // shadow for a wide white glow — the text reads as out-of-focus and
-        // sharpens into the normal shadow as the phase completes.
+        // Blur (6): while the line is still entering, a wide white glow
+        // shadow makes the text read as out-of-focus; it sharpens into
+        // clean shadowless text as the phase completes.
         if (animStyle == 6 && p < 0.98f) paint.setShadowLayer(((1f - p) * 26f).coerceAtLeast(1f), 0f, 0f, android.graphics.Color.argb((225 * alpha).toInt().coerceIn(0, 255), 255, 255, 255))
         val showTxt = if (animStyle == 4) lyric.take((lyric.length * charFrac).toInt().coerceIn(0, lyric.length)) else lyric
         if (showTxt.isNotBlank()) {
