@@ -45,7 +45,7 @@ object DriveBackup {
     const val KEY_FILE = "ayx-backup-key.ayxkey"
     private const val BACKUP_MIME = "application/octet-stream"
     private const val KEY_MIME = "application/json"
-    private const val PAYLOAD_APP_VERSION = "7.09"
+    private const val PAYLOAD_APP_VERSION = "7.10"
 
     private const val FOLDER_NAME = "AyX Backup"
     private const val FOLDER_MIME = "application/vnd.google-apps.folder"

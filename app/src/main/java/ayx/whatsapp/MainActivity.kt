@@ -7422,7 +7422,7 @@ private fun LinkText(text: String, color: Color) {
 private fun StyledLyricLine(text: String, lineStart: Long, posMs: Long, style: Int, scale: Float, modifier: Modifier = Modifier, lineEndMs: Long = 0L) {
     val posAnim = remember(lineStart, text) { Animatable(posMs.toFloat()) }
     LaunchedEffect(posMs) {
-        if (posAnim.value != posMs.toFloat()) posAnim.animateTo(posMs.toFloat(), tween(170, LinearOutSlowInEasing))
+        if (posAnim.value != posMs.toFloat()) posAnim.animateTo(posMs.toFloat(), tween(durationMillis = 170, easing = LinearOutSlowInEasing))
     }
     val dPos = posAnim.value
     val lyricColor = Color(LyricsStyleStore.activeColorArgb())
