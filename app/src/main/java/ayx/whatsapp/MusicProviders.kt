@@ -2,8 +2,6 @@ package ayx.whatsapp
 
 import android.content.Context
 import android.util.Base64
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKeys
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -22,17 +20,15 @@ import javax.crypto.spec.SecretKeySpec
  *   (mirrors what the gateway's /music/search already did server-side;
  *   the picker now calls it directly so all providers behave the same).
  * - iTunes — keyless search, 30 s preview clips as the audio.
- * - Spotify — SEARCH ONLY. When the user saved their OWN developer
- *   credentials (Client Credentials flow) the official route is tried
- *   first; ANY failure — notably Spotify's Premium-required 403 — falls
- *   back to a free anonymous route (token read from the public embed
- *   player page; unofficial and fragile, see spotifyAnonToken). Either
- *   way Spotify's API hands out no audio file, so a picked Spotify track
- *   is resolved to real audio by matching it on JioSaavn (closest
- *   duration wins), falling back to the iTunes preview for the same
- *   title+artist. iTunes picks resolve the same way on apply
- *   (v160) and fall back to their own 30 s preview when JioSaavn has
- *   no match. (Deezer was removed in v161 at the user's order.)
+ * - Spotify — SEARCH ONLY, free route only (v162): no login, no user
+ *   keys. The search runs on the free anonymous route (token read from
+ *   the public embed player page; unofficial and fragile, see
+ *   spotifyAnonToken). Spotify's API hands out no audio file, so a
+ *   picked Spotify track is resolved to real audio by matching it on
+ *   JioSaavn (closest duration wins), falling back to the iTunes preview
+ *   for the same title+artist. iTunes picks resolve the same way on
+ *   apply (v160) and fall back to their own 30 s preview when JioSaavn
+ *   has no match. (Deezer was removed in v161 at the user's order.)
  *
  * Every result is a GatewayClient.Song, so the rest of the pipeline
  * (preview player, AudioTrimmer, download/trim/bake at send time) is
@@ -49,34 +45,18 @@ object MusicProviders {
 
     private const val UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
 
-    // ---------- Spotify credentials (EncryptedSharedPreferences, same pattern as GatewayAuth) ----------
-    private const val PREFS_FILE = "music_providers"
-    private const val KEY_SPOTIFY_ID = "spotify_client_id"
-    private const val KEY_SPOTIFY_SECRET = "spotify_client_secret"
-
-    private fun prefs(ctx: Context) = EncryptedSharedPreferences.create(
-        PREFS_FILE,
-        MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC),
-        ctx.applicationContext,
-        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
-
-    fun spotifyCreds(ctx: Context): Pair<String, String> = try {
-        val p = prefs(ctx)
-        (p.getString(KEY_SPOTIFY_ID, "") ?: "") to (p.getString(KEY_SPOTIFY_SECRET, "") ?: "")
-    } catch (e: Exception) { "" to "" }
-
-    fun saveSpotifyCreds(ctx: Context, id: String, secret: String) {
+    // v162: Spotify is free-route only — the user's own Client ID/Secret
+    // (v159–v161, stored in the dedicated encrypted "music_providers"
+    // prefs file) are gone. One-time cleanup: delete that leftover file
+    // so no orphaned keys sit on the device; guarded so it runs once.
+    fun wipeLegacySpotifyKeys(ctx: Context) {
         try {
-            prefs(ctx).edit().putString(KEY_SPOTIFY_ID, id.trim()).putString(KEY_SPOTIFY_SECRET, secret.trim()).apply()
+            val guard = ctx.getSharedPreferences("ayx_music", Context.MODE_PRIVATE)
+            if (!guard.getBoolean("spotify_keys_wiped", false)) {
+                ctx.deleteSharedPreferences("music_providers")
+                guard.edit().putBoolean("spotify_keys_wiped", true).apply()
+            }
         } catch (e: Exception) {}
-        // credentials changed → any cached token belongs to the old pair
-        synchronized(this) { spToken = ""; spTokenExpMs = 0L }
-    }
-
-    fun spotifyConfigured(ctx: Context): Boolean {
-        val (id, secret) = spotifyCreds(ctx)
-        return id.isNotBlank() && secret.isNotBlank()
     }
 
     // ---------- HTTP ----------
@@ -119,7 +99,7 @@ object MusicProviders {
             try {
                 when (provider) {
                     ITUNES -> searchItunesList(q) to ""
-                    SPOTIFY -> searchSpotifyList(ctx, q) to ""
+                    SPOTIFY -> searchSpotifyList(q) to ""
                     else -> searchSaavnList(q) to ""   // unknown/persisted ids (e.g. removed providers) land on JioSaavn
                 }
             } catch (e: Exception) {
@@ -192,44 +172,11 @@ object MusicProviders {
     }
 
     // ---------- Spotify (search only; audio resolved separately) ----------
-    @Volatile private var spToken: String = ""
-    @Volatile private var spTokenExpMs: Long = 0L
+    // v162: the ONLY route is the free anonymous one below — no login,
+    // no user keys (the Client Credentials path was removed).
+    private fun searchSpotifyList(q: String): List<GatewayClient.Song> = spotifyAnonSearch(q)
 
-    private fun spotifyToken(id: String, secret: String): String {
-        val now = System.currentTimeMillis()
-        if (spToken.isNotBlank() && now < spTokenExpMs) return spToken
-        synchronized(this) {
-            val t2 = System.currentTimeMillis()
-            if (spToken.isNotBlank() && t2 < spTokenExpMs) return spToken
-            val basic = Base64.encodeToString("$id:$secret".toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
-            val body = httpText("https://accounts.spotify.com/api/token",
-                formBody = "grant_type=client_credentials",
-                headers = mapOf("Authorization" to "Basic $basic"))
-            val o = JSONObject(body)
-            val tok = o.optString("access_token")
-            if (tok.isBlank()) throw java.io.IOException("Spotify token failed")
-            spToken = tok
-            spTokenExpMs = t2 + (o.optInt("expires_in", 3600) - 60).coerceAtLeast(60) * 1000L
-        }
-        return spToken
-    }
-
-    private fun searchSpotifyList(ctx: Context, q: String): List<GatewayClient.Song> {
-        val (id, secret) = spotifyCreds(ctx)
-        if (id.isNotBlank() && secret.isNotBlank()) {
-            // Official route first (the user's own developer app). ANY
-            // failure — most commonly Spotify's "Active premium
-            // subscription required" 403 on the search call — falls back
-            // transparently to the free anonymous route below.
-            try {
-                return spotifySearchWithToken(spotifyToken(id, secret), q)
-            } catch (e: Exception) { /* fall through to the free route */ }
-        }
-        return spotifyAnonSearch(q)
-    }
-
-    // One shared parse path for both Spotify routes — the Web API search
-    // response shape is identical for official and anonymous tokens.
+    // The Web API search parse path for the anonymous token.
     private fun spotifySearchWithToken(token: String, q: String): List<GatewayClient.Song> {
         val url = "https://api.spotify.com/v1/search?q=" + enc(q) + "&type=track&limit=30"
         val data = JSONObject(httpText(url, headers = mapOf("Authorization" to "Bearer $token")))

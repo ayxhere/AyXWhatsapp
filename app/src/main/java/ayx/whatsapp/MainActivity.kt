@@ -4896,26 +4896,6 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
         AiSettingsFields(ctx, dark = false, onSaved = {})
     }
 
-    // Spotify song search (v159) — the user's OWN Spotify developer credentials,
-    // used only for search (Client Credentials). Stored in EncryptedSharedPreferences
-    // on-device (MusicProviders), never sent to the gateway. Spotify serves no
-    // audio file, so picked tracks are matched to audio on JioSaavn by the picker.
-    SettingsGroup("Spotify (song search)") {
-        var spId by remember { mutableStateOf(MusicProviders.spotifyCreds(ctx).first) }
-        var spSecret by remember { mutableStateOf(MusicProviders.spotifyCreds(ctx).second) }
-        var showSpSecret by remember { mutableStateOf(false) }
-        Text("Optional — lets the status song picker search Spotify too. Create a free app at developer.spotify.com, then paste its Client ID & Secret here. Keys stay encrypted on this phone.",
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 4.dp))
-        OutlinedTextField(spId, { spId = it }, label = { Text("Spotify Client ID") }, singleLine = true, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(spSecret, { spSecret = it }, label = { Text("Spotify Client Secret") }, singleLine = true, shape = uiShapeFor(14),
-            visualTransformation = if (showSpSecret) VisualTransformation.None else PasswordVisualTransformation(),
-            trailingIcon = { IconButton(onClick = { showSpSecret = !showSpSecret }) { AyxIcon(if (showSpSecret) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, "toggle secret") } },
-            modifier = Modifier.fillMaxWidth())
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            FilledTonalButton(onClick = { MusicProviders.saveSpotifyCreds(ctx, spId, spSecret); Toast.makeText(ctx, "Spotify keys saved", Toast.LENGTH_SHORT).show() }) { Text("Save") }
-        }
-    }
 }
 
 /** AI Lyrics — multiple OpenAI-compatible API configs with automatic failover (tried IN ORDER). */
@@ -9174,7 +9154,9 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
         val savedProv = musicPrefs.getString("provider", MusicProviders.SAAVN) ?: MusicProviders.SAAVN
         mutableStateOf(if (MusicProviders.PROVIDERS.any { it.first == savedProv }) savedProv else MusicProviders.SAAVN)
     }
-    val spotifyReady = remember { MusicProviders.spotifyConfigured(ctx) }
+    // v162 one-time cleanup: delete the leftover encrypted prefs file that
+    // held the removed Spotify Client ID/Secret (free route needs no keys).
+    LaunchedEffect(Unit) { MusicProviders.wipeLegacySpotifyKeys(ctx) }
     // Spotify rows carry no audio URL; resolved audio (JioSaavn match → iTunes
     // preview) is cached per song so preview + apply share one resolution.
     val resolvedSongs = remember { mutableStateMapOf<String, GatewayClient.Song>() }
@@ -9228,8 +9210,8 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
     DisposableEffect(Unit) { onDispose { runCatching { player.release() }; onQueryChange(qState.value) } }
     LaunchedEffect(q, provider) {
         val query = q.trim()
-        // Spotify searches with OR without saved keys (free route inside
-        // MusicProviders) — no gate here anymore (v160).
+        // Spotify search is free-route only inside MusicProviders —
+        // no keys, no login, no gate here (v162).
         if (query.length >= 2) { loading = true; delay(450); val r = MusicProviders.search(provider, query, ctx); results = r.first; error = r.second; loading = false }
         else { loading = true; val r = MusicProviders.search(provider, defaultQ, ctx); results = r.first; error = r.second; loading = false }   // default/suggested songs
     }
@@ -9282,8 +9264,8 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
                         }
                         Spacer(Modifier.height(8.dp))
                         OutlinedTextField(q, { q = it }, placeholder = { Text("Search songs…") }, leadingIcon = { AyxIcon(Icons.Filled.Search, null) }, singleLine = true, shape = uiShapeFor(16), modifier = Modifier.fillMaxWidth().focusRequester(searchFocus))
-                        if (provider == MusicProviders.SPOTIFY && !spotifyReady) {
-                            Text("Spotify search works free here — no keys needed. Optionally add your own Client ID & Secret (Settings → AI → “Spotify (song search)”) to use Spotify's official route first. Spotify gives no audio file, so picked songs are matched to audio on JioSaavn automatically.",
+                        if (provider == MusicProviders.SPOTIFY) {
+                            Text("Spotify search is free — songs are matched to audio on JioSaavn.",
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 8.dp))
                         }
                         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
