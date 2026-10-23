@@ -9694,6 +9694,16 @@ private fun AudioTrimmer(song: GatewayClient.Song, initialStart: Long = 0L, init
     var lyrics by remember { mutableStateOf<List<Pair<Long, String>>>(emptyList()) }
     var lyricsLoaded by remember { mutableStateOf(false) }
     var lyricsAttempt by remember { mutableStateOf(0) }
+    // v166: the duration the current lyrics were fetched with. Starts at the
+    // catalog METADATA duration (fast first paint); the refresh effect below
+    // swaps in the MEASURED file duration once the player is prepared. Since
+    // v160 the applied song can be another catalog's file (chimera copy in
+    // MusicProviders), whose nominal metadata duration sits 1–2s off the real
+    // file — inside the rescale's >=3s dead zone, so drift went uncorrected.
+    // Feeding the true duration makes the gateway pick the lrclib release
+    // that matches the actual file. (The getLyrics machinery itself is
+    // unchanged — it always accepted a duration; it now receives the true one.)
+    var lyricsFetchDurSec by remember { mutableStateOf(song.durationSec) }
     var manualOpen by remember { mutableStateOf(false) }
     val bars = remember(song.url) { val r = java.util.Random(song.url.hashCode().toLong()); FloatArray(64) { 0.22f + r.nextFloat() * 0.78f } }
     DisposableEffect(Unit) {
@@ -9706,13 +9716,28 @@ private fun AudioTrimmer(song: GatewayClient.Song, initialStart: Long = 0L, init
         }
         onDispose { runCatching { player.release() } }
     }
-    LaunchedEffect(lyricsAttempt) {
-        lyricsLoaded = false
+    LaunchedEffect(lyricsAttempt, lyricsFetchDurSec) {
+        // Silent refresh: while a better-keyed fetch is in flight, keep the
+        // current lines on screen (spinner only when there is nothing yet);
+        // the new list replaces them the moment it lands.
+        if (lyrics.isEmpty()) lyricsLoaded = false
         // Cached lyrics: re-selecting an already-fetched song (e.g. tapping
         // "replace" and picking the same song) loads instantly — no spinner,
         // no refetch. A different song misses the cache and fetches normally.
-        lyrics = getCachedLyrics(song.title, song.artist, song.durationSec)
+        lyrics = getCachedLyrics(song.title, song.artist, lyricsFetchDurSec)
         lyricsLoaded = true
+    }
+    // v166: ONE measured-duration lyrics refresh per song load. Fires only
+    // once the player is prepared; if prepare fails (ready never set,
+    // durationMs stays 0) the metadata-duration fetch above simply stands —
+    // exactly the pre-v166 behavior. The >=1s gap requirement against the
+    // duration the current lyrics were fetched with prevents a refetch when
+    // the metadata was already right, and because lyricsFetchDurSec is then
+    // equal to the measured value, this can never fire twice for one load.
+    LaunchedEffect(ready) {
+        if (!ready) return@LaunchedEffect
+        val measuredSec = (durationMs / 1000L).toInt()
+        if (measuredSec > 0 && kotlin.math.abs(measuredSec - lyricsFetchDurSec) >= 1) lyricsFetchDurSec = measuredSec
     }
     LaunchedEffect(playing) {
         while (playing) {

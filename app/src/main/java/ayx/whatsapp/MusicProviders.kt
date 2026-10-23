@@ -373,6 +373,19 @@ object MusicProviders {
             c == t || (c.length >= 4 && t.contains(c)) || (t.length >= 4 && c.contains(t))
         }
         if (hits.isEmpty()) return null
-        return if (target.durationSec > 0) hits.minByOrNull { kotlin.math.abs(it.durationSec - target.durationSec) } else hits.first()
+        // v166 hardening: when an exact-title hit exists, a hit whose KNOWN
+        // duration sits >10s from the target's is almost certainly a different
+        // VERSION (reprise / unplugged / movie cut) whose intro length differs
+        // — substituting it shifts every lyric line by a constant offset that
+        // no proportional rescale can repair. Reject those; the usual
+        // closest-duration tie-break runs over the survivors. Unknown-duration
+        // hits (<=0) can't be convicted, so they stay. No exact-title hit (or
+        // no target duration to judge against) → pre-v166 behavior, unchanged.
+        val hasExact = hits.any { normTitle(it.title) == t }
+        val pool = if (hasExact && target.durationSec > 0)
+            hits.filter { it.durationSec <= 0 || kotlin.math.abs(it.durationSec - target.durationSec) <= 10 }
+        else hits
+        if (pool.isEmpty()) return null
+        return if (target.durationSec > 0) pool.minByOrNull { kotlin.math.abs(it.durationSec - target.durationSec) } else pool.first()
     }
 }
