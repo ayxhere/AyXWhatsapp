@@ -9163,6 +9163,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                         Box(Modifier.fillMaxSize().viewerGestures(zoom, doubleTap = false)) {
                             ExoVideoPlayer(
                                 uri = Uri.parse(GatewayClient.mediaUrl(st.mediaName!!)),
+                                headers = buildMap { GatewayAuth.token()?.let { put("X-Api-Token", it) } },
                                 modifier = Modifier.fillMaxSize(),
                                 autoPlay = true,
                                 onPlayer = { exoPlayer = it },

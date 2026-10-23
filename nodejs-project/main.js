@@ -2200,6 +2200,29 @@ async function startSocket() {
 }
 
 const app = express()
+
+// SECURITY (v167): gateway API authentication. The app generates a
+// per-installation 256-bit token (GatewayAuth.kt, EncryptedSharedPreferences)
+// and delivers it to this process via the WAGW_API_TOKEN env var when it
+// spawns Node; every app request carries it as the X-Api-Token header.
+// Before this guard the token was SENT but never CHECKED here — all routes
+// were open to any app on the phone via 127.0.0.1:PORT. Fail closed: a
+// missing/empty env token rejects everything. Only GET /health is exempt
+// (liveness probe; it carries no data). Registered BEFORE express.json so
+// unauthenticated request bodies are never parsed.
+const API_TOKEN = process.env.WAGW_API_TOKEN || ''
+function apiTokenOk(given) {
+  if (!API_TOKEN || typeof given !== 'string' || given.length === 0) return false
+  const a = Buffer.from(given)
+  const b = Buffer.from(API_TOKEN)
+  if (a.length !== b.length) return false
+  try { return crypto.timingSafeEqual(a, b) } catch (_) { return false }
+}
+app.use((req, res, next) => {
+  if (req.method === 'GET' && req.path === '/health') return next()
+  if (apiTokenOk(req.headers['x-api-token'])) return next()
+  return res.status(401).json({ error: 'unauthorized' })
+})
 app.use(express.json({ limit: '256mb' }))
 
 app.get('/health', (req, res) => res.json({ ok: true, node: process.version }))
@@ -3053,7 +3076,28 @@ app.post('/sendraw', async (req, res) => {
   }
 })
 
-app.get('/settings', (req, res) => res.json(settings))
+// SECURITY (v167): API keys never leave the gateway in a /settings
+// response. Each key field is replaced by a bullet mask + last-4 — the
+// app still sees a non-blank value (its "key is set" presence checks keep
+// working and the settings fields render as a masked key), but the real
+// key material stays in settings.json on this side only. POST /settings
+// treats an incoming value equal to the mask of the stored key (or blank)
+// as "keep the stored value", so a normal open -> save cycle in the app
+// can never wipe or corrupt a key with its own mask.
+const SETTINGS_KEY_FIELDS = ['aiApiKey', 'aiVisionApiKey', 'aiVisionApiKey2', 'aiSarvamKey']
+function maskKey(v) {
+  const s = typeof v === 'string' ? v : ''
+  if (!s) return ''
+  return '••••••••' + (s.length >= 4 ? s.slice(-4) : '')
+}
+function redactedSettings() {
+  const out = { ...settings }
+  for (const f of SETTINGS_KEY_FIELDS) out[f] = maskKey(settings[f])
+  return out
+}
+function isMaskOrBlank(f, v) { return v === '' || v === maskKey(settings[f]) }
+
+app.get('/settings', (req, res) => res.json(redactedSettings()))
 app.get('/visiontest', async (req, res) => {
   try { res.json(await visionSelfTest()) }
   catch (e) { res.json({ ok: false, error: e?.message || 'test failed', report: [] }) }
@@ -3276,7 +3320,7 @@ app.post('/settings', (req, res) => {
   if (Array.isArray(b.autoReplyRules)) settings.autoReplyRules = b.autoReplyRules
   if (typeof b.aiReplyEnabled === 'boolean') settings.aiReplyEnabled = b.aiReplyEnabled
   if (typeof b.aiApiUrl === 'string') settings.aiApiUrl = b.aiApiUrl
-  if (typeof b.aiApiKey === 'string') settings.aiApiKey = b.aiApiKey
+  if (typeof b.aiApiKey === 'string' && !isMaskOrBlank('aiApiKey', b.aiApiKey)) settings.aiApiKey = b.aiApiKey
   if (typeof b.aiModel === 'string') settings.aiModel = b.aiModel
   if (typeof b.groupAiEnabled === 'boolean') settings.groupAiEnabled = b.groupAiEnabled
   if (typeof b.aiSystemPrompt === 'string') settings.aiSystemPrompt = b.aiSystemPrompt
@@ -3288,9 +3332,9 @@ app.post('/settings', (req, res) => {
   if (typeof b.aiReplyImage === 'boolean') settings.aiReplyImage = b.aiReplyImage
   if (typeof b.aiVisionModel === 'string') settings.aiVisionModel = b.aiVisionModel
   if (typeof b.aiVisionApiUrl === 'string') settings.aiVisionApiUrl = b.aiVisionApiUrl
-  if (typeof b.aiVisionApiKey === 'string') settings.aiVisionApiKey = b.aiVisionApiKey
+  if (typeof b.aiVisionApiKey === 'string' && !isMaskOrBlank('aiVisionApiKey', b.aiVisionApiKey)) settings.aiVisionApiKey = b.aiVisionApiKey
   if (typeof b.aiVisionApiUrl2 === 'string') settings.aiVisionApiUrl2 = b.aiVisionApiUrl2
-  if (typeof b.aiVisionApiKey2 === 'string') settings.aiVisionApiKey2 = b.aiVisionApiKey2
+  if (typeof b.aiVisionApiKey2 === 'string' && !isMaskOrBlank('aiVisionApiKey2', b.aiVisionApiKey2)) settings.aiVisionApiKey2 = b.aiVisionApiKey2
   if (typeof b.aiVisionModel2 === 'string') settings.aiVisionModel2 = b.aiVisionModel2
   if (typeof b.aiImageOcr === 'boolean') settings.aiImageOcr = b.aiImageOcr
   if (typeof b.aiImageFree === 'boolean') settings.aiImageFree = b.aiImageFree
@@ -3298,7 +3342,7 @@ app.post('/settings', (req, res) => {
   if (typeof b.aiVoiceNoteReply === 'boolean') settings.aiVoiceNoteReply = b.aiVoiceNoteReply
   if (typeof b.aiTtsVoice === 'string') settings.aiTtsVoice = b.aiTtsVoice
   if (typeof b.aiTtsModel === 'string') settings.aiTtsModel = b.aiTtsModel
-  if (typeof b.aiSarvamKey === 'string') settings.aiSarvamKey = b.aiSarvamKey
+  if (typeof b.aiSarvamKey === 'string' && !isMaskOrBlank('aiSarvamKey', b.aiSarvamKey)) settings.aiSarvamKey = b.aiSarvamKey
   if (typeof b.aiFullContext === 'boolean') settings.aiFullContext = b.aiFullContext
   if (typeof b.aiLangMode === 'string') settings.aiLangMode = b.aiLangMode
   if (typeof b.aiReplyLang === 'string') settings.aiReplyLang = b.aiReplyLang
@@ -3309,7 +3353,7 @@ app.post('/settings', (req, res) => {
   if (typeof b.ayxDownloadUrl === 'string' && b.ayxDownloadUrl.trim()) settings.ayxDownloadUrl = b.ayxDownloadUrl.trim()
   if (typeof b.ayxShareMsg === 'string' && b.ayxShareMsg.trim()) settings.ayxShareMsg = b.ayxShareMsg.trim()
   saveSettings(); applyPresence()
-  res.json(settings)
+  res.json(redactedSettings())
 })
 
 app.post('/onwhatsapp', async (req, res) => {

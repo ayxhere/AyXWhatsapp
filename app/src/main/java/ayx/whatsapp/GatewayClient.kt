@@ -254,6 +254,7 @@ object GatewayClient {
         try {
             val c = (URL("$base/voicecheck?voice=" + java.net.URLEncoder.encode(voice, "UTF-8")).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"; connectTimeout = 4000; readTimeout = 40000
+                GatewayAuth.token()?.let { setRequestProperty("X-Api-Token", it) }
             }
             readJson(c)
         } catch (e: Exception) { JSONObject().put("ok", false).put("message", e.message ?: "error") }
@@ -420,7 +421,7 @@ object GatewayClient {
     suspend fun searchMusic(q: String): Pair<List<Song>, String> = withContext(Dispatchers.IO) {
         try {
             val enc = java.net.URLEncoder.encode(q, "UTF-8")
-            val c = (URL("$base/music/search?q=$enc").openConnection() as HttpURLConnection).apply { connectTimeout = 4000; readTimeout = 30000 }
+            val c = (URL("$base/music/search?q=$enc").openConnection() as HttpURLConnection).apply { connectTimeout = 4000; readTimeout = 30000; GatewayAuth.token()?.let { setRequestProperty("X-Api-Token", it) } }
             val txt = (if (c.responseCode in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: "{}"
             val obj = JSONObject(txt)
             val arr = obj.optJSONArray("items")
@@ -446,6 +447,7 @@ object GatewayClient {
                 // status that then posted (or never learned it had).
                 readTimeout = 420000
                 setRequestProperty("Content-Type", "application/json")
+                GatewayAuth.token()?.let { setRequestProperty("X-Api-Token", it) }
             }
             c.outputStream.use { it.write(body.toByteArray()) }
             val txt = (if (c.responseCode in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: "{}"
@@ -462,6 +464,7 @@ object GatewayClient {
             val c = (URL("$base/status/voice").openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"; doOutput = true; connectTimeout = 4000; readTimeout = 120000
                 setRequestProperty("Content-Type", "application/json")
+                GatewayAuth.token()?.let { setRequestProperty("X-Api-Token", it) }
             }
             c.outputStream.use { it.write(body.toByteArray()) }
             val txt = (if (c.responseCode in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: "{}"
@@ -478,6 +481,7 @@ object GatewayClient {
             val c = (URL("$base/status/text").openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"; doOutput = true; connectTimeout = 4000; readTimeout = 60000
                 setRequestProperty("Content-Type", "application/json")
+                GatewayAuth.token()?.let { setRequestProperty("X-Api-Token", it) }
             }
             c.outputStream.use { it.write(body.toByteArray()) }
             val txt = (if (c.responseCode in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: "{}"
@@ -493,6 +497,7 @@ object GatewayClient {
             val c = (URL("$base/onwhatsapp").openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"; doOutput = true; connectTimeout = 4000; readTimeout = 120000
                 setRequestProperty("Content-Type", "application/json")
+                GatewayAuth.token()?.let { setRequestProperty("X-Api-Token", it) }
             }
             c.outputStream.use { it.write(body.toByteArray()) }
             val txt = (if (c.responseCode in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: "{}"
@@ -562,6 +567,7 @@ object GatewayClient {
         try {
             val c = (URL("$base/visiontest").openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"; connectTimeout = 4000; readTimeout = 90000
+                GatewayAuth.token()?.let { setRequestProperty("X-Api-Token", it) }
             }
             readJson(c)
         } catch (e: Exception) {

@@ -64,21 +64,68 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Client-side AI settings (SharedPreferences "ayx_ai_settings").
- * The user pastes their OWN OpenRouter key here — it is NEVER hardcoded
- * anywhere in the app and never leaves the device except in the
- * Authorization header of the user's own OpenRouter requests.
+ * Client-side AI settings. The user pastes their OWN OpenRouter key here —
+ * it is NEVER hardcoded anywhere in the app and never leaves the device
+ * except in the Authorization header of the user's own OpenRouter requests.
+ *
+ * v167: the key used to sit in PLAIN SharedPreferences ("ayx_ai_settings").
+ * It now lives in EncryptedSharedPreferences ("ayx_ai_settings_enc",
+ * AES-256, Keystore-backed — same pattern as GatewayAuth). One-time
+ * migration: values found in the legacy plain store are copied into the
+ * encrypted store and the plain copies deleted (only after the encrypted
+ * write succeeds, so a failed migration never loses the key).
  */
 object AiImgSettings {
-    private const val PREFS = "ayx_ai_settings"
+    private const val LEGACY_PREFS = "ayx_ai_settings"
+    private const val PREFS = "ayx_ai_settings_enc"
     const val DEFAULT_MODEL = "google/gemini-2.5-flash-image"
+
+    @Volatile private var cached: android.content.SharedPreferences? = null
+
+    private fun prefs(ctx: Context): android.content.SharedPreferences {
+        cached?.let { return it }
+        val enc = try {
+            androidx.security.crypto.EncryptedSharedPreferences.create(
+                PREFS,
+                androidx.security.crypto.MasterKeys.getOrCreate(androidx.security.crypto.MasterKeys.AES256_GCM_SPEC),
+                ctx.applicationContext,
+                androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+            )
+        } catch (e: Exception) { null }
+        // Keystore failure fallback: keep the feature alive on the legacy
+        // store rather than crashing the AI settings screen.
+        val p = enc ?: ctx.getSharedPreferences(LEGACY_PREFS, Context.MODE_PRIVATE)
+        if (enc != null) migrate(ctx, enc)
+        cached = p
+        return p
+    }
+
+    private fun migrate(ctx: Context, enc: android.content.SharedPreferences) {
+        try {
+            val legacy = ctx.getSharedPreferences(LEGACY_PREFS, Context.MODE_PRIVATE)
+            val ed = enc.edit(); var wrote = false
+            for (name in listOf("openrouter_key", "image_model")) {
+                if (!enc.contains(name)) {
+                    legacy.getString(name, null)?.let { ed.putString(name, it); wrote = true }
+                }
+            }
+            if (wrote && ed.commit()) {
+                val le = legacy.edit()
+                if (enc.contains("openrouter_key")) le.remove("openrouter_key")
+                if (enc.contains("image_model")) le.remove("image_model")
+                le.apply()
+            }
+        } catch (e: Exception) { /* legacy values stay put; retried on next access */ }
+    }
+
     fun getKey(ctx: Context): String =
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("openrouter_key", "")?.trim() ?: ""
+        prefs(ctx).getString("openrouter_key", "")?.trim() ?: ""
     fun getModel(ctx: Context): String =
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("image_model", DEFAULT_MODEL)?.trim()
+        prefs(ctx).getString("image_model", DEFAULT_MODEL)?.trim()
             .takeUnless { it.isNullOrBlank() } ?: DEFAULT_MODEL
     fun save(ctx: Context, key: String, model: String) {
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+        prefs(ctx).edit()
             .putString("openrouter_key", key.trim())
             .putString("image_model", model.trim().ifBlank { DEFAULT_MODEL })
             .apply()

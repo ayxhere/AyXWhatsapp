@@ -313,7 +313,11 @@ internal fun VoicePickerScreen(settings: GatewayClient.Settings, onToggle: (JSON
                 AudioAttributes.Builder().setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).setUsage(AudioAttributes.USAGE_MEDIA).build()
             )
             loading = v; playing = null
-            player.setDataSource(GatewayClient.ttsDemoUrl(v))
+            // v167: the gateway now verifies X-Api-Token — the plain-URL
+            // setDataSource sent no header and would 401.
+            val demoHeaders = HashMap<String, String>()
+            GatewayAuth.token()?.let { demoHeaders["X-Api-Token"] = it }
+            player.setDataSource(ctx, android.net.Uri.parse(GatewayClient.ttsDemoUrl(v)), demoHeaders)
             player.setOnPreparedListener { loading = null; playing = v; it.start() }
             player.setOnCompletionListener { playing = null }
             player.setOnErrorListener { _, _, _ -> loading = null; playing = null; Toast.makeText(ctx, "Demo didn't play, try again", Toast.LENGTH_SHORT).show(); true }

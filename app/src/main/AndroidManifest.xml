@@ -73,12 +73,18 @@
              exported=true is REQUIRED for the system BOOT_COMPLETED
              broadcast to reach it. It only starts the service when
              "Run in background" is ON. -->
+        <!-- v167: the custom ACTION_RESTART_NODE action is deliberately NOT
+             in this filter anymore — with exported=true any app could
+             broadcast it and force a gateway restart. The app's own restart
+             path (NodeRestartReceiver.scheduleRestart) already uses an
+             explicit component Intent via AlarmManager PendingIntent, which
+             does not need a manifest filter entry. exported stays true only
+             for the system BOOT_COMPLETED / MY_PACKAGE_REPLACED broadcasts. -->
         <receiver android:name=".NodeRestartReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
-                <action android:name="ayx.whatsapp.ACTION_RESTART_NODE" />
             </intent-filter>
         </receiver>
 
