@@ -48,6 +48,7 @@ fun ExoVideoPlayer(
     onError: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val player = remember {
         val httpFactory = DefaultHttpDataSource.Factory().apply {
             if (!headers.isNullOrEmpty()) setDefaultRequestProperties(headers)
@@ -85,11 +86,20 @@ fun ExoVideoPlayer(
     // itself sat idle and the preview never played).
     LaunchedEffect(player) { onPlayer(player) }
     // (Re)load whenever the URI changes.
+    // v158: never START playback while the activity is not RESUMED.
+    // This effect can (re)run from a background recomposition (e.g. a
+    // data refresh rebuilding the status viewer while the app is
+    // stopped, the NodeService foreground service keeping the process
+    // alive), and an unguarded play() here started status sound with
+    // no UI on screen — the ON_PAUSE observer below cannot win that
+    // race because it already fired. In every interleaving where the
+    // check passes, a later backgrounding still pauses via the
+    // observer, so the observer remains the last writer.
     LaunchedEffect(uri) {
         runCatching {
             player.setMediaItem(MediaItem.fromUri(uri))
             player.prepare()
-            if (autoPlay) player.play()
+            if (autoPlay && lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) player.play()
         }
     }
     // Keep mute + looping in sync if the call site toggles them.
@@ -103,7 +113,6 @@ fun ExoVideoPlayer(
     // S1: pause when the app goes to background (home button / switch app).
     // Without this, the audio keeps playing because the composition is NOT
     // disposed when the Activity is merely paused.
-    val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, player) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE) {

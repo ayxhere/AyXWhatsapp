@@ -3860,6 +3860,7 @@ private fun ChatGlassHeader(
 @Composable
 private fun AudioPlayer(url: String, tint: Color, holdPause: Boolean = false) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     var playing by remember(url) { mutableStateOf(false) }
     var progress by remember(url) { mutableStateOf(0f) }
     var ready by remember(url) { mutableStateOf(false) }
@@ -3888,7 +3889,12 @@ private fun AudioPlayer(url: String, tint: Color, holdPause: Boolean = false) {
             val _ah = HashMap<String, String>()
             GatewayAuth.token()?.let { _ah["X-Api-Token"] = it }
             player.setDataSource(ctx, android.net.Uri.parse(url), _ah)
-            player.setOnPreparedListener { ready = true; if (wantPlay) { runCatching { player.start(); playing = true } } }
+            // v158: the prepared callback is async — if the user tapped
+            // play and left before prepare landed, PauseOnBackground's
+            // ON_PAUSE pause already fired (on a not-yet-playing
+            // player) and this start would sound in the background.
+            // Start only while the activity is RESUMED right now.
+            player.setOnPreparedListener { ready = true; if (wantPlay && lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) { runCatching { player.start(); playing = true } } }
             player.setOnCompletionListener { playing = false; progress = 0f }
             player.setOnErrorListener { mp, _, _ ->
                 ready = false; playing = false
@@ -8518,6 +8524,19 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
     val st = items.getOrNull(ii) ?: run { LaunchedEffect(Unit) { onClose() }; return }
     fun goNext() { if (ii < items.size - 1) ii++ else if (si < groups.size - 1) { si++; ii = 0 } else onClose() }
     fun goPrev() { if (ii > 0) ii-- else if (si > 0) { si--; ii = 0 } }
+    // v158 SKIP FIX: several advance triggers live in LONG-LIVED
+    // callbacks that capture the goNext of the composition that created
+    // them — the tap zones' pointerInput(Unit) gesture detectors (never
+    // re-keyed), StatusLinkText's pointerInput(annotated) when two
+    // items share a text, and the video player's remember{} listener.
+    // A frozen capture freezes the OPENING group's `items`, so `ii` was
+    // compared against the opening group's size: opened on a 1-item
+    // contact, EVERY tap/auto-advance after the first status jumped
+    // straight to the next person (and on a group shorter than the
+    // opener, ii ran off the end and closed the viewer). All triggers
+    // below route through this rememberUpdatedState handle, which
+    // always invokes the CURRENT composition's goNext.
+    val goNextLive by rememberUpdatedState { goNext() }
     // send a "seen" receipt for each status actually viewed (gated by the Hide-status-view setting upstream)
     LaunchedEffect(st.id, si, ii) { if (!st.mine && !st.id.isNullOrBlank()) onSeen(st) }
     var replyText by remember { mutableStateOf("") }
@@ -8535,6 +8554,28 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
     // anywhere on the viewer (long press in the tap zones / link text).
     // Pauses playback + the progress countdown and hides all chrome.
     var held by remember { mutableStateOf(false) }
+    // v158 BACKGROUND-PLAY FIX: foreground gate for every playback
+    // START in this viewer. v146's pauses (ExoVideoPlayer's ON_PAUSE
+    // observer, AudioPlayer's PauseOnBackground) only fire AT the
+    // pause instant — an async prepare or a background recomposition
+    // completing afterwards could still call play() with no UI on
+    // screen, and the NodeService foreground service keeps the process
+    // alive after a recents-swipe, so the sound never died. Every
+    // start path below is now conditioned on this flag, and the
+    // play-driver effect pauses the moment it drops.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var foreground by remember { mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) }
+    DisposableEffect(lifecycleOwner) {
+        val obs = LifecycleEventObserver { _, e ->
+            when (e) {
+                Lifecycle.Event.ON_RESUME -> foreground = true
+                Lifecycle.Event.ON_PAUSE -> foreground = false
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
     // BUG1 hardening: when this viewer leaves the composition (close, back,
     // person switch), stop the current video outright — playback must never
     // continue behind the status list or the next person's status, even if
@@ -8599,7 +8640,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
             elapsed += step; progress = (elapsed.toFloat() / dur).coerceIn(0f, 1f)
             if (replyText.isNotBlank()) return@LaunchedEffect
         }
-        goNext()
+        goNextLive()
     }
     // video: drive the top bar from REAL playback position so it never looks stuck
     LaunchedEffect(exoPlayer, videoReady, si, ii) {
@@ -8611,11 +8652,14 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
         }
     }
 
-    // video: pause while the viewers sheet is open or the user is
-    // holding (v146 hold-to-pause), resume when both clear
-    LaunchedEffect(showViewers, held, exoPlayer, videoReady) {
+    // video: pause while the viewers sheet is open, the user is
+    // holding (v146 hold-to-pause), or the app is not in the
+    // foreground (v158: a prepare landing after ON_PAUSE used to
+    // re-play the video in the background through this very effect);
+    // resume when all clear
+    LaunchedEffect(showViewers, held, exoPlayer, videoReady, foreground) {
         val pl = exoPlayer ?: return@LaunchedEffect
-        if (showViewers || held) runCatching { pl.pause() } else if (videoReady) runCatching { pl.play() }
+        if (showViewers || held || !foreground) runCatching { pl.pause() } else if (videoReady) runCatching { pl.play() }
     }
 
     // K: overlay inside the activity window (not a Dialog) so it truly covers the status bar + nav bar zones.
@@ -8655,8 +8699,8 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                                 autoPlay = true,
                                 onPlayer = { exoPlayer = it },
                                 onReady = { videoReady = true },
-                                onCompletion = { goNext() },
-                                onError = { goNext() },   // failed video -> skip instead of black screen
+                                onCompletion = { goNextLive() },
+                                onError = { goNextLive() },   // failed video -> skip instead of black screen
                             )
                         }
                         // C4: show a spinner while the video buffers — previously
@@ -8711,17 +8755,23 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                     if (imeVisible) { keyboard?.hide(); focusManager.clearFocus() }
                     else if (!zoom.blocksNav()) { if (right) goNext() else goPrev() }
                 }
+                // v158: the zones below keep ONE gesture detector for the
+                // viewer's whole life (pointerInput(Unit)) — it must call
+                // the CURRENT zoneTap, never its first-composition
+                // capture (see the skip fix at goNextLive). The link
+                // texts route through the same live handle.
+                val zoneTapLive by rememberUpdatedState { right: Boolean -> zoneTap(right) }
                 Row(Modifier.fillMaxSize()) {
                     Box(Modifier.weight(1f).fillMaxHeight().pointerInput(Unit) {
                         detectTapGestures(
-                            onTap = { zoneTap(false) },
+                            onTap = { zoneTapLive(false) },
                             onLongPress = { held = true },
                             onPress = { tryAwaitRelease(); held = false },
                         )
                     })
                     Box(Modifier.weight(1.6f).fillMaxHeight().pointerInput(Unit) {
                         detectTapGestures(
-                            onTap = { zoneTap(true) },
+                            onTap = { zoneTapLive(true) },
                             onLongPress = { held = true },
                             onPress = { tryAwaitRelease(); held = false },
                         )
@@ -8739,7 +8789,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                             style = MaterialTheme.typography.headlineSmall,
                             color = Color.White,
                             fontWeight = FontWeight.SemiBold,
-                            onNavTap = { f -> zoneTap(f >= 0.385f) },
+                            onNavTap = { f -> zoneTapLive(f >= 0.385f) },
                             onHoldChange = { held = it },
                             modifier = Modifier.padding(28.dp),
                         )
@@ -8886,7 +8936,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = Color.White,
                                 maxLines = 4,
-                                onNavTap = { f -> zoneTap(f >= 0.385f) },
+                                onNavTap = { f -> zoneTapLive(f >= 0.385f) },
                                 onHoldChange = { held = it },
                             )
                         }
