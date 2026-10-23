@@ -279,6 +279,12 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
@@ -682,7 +688,7 @@ class MainActivity : ComponentActivity() {
                         val prefs = remember { ctx.getSharedPreferences("wagw", Context.MODE_PRIVATE) }
                         var agreed by remember { mutableStateOf(prefs.getBoolean("privacy_agreed", false)) }
                         if (!agreed) PrivacyGate { prefs.edit().putBoolean("privacy_agreed", true).apply(); agreed = true }
-                        else GatewayApp()
+                        else GatewayApp(updateBlur = pendingUpdateInfo.value != null)
                     }
                     var splashDone by remember { mutableStateOf(false) }
                     if (!splashDone) SplashScreen(dark) { splashDone = true }
@@ -725,7 +731,7 @@ private fun CrashReportDialog(report: String, onDone: () -> Unit) {
         title = { Text("App crashed") },
         text = {
             Text(
-                "AyXWhatsapp crashed the last time it ran. Please send the crash report so the " +
+                "WhatsAyX crashed the last time it ran. Please send the crash report so the " +
                     "problem can be found and fixed. It includes where the app crashed, your " +
                     "device model and Android version."
             )
@@ -745,53 +751,134 @@ private fun CrashReportDialog(report: String, onDone: () -> Unit) {
 }
 
 /**
- * v147: update prompt. Since v150 the content comes from the release the
- * admin publishes in the AyX Group panel (GET /v1/release, see
- * AyxUpdate): the link and the What's New lines are whatever he set on
- * the App release page, and this dialog appears directly in the app.
- * Clean Material look in the app's own theme — no logo or image. A
- * forced update cannot be dismissed (no back button, no outside tap,
- * no Later button) and the app behind it stays unusable; the Download
- * button opens the release link and the user downloads the update from
- * the website.
+ * v147: update prompt; content comes from the release the admin publishes
+ * in the AyX Group panel (GET /v1/release, see AyxUpdate). v156: premium
+ * redesign — a bigger glass card in the app's OWN theme (every color comes
+ * from MaterialTheme / dialogBg(), so it always matches the theme + accent
+ * the user set in the app), a gradient download badge with a soft glow and
+ * pulse, and a spring entrance animation. Behind it, ONLY the home content
+ * pager blurs (see ChatsWithStatus updateBlur); the floating glass header
+ * stays sharp. A forced update cannot be dismissed (no back, no outside
+ * tap, no Later button); Download opens the release link and the user
+ * downloads the update from the website.
  */
 @Composable
 private fun AyxUpdateDialog(info: AyxUpdate.Info, onLater: () -> Unit) {
     val ctx = LocalContext.current
-    AlertDialog(
+    val scheme = MaterialTheme.colorScheme
+
+    // Light dim only — the chat list behind is already blurred by the app
+    // itself, so the dialog window just adds a touch of focus.
+    val view = LocalView.current
+    DisposableEffect(view) {
+        val window = (view.parent as? DialogWindowProvider)?.window
+        window?.setDimAmount(0.32f)
+        onDispose { }
+    }
+
+    // Entrance: the card springs in (scale + fade + a slight rise).
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { shown = true }
+    val cardScale by animateFloatAsState(
+        targetValue = if (shown) 1f else 0.86f,
+        animationSpec = spring(dampingRatio = 0.78f, stiffness = Spring.StiffnessMediumLow),
+        label = "updScale",
+    )
+    val cardAlpha by animateFloatAsState(
+        targetValue = if (shown) 1f else 0f,
+        animationSpec = tween(260),
+        label = "updAlpha",
+    )
+    val cardRise by animateFloatAsState(
+        targetValue = if (shown) 0f else 26f,
+        animationSpec = tween(320),
+        label = "updRise",
+    )
+    // Badge pulse: slow, subtle breathing so the dialog feels alive.
+    val pulse = rememberInfiniteTransition(label = "updPulse")
+    val badgeScale by pulse.animateFloat(
+        initialValue = 1f, targetValue = 1.07f,
+        animationSpec = infiniteRepeatable(tween(1500), RepeatMode.Reverse),
+        label = "updBadge",
+    )
+
+    Dialog(
         onDismissRequest = { if (!info.force) onLater() },
-        properties = if (info.force) {
-            DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)
-        } else {
-            DialogProperties()
-        },
-        title = { Text("Update available") },
-        text = {
-            Column {
-                Text("AyXWhatsapp ${info.versionName} is ready to download.")
-                if (info.changelog.isNotBlank()) {
+        properties = DialogProperties(
+            dismissOnBackPress = !info.force,
+            dismissOnClickOutside = !info.force,
+            usePlatformDefaultWidth = false,
+        ),
+    ) {
+        Box(Modifier.fillMaxSize().padding(horizontal = 22.dp), contentAlignment = Alignment.Center) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().widthIn(max = 440.dp)
+                    .graphicsLayer {
+                        scaleX = cardScale; scaleY = cardScale
+                        alpha = cardAlpha; translationY = cardRise
+                    },
+                shape = RoundedCornerShape(30.dp),
+                color = dialogBg().copy(alpha = ayxDialogAlpha()),
+                border = BorderStroke(1.dp, scheme.primary.copy(alpha = 0.22f)),
+                shadowElevation = 24.dp,
+            ) {
+                Column(
+                    Modifier.padding(horizontal = 26.dp, vertical = 28.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    // Gradient badge with a soft glow and a gentle pulse.
+                    Box(contentAlignment = Alignment.Center) {
+                        Box(Modifier.size(86.dp).blur(16.dp).background(scheme.primary.copy(alpha = 0.35f), CircleShape))
+                        Box(
+                            Modifier.size(64.dp).graphicsLayer { scaleX = badgeScale; scaleY = badgeScale }
+                                .background(Brush.linearGradient(listOf(scheme.primary, scheme.tertiary)), CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(Icons.Filled.Download, contentDescription = null, tint = scheme.onPrimary, modifier = Modifier.size(30.dp))
+                        }
+                    }
+                    Spacer(Modifier.height(18.dp))
+                    Text("Update available", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = scheme.onSurface, textAlign = TextAlign.Center)
+                    Spacer(Modifier.height(6.dp))
+                    Text("WhatsAyX ${info.versionName} is ready to download.", style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant, textAlign = TextAlign.Center)
                     Spacer(Modifier.height(10.dp))
-                    Text("What's new", fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(4.dp))
-                    Text(info.changelog)
-                }
-                if (info.force) {
-                    Spacer(Modifier.height(10.dp))
-                    Text("Please update to continue using the app.")
+                    Surface(shape = RoundedCornerShape(50), color = scheme.primaryContainer) {
+                        Text("v${info.versionName}", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = scheme.onPrimaryContainer, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp))
+                    }
+                    if (info.changelog.isNotBlank()) {
+                        Spacer(Modifier.height(18.dp))
+                        Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = scheme.surfaceVariant.copy(alpha = 0.55f)) {
+                            Column(Modifier.padding(16.dp)) {
+                                Text("What's new", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = scheme.primary)
+                                Spacer(Modifier.height(5.dp))
+                                Text(info.changelog, style = MaterialTheme.typography.bodyMedium, color = scheme.onSurface)
+                            }
+                        }
+                    }
+                    if (info.force) {
+                        Spacer(Modifier.height(14.dp))
+                        Text("Please update to continue using the app.", style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                    }
+                    Spacer(Modifier.height(22.dp))
+                    Button(
+                        onClick = { runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(info.apkUrl))) } },
+                        modifier = Modifier.fillMaxWidth().height(54.dp),
+                        shape = RoundedCornerShape(18.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = scheme.primary, contentColor = scheme.onPrimary),
+                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp),
+                    ) {
+                        Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Download", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    }
+                    if (!info.force) {
+                        Spacer(Modifier.height(6.dp))
+                        TextButton(onClick = onLater) { Text("Later", color = scheme.onSurfaceVariant) }
+                    }
                 }
             }
-        },
-        confirmButton = {
-            Button(onClick = {
-                runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(info.apkUrl))) }
-            }) { Text("Download") }
-        },
-        dismissButton = if (!info.force) {
-            { TextButton(onClick = onLater) { Text("Later") } }
-        } else {
-            null
-        },
-    )
+        }
+    }
 }
 
 private val timeFmt = SimpleDateFormat("h:mm a", Locale.getDefault())
@@ -1122,7 +1209,7 @@ class UploadingMedia(
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun GatewayApp() {
+fun GatewayApp(updateBlur: Boolean = false) {
     val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
 
@@ -2237,6 +2324,7 @@ fun GatewayApp() {
                 else -> ChatsWithStatus(messages, chats, statuses, dpCache, searchQuery, chatsPage, topInset = pad.calculateTopPadding(),
                     ayxSnippet = ayxSnippet,
                     chatListState = homeChatListState,
+                    updateBlur = updateBlur,
                     onPageChange = { chatsPage = it },
                     onLoadStatuses = { scope.launch { val fresh = GatewayClient.getStatuses(); statuses = if (fresh.isNotEmpty()) StatusData.merge(fresh) else StatusData.load() } },
                     onOpenStatus = { st ->
@@ -6462,7 +6550,7 @@ private fun NewChatScreen(contacts: List<DeviceContact>, loading: Boolean, dpCac
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, chats: List<GatewayClient.ChatInfo> = emptyList(), statuses: List<GatewayClient.StatusItem>, dpCache: MutableMap<String, ImageBitmap?>, query: String, page: Int, topInset: androidx.compose.ui.unit.Dp, ayxSnippet: String, onPageChange: (Int) -> Unit, onLoadStatuses: () -> Unit, onOpenStatus: (GatewayClient.StatusItem) -> Unit, onToggleStatusReveal: () -> Unit, onToggleChatReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit, chatListState: LazyListState, clearedUnread: Map<String, Long> = emptyMap()) {
+private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, chats: List<GatewayClient.ChatInfo> = emptyList(), statuses: List<GatewayClient.StatusItem>, dpCache: MutableMap<String, ImageBitmap?>, query: String, page: Int, topInset: androidx.compose.ui.unit.Dp, ayxSnippet: String, onPageChange: (Int) -> Unit, onLoadStatuses: () -> Unit, onOpenStatus: (GatewayClient.StatusItem) -> Unit, onToggleStatusReveal: () -> Unit, onToggleChatReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit, chatListState: LazyListState, clearedUnread: Map<String, Long> = emptyMap(), updateBlur: Boolean = false) {
     val pager = rememberPagerState(initialPage = page) { 2 }
     // content scrolls BEHIND the glass header (topInset) and the floating bottom nav (bottom)
     val contentPad = androidx.compose.foundation.layout.PaddingValues(top = topInset + 6.dp, bottom = 118.dp)
@@ -6472,7 +6560,11 @@ private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, chats: List<Gatew
         onPageChange(pager.currentPage)
         while (pager.currentPage == 1) { onLoadStatuses(); delay(5000) }
     }
-    HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { pg ->
+    // v156: while the premium update dialog is up, blur ONLY this content pager
+    // (chats + status pages). The floating glass header is a sibling overlay in
+    // GatewayApp, outside this pager, so it stays perfectly sharp.
+    val updateBlurDp by animateDpAsState(if (updateBlur) 18.dp else 0.dp, label = "updateblur")
+    HorizontalPager(state = pager, modifier = Modifier.fillMaxSize().blur(updateBlurDp)) { pg ->
         // Tab-switch settle: the newly active page animates with the chosen
         // Animation Style (not just a fade) so the setting visibly applies
         // on the home tabs. graphicsLayer-only (no layout change), skipped
