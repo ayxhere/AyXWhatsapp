@@ -745,50 +745,21 @@ private fun CrashReportDialog(report: String, onDone: () -> Unit) {
 }
 
 /**
- * v147: update prompt driven by the release published in the admin panel
- * (GET /v1/release, see AyxUpdate). Clean Material look in the app's own
- * theme — no logo or image. A forced update cannot be dismissed (no back
- * button, no outside tap, no Later button) and the app behind it stays
- * unusable.
- *
- * v150: when the release carries a direct .apk link, Download downloads
- * the APK inside the app (with progress) and opens the system installer —
- * the user never lands on the website. A failed download, or a non-APK
- * link, falls back to opening the link in the browser.
+ * v147: update prompt. Since v150 the content comes from the release the
+ * admin publishes in the AyX Group panel (GET /v1/release, see
+ * AyxUpdate): the link and the What's New lines are whatever he set on
+ * the App release page, and this dialog appears directly in the app.
+ * Clean Material look in the app's own theme — no logo or image. A
+ * forced update cannot be dismissed (no back button, no outside tap,
+ * no Later button) and the app behind it stays unusable; the Download
+ * button opens the release link and the user downloads the update from
+ * the website.
  */
 @Composable
 private fun AyxUpdateDialog(info: AyxUpdate.Info, onLater: () -> Unit) {
     val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
-    // 0 = idle, 1 = downloading, 2 = download failed (link opened instead)
-    var dlState by remember { mutableStateOf(0) }
-    var progress by remember { mutableStateOf(-1) }
-
-    fun openLink() {
-        runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(info.apkUrl))) }
-    }
-
-    fun startDownload() {
-        if (dlState == 1) return
-        dlState = 1
-        progress = -1
-        scope.launch {
-            val file = withContext(Dispatchers.IO) {
-                AyxUpdate.downloadApk(ctx, info.apkUrl) { p -> progress = p }
-            }
-            val intent = file?.let { AyxUpdate.installerIntent(ctx, it) }
-            if (intent != null) {
-                runCatching { ctx.startActivity(intent) }
-                dlState = 0
-            } else {
-                dlState = 2
-                openLink()
-            }
-        }
-    }
-
     AlertDialog(
-        onDismissRequest = { if (!info.force && dlState != 1) onLater() },
+        onDismissRequest = { if (!info.force) onLater() },
         properties = if (info.force) {
             DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)
         } else {
@@ -808,31 +779,12 @@ private fun AyxUpdateDialog(info: AyxUpdate.Info, onLater: () -> Unit) {
                     Spacer(Modifier.height(10.dp))
                     Text("Please update to continue using the app.")
                 }
-                if (dlState == 1) {
-                    Spacer(Modifier.height(12.dp))
-                    if (progress >= 0) {
-                        LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
-                    } else {
-                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                    }
-                } else if (dlState == 2) {
-                    Spacer(Modifier.height(10.dp))
-                    Text("Download failed — the link was opened in your browser instead.")
-                }
             }
         },
         confirmButton = {
             Button(onClick = {
-                if (AyxUpdate.looksLikeApk(info.apkUrl)) startDownload() else openLink()
-            }) {
-                Text(
-                    when (dlState) {
-                        1 -> if (progress >= 0) "Downloading… $progress%" else "Downloading…"
-                        2 -> "Retry download"
-                        else -> "Download"
-                    }
-                )
-            }
+                runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(info.apkUrl))) }
+            }) { Text("Download") }
         },
         dismissButton = if (!info.force) {
             { TextButton(onClick = onLater) { Text("Later") } }
