@@ -828,13 +828,15 @@ private fun AyxUpdateDialog(info: AyxUpdate.Info, onLater: () -> Unit) {
                 ) {
                     // Gradient badge with a soft glow and a gentle pulse.
                     Box(contentAlignment = Alignment.Center) {
-                        Box(Modifier.size(86.dp).blur(16.dp).background(scheme.primary.copy(alpha = 0.35f), CircleShape))
+                        // Soft ROUND light behind the badge (radial fade — round by construction).
+                        Box(Modifier.size(104.dp).background(Brush.radialGradient(listOf(scheme.primary.copy(alpha = 0.38f), Color.Transparent)), CircleShape))
+                        // Premium rounded-box tile: gradient fill + hand-drawn glyph.
                         Box(
                             Modifier.size(64.dp).graphicsLayer { scaleX = badgeScale; scaleY = badgeScale }
-                                .background(Brush.linearGradient(listOf(scheme.primary, scheme.tertiary)), CircleShape),
+                                .background(Brush.linearGradient(listOf(scheme.primary, scheme.tertiary)), RoundedCornerShape(20.dp)),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Icon(Icons.Filled.Download, contentDescription = null, tint = scheme.onPrimary, modifier = Modifier.size(30.dp))
+                            AyxDownloadGlyph(34.dp, scheme.onPrimary, ring = true)
                         }
                     }
                     Spacer(Modifier.height(18.dp))
@@ -867,7 +869,7 @@ private fun AyxUpdateDialog(info: AyxUpdate.Info, onLater: () -> Unit) {
                         colors = ButtonDefaults.buttonColors(containerColor = scheme.primary, contentColor = scheme.onPrimary),
                         elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp),
                     ) {
-                        Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(20.dp))
+                        AyxDownloadGlyph(20.dp, scheme.onPrimary, ring = false)
                         Spacer(Modifier.width(8.dp))
                         Text("Download", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     }
@@ -877,6 +879,33 @@ private fun AyxUpdateDialog(info: AyxUpdate.Info, onLater: () -> Unit) {
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * v157: hand-drawn download glyph (round-cap strokes) — ring + arrow for
+ * the badge, arrow + tray for the button. Crisp at any size and always in
+ * the theme color passed in; no stock-icon look.
+ */
+@Composable
+private fun AyxDownloadGlyph(glyphSize: Dp, color: Color, ring: Boolean) {
+    Canvas(Modifier.size(glyphSize)) {
+        val stroke = (glyphSize.toPx() * 0.085f).coerceAtLeast(1.6f)
+        val cx = size.width / 2f
+        if (ring) {
+            drawCircle(color = color, radius = size.minDimension / 2f - stroke, style = Stroke(width = stroke), alpha = 0.55f)
+        }
+        val top = size.height * 0.28f
+        val bot = size.height * 0.60f
+        val arm = size.width * 0.17f
+        val armY = size.height * 0.13f
+        drawLine(color, Offset(cx, top), Offset(cx, bot), strokeWidth = stroke, cap = StrokeCap.Round)
+        drawLine(color, Offset(cx - arm, bot - armY), Offset(cx, bot), strokeWidth = stroke, cap = StrokeCap.Round)
+        drawLine(color, Offset(cx + arm, bot - armY), Offset(cx, bot), strokeWidth = stroke, cap = StrokeCap.Round)
+        if (!ring) {
+            val trayY = size.height * 0.82f
+            drawLine(color, Offset(cx - arm * 1.25f, trayY), Offset(cx + arm * 1.25f, trayY), strokeWidth = stroke, cap = StrokeCap.Round)
         }
     }
 }
