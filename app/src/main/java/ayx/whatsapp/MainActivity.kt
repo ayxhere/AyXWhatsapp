@@ -9116,22 +9116,32 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
     }
     fun selectSong(sg: GatewayClient.Song) {
         val key = sg.title + "|" + sg.artist
-        val eff = resolvedSongs[key] ?: sg
-        if (eff.url.isNotBlank()) { runCatching { player.stop() }; onSelect(eff); return }
+        val cached = resolvedSongs[key]
+        if (cached != null) { runCatching { player.stop() }; onSelect(cached); return }
+        // JioSaavn rows already carry the full-length song — apply directly.
+        if (provider == MusicProviders.SAAVN) { runCatching { player.stop() }; onSelect(sg); return }
         if (resolvingKey != null) return
         resolvingKey = key
         scope.launch {
-            val r = MusicProviders.resolveSpotifyAudio(ctx, sg)
+            // Spotify rows have no audio URL at all; iTunes/Deezer rows
+            // only the 30 s preview. Both resolve the FULL song on
+            // JioSaavn before applying (v160). iTunes/Deezer fall back
+            // to their own preview when JioSaavn has no match; Spotify
+            // keeps its "couldn't find audio" toast.
+            val r = if (provider == MusicProviders.SPOTIFY) MusicProviders.resolveSpotifyAudio(ctx, sg)
+                    else MusicProviders.resolveFullAudio(ctx, sg)
             resolvingKey = null
             if (r != null) { resolvedSongs[key] = r; runCatching { player.stop() }; onSelect(r) }
-            else Toast.makeText(ctx, "Couldn't find audio for this song", Toast.LENGTH_LONG).show()
+            else if (provider == MusicProviders.SPOTIFY) Toast.makeText(ctx, "Couldn't find audio for this song", Toast.LENGTH_LONG).show()
+            else { runCatching { player.stop() }; onSelect(sg) }
         }
     }
     DisposableEffect(Unit) { onDispose { runCatching { player.release() }; onQueryChange(qState.value) } }
     LaunchedEffect(q, provider) {
         val query = q.trim()
-        if (provider == MusicProviders.SPOTIFY && !spotifyReady) { results = emptyList(); error = ""; loading = false }
-        else if (query.length >= 2) { loading = true; delay(450); val r = MusicProviders.search(provider, query, ctx); results = r.first; error = r.second; loading = false }
+        // Spotify searches with OR without saved keys (free route inside
+        // MusicProviders) — no gate here anymore (v160).
+        if (query.length >= 2) { loading = true; delay(450); val r = MusicProviders.search(provider, query, ctx); results = r.first; error = r.second; loading = false }
         else { loading = true; val r = MusicProviders.search(provider, defaultQ, ctx); results = r.first; error = r.second; loading = false }   // default/suggested songs
     }
     // check lyrics availability for the visible songs (cached, throttled)
@@ -9184,7 +9194,7 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
                         Spacer(Modifier.height(8.dp))
                         OutlinedTextField(q, { q = it }, placeholder = { Text("Search songs…") }, leadingIcon = { AyxIcon(Icons.Filled.Search, null) }, singleLine = true, shape = uiShapeFor(16), modifier = Modifier.fillMaxWidth().focusRequester(searchFocus))
                         if (provider == MusicProviders.SPOTIFY && !spotifyReady) {
-                            Text("Spotify needs your own keys: Settings → AI → “Spotify (song search)” — add the free Client ID & Secret from developer.spotify.com. Spotify gives no audio file, so picked songs are matched to audio on JioSaavn automatically.",
+                            Text("Spotify search works free here — no keys needed. Optionally add your own Client ID & Secret (Settings → AI → “Spotify (song search)”) to use Spotify's official route first. Spotify gives no audio file, so picked songs are matched to audio on JioSaavn automatically.",
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 8.dp))
                         }
                         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
