@@ -365,6 +365,26 @@ object MusicProviders {
         .replace(Regex("\\(.*?\\)"), " ").replace(Regex("\\[.*?\\]"), " ")
         .replace(Regex("[^a-z0-9 ]"), " ").replace(Regex("\\s+"), " ").trim()
 
+    // Gateway's normArtist, mirrored (v176 main.js): lowercase, strip
+    // brackets + feat/ft suffixes, punctuation-insensitive, no leading
+    // "the". Used ONLY by the audio matcher below — lyrics code untouched.
+    private fun normArtist(s: String): String {
+        var r = s.lowercase()
+            .replace(Regex("\\(.*?\\)|\\[.*?\\]"), "")
+            .replace(Regex("\\b(feat\\.?|ft\\.?|featuring)\\b.*"), "")
+            .replace(Regex("[^a-z0-9]+"), " ")
+            .replace(Regex("\\s+"), " ").trim()
+        if (r.startsWith("the ")) r = r.substring(4)
+        return r.trim()
+    }
+
+    private fun artistAgrees(want: String, got: String): Boolean {
+        val w = normArtist(want); val g = normArtist(got)
+        if (w.isEmpty()) return true
+        if (g.isEmpty()) return false
+        return g == w || g.startsWith("$w ") || w.startsWith("$g ")
+    }
+
     private fun pickMatch(target: GatewayClient.Song, cands: List<GatewayClient.Song>): GatewayClient.Song? {
         val t = normTitle(target.title)
         if (t.isBlank()) return null
@@ -373,6 +393,18 @@ object MusicProviders {
             c == t || (c.length >= 4 && t.contains(c)) || (t.length >= 4 && c.contains(t))
         }
         if (hits.isEmpty()) return null
+        // v180: the matcher never compared artist, so a different
+        // artist's same-title hit (same duration band) could become the
+        // applied audio while the lyrics belong to the target artist —
+        // a constant shift no rescale can repair. Prefer artist-agreeing
+        // hits when the target names an artist AND at least one hit
+        // agrees; a blank target artist (or zero agreeing hits) keeps
+        // the old title+duration behaviour instead of rejecting
+        // everything on a blank artist.
+        val artistPool = if (normArtist(target.artist).isNotEmpty()) {
+            val agreeing = hits.filter { artistAgrees(target.artist, it.artist) }
+            if (agreeing.isNotEmpty()) agreeing else hits
+        } else hits
         // v166 hardening: when an exact-title hit exists, a hit whose KNOWN
         // duration sits >10s from the target's is almost certainly a different
         // VERSION (reprise / unplugged / movie cut) whose intro length differs
@@ -381,10 +413,10 @@ object MusicProviders {
         // closest-duration tie-break runs over the survivors. Unknown-duration
         // hits (<=0) can't be convicted, so they stay. No exact-title hit (or
         // no target duration to judge against) → pre-v166 behavior, unchanged.
-        val hasExact = hits.any { normTitle(it.title) == t }
+        val hasExact = artistPool.any { normTitle(it.title) == t }
         val pool = if (hasExact && target.durationSec > 0)
-            hits.filter { it.durationSec <= 0 || kotlin.math.abs(it.durationSec - target.durationSec) <= 10 }
-        else hits
+            artistPool.filter { it.durationSec <= 0 || kotlin.math.abs(it.durationSec - target.durationSec) <= 10 }
+        else artistPool
         if (pool.isEmpty()) return null
         return if (target.durationSec > 0) pool.minByOrNull { kotlin.math.abs(it.durationSec - target.durationSec) } else pool.first()
     }

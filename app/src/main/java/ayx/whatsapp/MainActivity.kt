@@ -2754,7 +2754,15 @@ internal fun Avatar(jid: String, name: String, cache: MutableMap<String, ImageBi
         if (!cache.containsKey(normJid)) {
             val b = GatewayClient.dpBytes(normJid)
                 ?: jid.takeIf { it != normJid }?.let { GatewayClient.dpBytes(it) }
-            cache[normJid] = b?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }
+            // v180: the decode used to run on Main (LaunchedEffect resumes
+            // on Main after the IO await), so a fast fling queued a
+            // full-size decode per newly visible row on the UI thread and
+            // the scroll stalled in bursts. Decode on Default instead;
+            // the cache write below still happens on Main. No downscale:
+            // rows share this cache at different display sizes, so a
+            // 50dp-baked bitmap could blur larger uses.
+            val decoded = b?.let { bytes -> withContext(Dispatchers.Default) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() } }
+            cache[normJid] = decoded
         }
     }
     val dp = cache[normJid]
@@ -4013,17 +4021,16 @@ private fun ChatGlassHeader(
     onSelectAll: () -> Unit = {},
 ) {
     val dark = isSystemInDarkTheme()
-    // v177 (user): the header pill is SOLID now. It used to take
-    // ChatStyle.headerAlpha() (0.86 at the default 10dp blur setting),
-    // so the full-bleed message list — and, mid-transition, the previous
-    // screen — showed through the pill and washed the DP + name out
-    // ("ghost" content over the header). A translucent pill over a
-    // scrolling list can never keep the identity row crisp, so the
-    // frost alpha is gone here: the whole header strip (status-bar
-    // band included, see the outer Box below) is opaque surface.
-    // ChatStyle.headerAlpha()/headerBlurDp stay in place (the Settings
-    // row still writes them) but no longer affect this header.
-    val pill = MaterialTheme.colorScheme.surface
+    // v180 (user): the frost pill is BACK — v177's solid pill is
+    // reverted per the user's "pehle wala frost pill wapas" order. The
+    // pill takes ChatStyle.headerAlpha() again (0.86 at the default
+    // 10dp blur setting), so the headerAlpha/headerBlurDp Settings row
+    // affects this header again. ONLY the pill is reverted: the outer
+    // Box below keeps its solid surface behind the status-bar padding
+    // (v177), which does not change the pill's look and guards the
+    // status-bar band against old-screen ghosting.
+    val frost = ChatStyle.headerAlpha()                       // 1f = solid, lower = more see-through
+    val pill = MaterialTheme.colorScheme.surface.copy(alpha = frost)
     val onPill = MaterialTheme.colorScheme.onSurface
     val borderCol = onPill.copy(alpha = 0.12f)
     val pillShape = uiShapeFor(24)
