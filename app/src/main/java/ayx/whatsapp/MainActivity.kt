@@ -4068,25 +4068,25 @@ private fun ChatGlassHeader(
     onSelectAll: () -> Unit = {},
 ) {
     val dark = isSystemInDarkTheme()
-    // v186 (user): back arrow RESTORED outside the pill, in its existing
-    // position (v185's flush-left look was bad: too far left). Pill ONLY
-    // around DP + name + menu, shifted only SLIGHTLY left vs v184: strip
-    // start padding 4dp (v184 was 8dp, v185 was 0dp); header Row start
-    // padding back to 2dp (v184 value); end/top/bottom paddings +
-    // statusBarsPadding unchanged. Pill = dark translucent surface,
-    // alpha from the "Chat header blur" setting via
-    // ChatStyle.headerAlpha() (v185 wiring kept) — headerBlurDp is a
-    // state read here in composition, so a blur change recomposes the
-    // header instantly. Rounded uiShapeFor(24), thin 1dp subtle border
-    // (v187: image-2 look — low-alpha light outline), NO shadow.
-    // OFF (toggle) = the v183 transparent look exactly.
+    // v188 (user CORRECTION — supersedes v186/v187): ONE single rounded
+    // box containing, in order: back arrow + DP + name/presence + 3-dot
+    // menu — ALL inside the same box (v187's arrow-OUTSIDE layout was
+    // wrong). Strip start padding 4dp, end 8dp, top 8dp, bottom 6dp,
+    // statusBarsPadding unchanged; pill inner Row padding 2/2/5/5.
+    // Box = dark translucent surface, alpha from the "Chat header blur"
+    // setting via ChatStyle.headerAlpha() (v185 wiring kept) —
+    // headerBlurDp is a state read here in composition, so a blur change
+    // recomposes the header instantly. Rounded uiShapeFor(24), thin 1dp
+    // subtle border (v187: image-2 look — low-alpha light outline),
+    // NO shadow. OFF (toggle) = the v183 transparent look exactly
+    // (no box; exit via system back — BackHandler covers it).
     val onBar = MaterialTheme.colorScheme.onSurface
     var menu by remember { mutableStateOf(false) }
     val pillOn = ChatStyle.headerPillEnabled.value
     val pillShape = uiShapeFor(24)
     val pillBg = MaterialTheme.colorScheme.surface.copy(alpha = ChatStyle.headerAlpha())
 
-    // ONE header strip: back (outside pill) + pill-or-transparent identity, slightly left (v186: 4dp).
+    // ONE header strip: single box (arrow + DP + name + menu) or transparent identity (v188: 4dp).
     // U2: in selection mode the header itself becomes the selection bar — close + count + select-all + delete
     // (the 3-dot menu is hidden until selection is cleared). Selection content has NO pill.
     Box(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 4.dp, end = 8.dp, top = 8.dp, bottom = 6.dp)) {
@@ -4098,10 +4098,10 @@ private fun ChatGlassHeader(
                 IconButton(onClick = onSelectAll) { AyxIcon(Icons.Filled.Checklist, "Select all", tint = onBar) }
                 IconButton(onClick = onDeleteSel) { AyxIcon(Icons.Filled.Delete, "Delete", tint = AYX_RED) }
             } else {
-                IconButton(onClick = onBack) { AyxIcon(Icons.AutoMirrored.Filled.ArrowBack, "back", tint = onBar) }
                 if (pillOn) {
                     Box(Modifier.weight(1f).clip(pillShape).background(pillBg).border(BorderStroke(1.dp, onBar.copy(alpha = 0.20f)), pillShape)) {
                         Row(Modifier.padding(start = 2.dp, end = 2.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = onBack) { AyxIcon(Icons.AutoMirrored.Filled.ArrowBack, "back", tint = onBar) }
                             Box(Modifier.clip(CircleShape).clickable { onAvatarClick() }) { Avatar(jid, name, dpCache, 38.dp, CircleShape) }
                             Spacer(Modifier.width(10.dp))
                             Column(Modifier.weight(1f).clickable { onInfo() }) {
