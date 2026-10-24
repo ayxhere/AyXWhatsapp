@@ -3444,15 +3444,28 @@ private fun ChatDetail(
                 }
             }
         }
-        replyTo?.let { rt ->
-            Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 6.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.width(3.dp).height(34.dp).background(IOS_BLUE, uiShapeFor(2)))
-                Spacer(Modifier.width(8.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(if (rt.fromMe) "You" else rt.name.ifBlank { "Reply" }, style = MaterialTheme.typography.labelMedium, color = IOS_BLUE, maxLines = 1)
-                    Text(rt.text.ifBlank { "\uD83D\uDCCE media" }, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        // v177 (user): the swipe-reply preview is a SMOOTH BLURRED ROUNDED
+        // BOX — the composer card's own frosted language (rounded clip +
+        // translucent surface) — instead of a bare row floating over the
+        // list. Reply logic, the swipe gesture and send behaviour are
+        // untouched; only this container is restyled. The enter/exit
+        // animation runs on the last shown reply so the box fades out
+        // smoothly instead of vanishing the frame replyTo clears.
+        var lastReply by remember { mutableStateOf<GatewayClient.Msg?>(null) }
+        LaunchedEffect(replyTo) { if (replyTo != null) lastReply = replyTo }
+        AnimatedVisibility(visible = replyTo != null, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+            lastReply?.let { rt ->
+                Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 2.dp)
+                    .clip(uiShapeFor(16)).background(MaterialTheme.colorScheme.surface.copy(alpha = ayxGlassAlpha(0.90f, BlurElement.BOTTOM_SHEET)))
+                    .padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.width(3.dp).height(34.dp).background(IOS_BLUE, uiShapeFor(2)))
+                    Spacer(Modifier.width(8.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(if (rt.fromMe) "You" else rt.name.ifBlank { "Reply" }, style = MaterialTheme.typography.labelMedium, color = IOS_BLUE, maxLines = 1)
+                        Text(rt.text.ifBlank { "\uD83D\uDCCE media" }, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    IconButton(onClick = { replyTo = null }) { AyxIcon(Icons.Filled.Close, "cancel reply") }
                 }
-                IconButton(onClick = { replyTo = null }) { AyxIcon(Icons.Filled.Close, "cancel reply") }
             }
         }
         // ===== Composer: ONE rounded floating card (Claude-style). The attachment preview lives INSIDE it and the box grows as you type =====
@@ -3886,8 +3899,17 @@ private fun ChatGlassHeader(
     onSelectAll: () -> Unit = {},
 ) {
     val dark = isSystemInDarkTheme()
-    val frost = ChatStyle.headerAlpha()                       // 1f = solid, lower = more see-through
-    val pill = MaterialTheme.colorScheme.surface.copy(alpha = frost)
+    // v177 (user): the header pill is SOLID now. It used to take
+    // ChatStyle.headerAlpha() (0.86 at the default 10dp blur setting),
+    // so the full-bleed message list — and, mid-transition, the previous
+    // screen — showed through the pill and washed the DP + name out
+    // ("ghost" content over the header). A translucent pill over a
+    // scrolling list can never keep the identity row crisp, so the
+    // frost alpha is gone here: the whole header strip (status-bar
+    // band included, see the outer Box below) is opaque surface.
+    // ChatStyle.headerAlpha()/headerBlurDp stay in place (the Settings
+    // row still writes them) but no longer affect this header.
+    val pill = MaterialTheme.colorScheme.surface
     val onPill = MaterialTheme.colorScheme.onSurface
     val borderCol = onPill.copy(alpha = 0.12f)
     val pillShape = uiShapeFor(24)
@@ -3896,7 +3918,7 @@ private fun ChatGlassHeader(
     // ONE floating frosted card: back + avatar + name/presence + edit + menu (original WhatsApp layout, no separate arrow chip).
     // U2: in selection mode the header itself becomes the selection bar — close + count + select-all + delete
     // (the 3-dot menu is hidden until selection is cleared). Same pill, so nothing renders behind/overlaps.
-    Box(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 6.dp)) {
+    Box(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).statusBarsPadding().padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 6.dp)) {
         Box(Modifier.fillMaxWidth().clip(pillShape).background(pill).border(1.dp, borderCol, pillShape)) {
             Row(Modifier.padding(start = 2.dp, end = 2.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (selCount > 0) {
@@ -7483,7 +7505,13 @@ private fun StyledLyricLine(text: String, lineStart: Long, posMs: Long, style: I
         val totalChars = words.sumOf { it.length }.coerceAtLeast(1)
         val win = (lineEndMs - lineStart).coerceAtLeast(1L)
         val prog = ((posMs - lineStart).toFloat() / win.toFloat()).coerceIn(0f, 1f)
-        var visible = (prog * totalChars).toInt()
+        // v177 (user): the count used to FLOOR — so the last letter
+        // needed prog == 1.0 exactly, which never displays: at
+        // posMs == lineEndMs the NEXT line has already taken over.
+        // Every line therefore never showed complete. Ceil (the same
+        // trick the Reveal branch uses for words) lands the final
+        // letter inside the last slot instead of past the handover.
+        var visible = kotlin.math.ceil(prog * totalChars).toInt().coerceAtMost(totalChars)
         if (posMs >= lineStart && visible < 1) visible = 1
         if (visible <= 0) return
         var left = visible
@@ -7506,7 +7534,13 @@ private fun StyledLyricLine(text: String, lineStart: Long, posMs: Long, style: I
                         // above — only the entry motion is new, and it
                         // is preview-only: the bake keeps drawing the
                         // settled full line (MediaTools, style 9).
-                        val appearAt = lineStart + (gi + 1).toFloat() / totalChars.toFloat() * win.toFloat()
+                        // v177: the glide used to start at the NEXT
+                        // letter's slot ((gi + 1) / totalChars) — a full
+                        // slot late, so the last letter's glide never
+                        // started before the handover either. It now
+                        // starts at the letter's OWN slot (gi /
+                        // totalChars), the moment it becomes visible.
+                        val appearAt = lineStart + gi.toFloat() / totalChars.toFloat() * win.toFloat()
                         val ap = ((dPos - appearAt) / 300f).coerceIn(0f, 1f)
                         val e = TextAnimEasing.apply(3, ap)
                         Text(w[j].toString(), color = lyricColor, fontSize = (LyricsStyleStore.LYRIC_BASE_SP * scale).sp, fontWeight = FontWeight.Black, lineHeight = (LyricsStyleStore.LYRIC_LINE_SP * scale).sp,
@@ -8494,14 +8528,22 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                     Box(Modifier.matchParentSize().alpha(if (capturingSheet) 0f else 1f)) {
                         val sb = sheetBackdrop
                         if (sb != null) {
-                            // v161: drawn at its CAPTURE height, top-anchored.
-                            // The sheet's height changes with the IME (its
-                            // column ends in .imePadding()), which used to
-                            // re-crop this bitmap on every keyboard-animation
-                            // frame — the flicker. Capture size never moves.
+                            // v177 (user): the blurred snapshot now fills
+                            // the sheet's WHOLE current height. It used to
+                            // draw at its fixed CAPTURE height, top-anchored
+                            // (v161) — so when the keyboard opened and
+                            // imePadding() grew the sheet taller, the grown
+                            // bottom (caption) zone showed only the flat
+                            // gradient scrim: the background blur visibly
+                            // "removed" itself on every keyboard tap. The
+                            // bitmap itself is still the frozen
+                            // once-per-media snapshot (no re-capture, no
+                            // per-frame crop work — drawing it taller is
+                            // just a draw-time scale, so the v161 disco
+                            // discipline is untouched), and the blur now
+                            // stays whether the keyboard is open or not.
                             Image(sb.asImageBitmap(), null,
-                                Modifier.align(Alignment.TopCenter).fillMaxWidth()
-                                    .then(if (sheetBackdropH > 0.dp) Modifier.height(sheetBackdropH) else Modifier.fillMaxSize())
+                                Modifier.fillMaxSize()
                                     .ayxBlurBackground(true, 10.dp),
                                 contentScale = ContentScale.Crop)
                         }

@@ -130,6 +130,8 @@ object LyricsStyleStore {
         ColorOption("Violet", 0xFFB388FF.toInt()),
         ColorOption("Pink", 0xFFFF7AC8.toInt()),
         ColorOption("Cyan", 0xFF3EE6D8.toInt()),
+        ColorOption("Black", 0xFF000000.toInt()),
+        ColorOption("Blue", 0xFF0A84FF.toInt()),
     )
 
     /** The ARGB lyrics render in right now — the accent when unpicked. */
