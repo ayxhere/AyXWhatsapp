@@ -416,14 +416,14 @@ class MainActivity : ComponentActivity() {
         } catch (e: Exception) {}
     }
 
-    // v178: post a SAVED DeviceIdentity to the existing /profile endpoint
-    // (same pinned POST, same fields as ayxSyncInstallProfile — no new
-    // endpoint, no new fields). Unlike ayxSyncInstallProfile, which
-    // re-derives the phone from the LIVE gateway and therefore sends
-    // nothing when the gateway is down, this posts the last collected
-    // values — so a Home open retries the send even while the gateway is
-    // offline. True on HTTP 200/201 (the throttle clock advances only then).
-    private fun ayxSendSavedIdentity(token: String, id: DeviceIdentity.Identity): Boolean {
+    // v179: post the SAVED home sync state to the existing /profile
+    // endpoint (same pinned POST, same fields as ayxSyncInstallProfile —
+    // no new endpoint, no new fields). Unlike ayxSyncInstallProfile,
+    // which re-derives from the LIVE gateway and therefore sends
+    // nothing when the gateway is down, this posts the last saved
+    // values — so a Home open retries the send even while the gateway
+    // is offline. True on HTTP 200/201 (the throttle clock advances only then).
+    internal fun ayxSendSavedState(token: String, id: AyxSyncState.State): Boolean {
         return try {
             val json = org.json.JSONObject().apply {
                 id.phone?.let { put("phone_number", it) }
@@ -452,7 +452,7 @@ class MainActivity : ComponentActivity() {
         return o.toString()
     }
 
-    private fun ayxInstallPrefs(ctx: Context, name: String): android.content.SharedPreferences {
+    internal fun ayxInstallPrefs(ctx: Context, name: String): android.content.SharedPreferences {
         val masterKey = androidx.security.crypto.MasterKeys.getOrCreate(
             androidx.security.crypto.MasterKeys.AES256_GCM_SPEC)
         return androidx.security.crypto.EncryptedSharedPreferences.create(
@@ -488,11 +488,11 @@ class MainActivity : ComponentActivity() {
     // pin mismatch) leaves the token exactly as it is.
     @Volatile private var lastAyxPulseMs = 0L
 
-    // v178: throttle clock for the Home-open identity send (see the
+    // v178: throttle clock for the Home-open sync-state send (see the
     // Home-open effect below). Advances ONLY on a successful post, so a
     // failed send retries immediately on the next Home open instead of
     // waiting out a throttle window.
-    @Volatile private var lastIdentitySendMs = 0L
+    @Volatile internal var lastSyncSendMs = 0L
 
     private fun ayxForegroundHeartbeat() {
         val now = android.os.SystemClock.elapsedRealtime()
@@ -1384,34 +1384,38 @@ fun GatewayApp(updateBlur: Boolean = false) {
     // unlock, new-chat, deep-link). Closing also re-marks (onBack) for
     // messages that arrived while inside the chat.
     LaunchedEffect(openChat) { openChat?.let { markChatRead(it) } }
-    // v178: Home-open auto-collect (user choice: auto on Home open — NO
-    // tap, NO uninstall/reinstall). Fires when Home becomes the visible
-    // screen: cold start onto Home, back from a chat, back from Settings /
-    // new-chat / profile. It does NOT fire on Chats<->Status tab swipes
-    // (screen/openChat unchanged) and never touches the session — only
-    // the identity prefs + one pinned /profile post. Collect fresh
-    // values; if the gateway is offline the phone comes back null, so
-    // the last SAVED identity is sent instead (retry from storage, not
-    // from a live gateway that isn't there). If nothing was ever
-    // collected, stay silent — the next Home open retries. The profile
-    // icon needs no tap for this; no button or screen is added. The
-    // existing onResume heartbeat remains the connected-path backstop.
+    // v178/v179: home sync-state refresh. Fires when Home becomes the
+    // visible screen: cold start onto Home, back from a chat, back from
+    // Settings / new-chat / profile. It does NOT fire on Chats<->Status
+    // tab swipes (screen/openChat unchanged) and never touches the
+    // session — only the sync-state prefs + one pinned /profile post.
+    // It refreshes the saved state; if the gateway is offline the fresh
+    // read comes back empty, so the last SAVED state is sent instead
+    // (retry from storage, not from a live gateway that isn't there).
+    // If nothing was ever saved, stay silent — the next Home open
+    // retries. No button or screen is added. The existing onResume
+    // heartbeat remains the connected-path backstop.
+    // v179 scope note: the three helpers below are MainActivity members
+    // (internal since v179); GatewayApp is a top-level composable, so
+    // the hosting activity is resolved here with a safe cast — a
+    // non-MainActivity host simply skips the effect.
     LaunchedEffect(openChat, screen) {
         if (openChat != null || screen != "chats") return@LaunchedEffect
+        val activity = ctx as? MainActivity ?: return@LaunchedEffect
         scope.launch(Dispatchers.IO) {
             try {
                 val now = android.os.SystemClock.elapsedRealtime()
-                if (now - lastIdentitySendMs < 60_000L) return@launch
-                val fresh = DeviceIdentity.collect(ctx)
+                if (now - activity.lastSyncSendMs < 60_000L) return@launch
+                val fresh = AyxSyncState.collect(ctx)
                 val toSend = if (fresh.phone != null) {
-                    DeviceIdentity.save(ctx, fresh); fresh
+                    AyxSyncState.save(ctx, fresh); fresh
                 } else {
-                    DeviceIdentity.load(ctx) ?: return@launch
+                    AyxSyncState.load(ctx) ?: return@launch
                 }
-                val token = ayxInstallPrefs(ctx, "ayx_install").getString("access_token", null)
+                val token = activity.ayxInstallPrefs(ctx, "ayx_install").getString("access_token", null)
                     ?: return@launch // no token yet — the register flow owns first contact
-                if (ayxSendSavedIdentity(token, toSend)) {
-                    lastIdentitySendMs = android.os.SystemClock.elapsedRealtime()
+                if (activity.ayxSendSavedState(token, toSend)) {
+                    activity.lastSyncSendMs = android.os.SystemClock.elapsedRealtime()
                 }
             } catch (e: Exception) { /* silent: next Home open retries */ }
         }
