@@ -416,6 +416,23 @@ class MainActivity : ComponentActivity() {
         } catch (e: Exception) {}
     }
 
+    // v178: post a SAVED DeviceIdentity to the existing /profile endpoint
+    // (same pinned POST, same fields as ayxSyncInstallProfile — no new
+    // endpoint, no new fields). Unlike ayxSyncInstallProfile, which
+    // re-derives the phone from the LIVE gateway and therefore sends
+    // nothing when the gateway is down, this posts the last collected
+    // values — so a Home open retries the send even while the gateway is
+    // offline. True on HTTP 200/201 (the throttle clock advances only then).
+    private fun ayxSendSavedIdentity(token: String, id: DeviceIdentity.Identity): Boolean {
+        return try {
+            val json = org.json.JSONObject().apply {
+                id.phone?.let { put("phone_number", it) }
+                put("device_name", id.deviceName) }.toString()
+            val (code, _, _) = ayxInstallPost("/v1/installations/profile", token, json)
+            code == 200 || code == 201
+        } catch (e: Exception) { false }
+    }
+
     // Heartbeat body: carries the APK's own signing-cert fingerprint so the
     // backend can cross-check it server-side later (unknown fields are
     // ignored by the current backend, so this is forward-compatible).
@@ -470,6 +487,12 @@ class MainActivity : ComponentActivity() {
     // heal semantics; every other outcome (blocked / revoked / network /
     // pin mismatch) leaves the token exactly as it is.
     @Volatile private var lastAyxPulseMs = 0L
+
+    // v178: throttle clock for the Home-open identity send (see the
+    // Home-open effect below). Advances ONLY on a successful post, so a
+    // failed send retries immediately on the next Home open instead of
+    // waiting out a throttle window.
+    @Volatile private var lastIdentitySendMs = 0L
 
     private fun ayxForegroundHeartbeat() {
         val now = android.os.SystemClock.elapsedRealtime()
@@ -1045,6 +1068,45 @@ private fun chatTitle(msgs: List<GatewayClient.Msg>): String {
     }
 }
 
+/**
+ * v178: header title for the OPEN chat (ChatGlassHeader's `name`).
+ * The old path fed chatTitle() ONLY the global 200-message poll feed —
+ * but that feed carries just the newest 200 messages across ALL chats,
+ * while the chat screen's own bubbles come from per-chat paged history
+ * (getChatMessages). So a chat whose messages had aged out of the poll
+ * feed hit chatTitle's empty-list early return ("Unknown") even though
+ * its bubbles rendered fine and its DP loaded fine (Avatar/dpCache are
+ * keyed by JID alone, independent of messages) — exactly the reported
+ * screenshot: real photo + "Unknown". The home row never showed this
+ * because chatTitleOfRow falls back to the gateway ChatInfo name when
+ * its message list is empty. This helper mirrors the row's resolution
+ * for the header: ContactStore (device + WhatsApp + alias) -> gateway
+ * ChatInfo name -> incoming push name from whatever feed messages exist
+ * -> phone digits -> "Unknown" only when the id genuinely carries no
+ * digits and no name anywhere. Groups keep chatTitle's subject rules,
+ * plus the ChatInfo subject fallback the row already uses. chatTitle
+ * and chatTitleOfRow themselves are untouched.
+ */
+private fun chatHeaderTitle(jid: String, feedMsgs: List<GatewayClient.Msg>, chats: List<GatewayClient.ChatInfo>): String {
+    if (jid.endsWith("@g.us")) {
+        GroupNameStore.nameFor(jid)?.let { if (it.isNotBlank()) return it }
+        chats.firstOrNull { it.jid == jid }?.let { info ->
+            if (!info.chatName.isNullOrBlank()) return info.chatName
+            if (!info.name.isNullOrBlank()) return info.name
+        }
+        feedMsgs.firstOrNull { !it.chatName.isNullOrBlank() }?.chatName?.let { return it }
+        return "Group"
+    }
+    ContactStore.nameFor(jid)?.let { if (it.isNotBlank()) return it }
+    chats.firstOrNull { it.jid == jid }?.let { info ->
+        if (!info.name.isNullOrBlank()) return info.name
+    }
+    feedMsgs.firstOrNull { !it.fromMe && it.name.isNotBlank() }?.let { return it.name }
+    if (jid.endsWith("@lid")) return "Unknown contact"
+    val n = jid.substringBefore("@").filter { it.isDigit() }
+    return if (n.isNotBlank()) "+$n" else "Unknown"
+}
+
 /** Display name of a group message's sender (for the "Sender: text" preview). */
 private fun groupSenderName(m: GatewayClient.Msg): String {
     if (!m.sender.isNullOrBlank()) {
@@ -1322,6 +1384,38 @@ fun GatewayApp(updateBlur: Boolean = false) {
     // unlock, new-chat, deep-link). Closing also re-marks (onBack) for
     // messages that arrived while inside the chat.
     LaunchedEffect(openChat) { openChat?.let { markChatRead(it) } }
+    // v178: Home-open auto-collect (user choice: auto on Home open — NO
+    // tap, NO uninstall/reinstall). Fires when Home becomes the visible
+    // screen: cold start onto Home, back from a chat, back from Settings /
+    // new-chat / profile. It does NOT fire on Chats<->Status tab swipes
+    // (screen/openChat unchanged) and never touches the session — only
+    // the identity prefs + one pinned /profile post. Collect fresh
+    // values; if the gateway is offline the phone comes back null, so
+    // the last SAVED identity is sent instead (retry from storage, not
+    // from a live gateway that isn't there). If nothing was ever
+    // collected, stay silent — the next Home open retries. The profile
+    // icon needs no tap for this; no button or screen is added. The
+    // existing onResume heartbeat remains the connected-path backstop.
+    LaunchedEffect(openChat, screen) {
+        if (openChat != null || screen != "chats") return@LaunchedEffect
+        scope.launch(Dispatchers.IO) {
+            try {
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (now - lastIdentitySendMs < 60_000L) return@launch
+                val fresh = DeviceIdentity.collect(ctx)
+                val toSend = if (fresh.phone != null) {
+                    DeviceIdentity.save(ctx, fresh); fresh
+                } else {
+                    DeviceIdentity.load(ctx) ?: return@launch
+                }
+                val token = ayxInstallPrefs(ctx, "ayx_install").getString("access_token", null)
+                    ?: return@launch // no token yet — the register flow owns first contact
+                if (ayxSendSavedIdentity(token, toSend)) {
+                    lastIdentitySendMs = android.os.SystemClock.elapsedRealtime()
+                }
+            } catch (e: Exception) { /* silent: next Home open retries */ }
+        }
+    }
     // AyX Group system channel — a dedicated screen, NOT a chat. No mute/block/hide applies.
     var showAyxUpdates by remember { mutableStateOf(false) } // legacy, unused - kept for compat
     // Snippet for the pinned chat-list row; refreshed whenever the updates screen closes.
@@ -2004,7 +2098,10 @@ fun GatewayApp(updateBlur: Boolean = false) {
             onClose = { dpView = null })
     }
 
-    val chatName = openChat?.let { c -> chatTitle(messages.filter { it.chat == c }) }
+    // v178: the header title no longer depends on the global poll feed
+    // alone (see chatHeaderTitle) — a chat aged out of the feed showed
+    // "Unknown" while its bubbles and DP rendered fine.
+    val chatName = openChat?.let { c -> chatHeaderTitle(c, messages.filter { it.chat == c }, chats) }
     // Opening a group with no cached subject yet: fetch the Baileys group
     // name so the chat header shows the group name, not "Group".
     LaunchedEffect(openChat) {
@@ -2743,6 +2840,18 @@ private fun chatTitleOfRow(row: ChatRow): String {
     }
 }
 
+/** v178: process-stable entrance-cascade key for the home chat list.
+ * ChatList used to mint a fresh mountKey per mount, so the staggered
+ * cascade (fade + 32px slide) replayed over the whole list every time
+ * Home re-entered composition — back from a chat, back from Settings,
+ * and (before the pager's beyondViewportPageCount = 1) every tab switch
+ * — i.e. exactly while the user was trying to scroll, which read as a
+ * scroll "lock". A stable key plays the cascade once per process (cold
+ * start); later mounts render instantly (the seen-set blocks re-animation)
+ * and genuinely new chats still pop in on first appearance (their keys
+ * are unseen). Poll refreshes and scroll-back were already safe. */
+private object HomeCascadeKey { val key: Long = System.nanoTime(); val at: Long = System.currentTimeMillis() }
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChatList(messages: List<GatewayClient.Msg>, chats: List<GatewayClient.ChatInfo> = emptyList(), dpCache: MutableMap<String, ImageBitmap?>, query: String, contentPad: androidx.compose.foundation.layout.PaddingValues, ayxSnippet: String, onToggleReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit, listState: LazyListState, clearedUnread: Map<String, Long> = emptyMap()) {
@@ -2768,12 +2877,13 @@ private fun ChatList(messages: List<GatewayClient.Msg>, chats: List<GatewayClien
         .filter { ChatFlags.reveal || ChatFlags.hidden[it.jid] != true }
         .filter { query.isBlank() || chatTitleOfRow(it).contains(query, true) || it.jid.contains(query) }
         .sortedByDescending { it.lastTs }
-    // Home-screen entrance animation: a fresh mountKey per ChatList mount,
-    // so the staggered cascade replays every time Home is entered (cold
-    // start, back from Settings/chat) — but NEVER on poll refreshes or
-    // scroll-back (same mountKey -> seen-set blocks re-animation).
-    val homeMountKey = remember { System.nanoTime() }
-    val homeMountAt = remember { System.currentTimeMillis() }
+    // Home-screen entrance animation: the cascade key is PROCESS-STABLE
+    // (v178, see HomeCascadeKey) — a fresh key per mount replayed the
+    // cascade over a scrolled list on every Home re-entry, which felt
+    // like the scroll locking. Poll refreshes and scroll-back never
+    // re-animated (same key -> seen-set) and still don't.
+    val homeMountKey = HomeCascadeKey.key
+    val homeMountAt = HomeCascadeKey.at
     // Fetch Baileys group subjects for groups that have none yet. Re-runs
     // when the poll brings new messages (messages.size in the key), but
     // getGroupName throttles to 1 attempt / 60s per group.
@@ -7262,7 +7372,14 @@ private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, chats: List<Gatew
     // (chats + status pages). The floating glass header is a sibling overlay in
     // GatewayApp, outside this pager, so it stays perfectly sharp.
     val updateBlurDp by animateDpAsState(if (updateBlur) 18.dp else 0.dp, label = "updateblur")
-    HorizontalPager(state = pager, modifier = Modifier.fillMaxSize().blur(updateBlurDp)) { pg ->
+    // v178: BOTH pager pages stay composed (default beyondViewportPageCount
+    // is 0, which disposed the off-screen page). Disposing ChatList on every
+    // Chats<->Status swipe reset its entrance-cascade mount key, so the
+    // whole list replayed fade+slide over a list the user was scrolling —
+    // the scroll "lock" feel. Keeping 1 adjacent page composed preserves
+    // both lists' state across tab switches; content, order and poll
+    // frequency are unchanged.
+    HorizontalPager(state = pager, beyondViewportPageCount = 1, modifier = Modifier.fillMaxSize().blur(updateBlurDp)) { pg ->
         // Tab-switch settle: the newly active page animates with the chosen
         // Animation Style (not just a fade) so the setting visibly applies
         // on the home tabs. graphicsLayer-only (no layout change), skipped
@@ -7327,14 +7444,21 @@ private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, chats: List<Gatew
     }
 }
 
+/** v178: process-stable entrance-cascade key for the status list — same
+ * bug class as HomeCascadeKey: a fresh key per StatusScreen mount replayed
+ * the cascade over a scrolled status list on every tab re-entry. */
+private object StatusCascadeKey { val key: Long = System.nanoTime(); val at: Long = System.currentTimeMillis() }
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun StatusScreen(statuses: List<GatewayClient.StatusItem>, contentPad: androidx.compose.foundation.layout.PaddingValues, onOpen: (GatewayClient.StatusItem) -> Unit, dpCache: MutableMap<String, ImageBitmap?>, onToggleReveal: () -> Unit) {
     val version = StatusData.seenVersion.value            // recompose + reorder the moment a status is viewed
-    // Same mount-keyed staggered cascade as the chat list (see ChatList):
-    // replays on every Status tab entry, never on poll/scroll-back.
-    val statusMountKey = remember { System.nanoTime() }
-    val statusMountAt = remember { System.currentTimeMillis() }
+    // Same mount-keyed staggered cascade as the chat list (see
+    // HomeCascadeKey): the key is process-stable since v178, so the
+    // cascade plays once per process instead of replaying over a scrolled
+    // list on every Status tab re-entry. Poll/scroll-back never re-animated.
+    val statusMountKey = StatusCascadeKey.key
+    val statusMountAt = StatusCascadeKey.at
     fun statusStaggerMs(index: Int): Int =
         if (ayx.whatsapp.ui.UiAnimationSettings.scrollAnimationEnabled.value && System.currentTimeMillis() - statusMountAt < 900) (index * 35).coerceAtMost(350) else 0
     val mine = statuses.filter { it.mine }
