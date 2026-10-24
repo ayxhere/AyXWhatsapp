@@ -905,7 +905,7 @@ fun AnimatedComposerField(
                             withTransform({ rotate(pt.rot, Offset(pt.x, pt.y)) }) {
                                 drawText(cl, color = pt.color, topLeft = Offset(dx, dy), alpha = a)
                             }
-                        } else {
+                        } else if (!previewMode) { // v189: preview hides blank-cluster circles; real chats unchanged
                             drawCircle(pt.color.copy(alpha = a), radius = pt.sizePx * 0.35f, center = Offset(pt.x, pt.y))
                         }
                     }
