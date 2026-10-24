@@ -419,8 +419,18 @@ class MainActivity : ComponentActivity() {
     // Heartbeat body: carries the APK's own signing-cert fingerprint so the
     // backend can cross-check it server-side later (unknown fields are
     // ignored by the current backend, so this is forward-compatible).
+    // v175: the same live profile fields the register payload sends ride
+    // along on EVERY heartbeat — app_version / device_name / phone_number
+    // used to be frozen at whatever the (possibly ancient) register row
+    // held, so the admin panel showed a stale version and a NULL number
+    // for installs whose register predated the gateway coming up. The
+    // heartbeat path already re-syncs the profile on a 200; now the
+    // heartbeat itself carries the fresh values too.
     private fun ayxHeartbeatJson(ctx: Context): String {
         val o = org.json.JSONObject()
+        runCatching { o.put("app_version", ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName) }
+        o.put("device_name", "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}".trim())
+        ayxOwnPhoneE164()?.let { o.put("phone_number", it) }
         AyxIntegrity.signatureSha256Hex(ctx)?.let { o.put("app_signature", it) }
         return o.toString()
     }
@@ -544,7 +554,7 @@ class MainActivity : ComponentActivity() {
                         // minting a duplicate.
                         savedId?.takeIf { it.isNotBlank() }?.let { put("installation_id", it) }
                         AyxIntegrity.signatureSha256Hex(ctx)?.let { put("app_signature", it) } }.toString()
-                    val (code, _, respBody) = ayxInstallPost("/v1/installations/register", null, json)
+                    val (code, errCode, respBody) = ayxInstallPost("/v1/installations/register", null, json)
                     if ((code == 200 || code == 201) && respBody != null) {
                         val obj = org.json.JSONObject(respBody)
                         val newToken = obj.optString("access_token")
@@ -561,6 +571,19 @@ class MainActivity : ComponentActivity() {
                         try { ayxInstallPost("/v1/installations/heartbeat", newToken, ayxHeartbeatJson(ctx)) } catch (e: Exception) {}
                         ayxSyncInstallProfile(newToken, device)
                         return@Thread
+                    }
+                    // v175: an HTTP refusal used to fall off the end of this
+                    // block silently — no log, no trace (exactly how a
+                    // signature_mismatch could hide: register refused, the
+                    // token stayed missing, and nothing anywhere said why).
+                    // Record it distinctly instead: a tagged log line with
+                    // the HTTP code and the backend's own error code, plus
+                    // a persisted last-error in the install store.
+                    val errMsg = "HTTP " + code + if (errCode != null) " (" + errCode + ")" else ""
+                    android.util.Log.w("AyxInstall", "Register rejected: $errMsg")
+                    runCatching {
+                        prefs.edit().putString("ayx_install_last_error",
+                            errMsg + " @ " + System.currentTimeMillis()).apply()
                     }
                 } catch (e: Exception) {}
             } catch (e: Exception) {
@@ -1256,6 +1279,11 @@ fun GatewayApp(updateBlur: Boolean = false) {
     // While true, an unregistered gateway status means "still restoring",
     // never "show the QR screen".
     var localPaired by remember { mutableStateOf(false) }
+    // v175: flipped by the status poll once "paired locally but not
+    // restored" has persisted ~90s straight — the saved session is then
+    // treated as dead and the link screen takes over (see the poll loop
+    // and the screen switch below).
+    var restoreTimedOut by remember { mutableStateOf(false) }
     var lastQrHash by remember { mutableStateOf(0) }
     var settings by remember { mutableStateOf(GatewayClient.Settings()) }
     var messages by remember { mutableStateOf(listOf<GatewayClient.Msg>()) }
@@ -1548,6 +1576,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
     }
     LaunchedEffect(Unit) {
         var toldRelogin = false
+        var restoreSince = 0L   // v175: start of the current unbroken "paired but not restored" window
         while (true) {
             status = GatewayClient.status()
             if (!status.reachable) {
@@ -1570,6 +1599,15 @@ fun GatewayApp(updateBlur: Boolean = false) {
                 // Baileys holding creds.me emits none, so the old code spun
                 // on "Generating QR…" forever for exactly these users.
                 localPaired = withContext(Dispatchers.IO) { localPairedSession(ctx) }
+                // v175: "paired but not restored" is only believable for a
+                // little while. If it persists ~90s straight, the saved
+                // session is a zombie (the gateway may also declare it dead
+                // itself via needRelogin) — stop waiting: restoreTimedOut
+                // drops the screen switch to the link screen below.
+                if (localPaired && !status.needRelogin) {
+                    if (restoreSince == 0L) restoreSince = System.currentTimeMillis()
+                    if (System.currentTimeMillis() - restoreSince >= 90_000L) restoreTimedOut = true
+                } else { restoreSince = 0L; restoreTimedOut = false }
                 // v148: no session restore from public storage — the login
                 // lives only in the private auth dir (see SessionMigration,
                 // which runs once inside NodeRuntime before node boots).
@@ -1581,6 +1619,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
                     }
                 } else qr = null
             } else {
+                restoreSince = 0L; restoreTimedOut = false   // v175: registered — the restore window resets
                 qr = null; lastQrHash = 0
                 if (!settingsLoaded) {
                     settings = GatewayClient.getSettings(); settingsLoaded = true
@@ -1975,7 +2014,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
         }
     }
     val title = when {
-        !status.registered && localPaired && !status.needRelogin -> "Connecting…"
+        !status.registered && localPaired && !status.needRelogin && !restoreTimedOut -> "Connecting…"
         !status.registered -> "Link device"
         openChat != null -> chatName ?: "Chat"
         screen == "settings" -> if (settingsPage == "home") "Settings" else settingsTitle(settingsPage)
@@ -2358,7 +2397,10 @@ fun GatewayApp(updateBlur: Boolean = false) {
                 // it dead via needRelogin) — restoring state, never the QR
                 // screen: no QR exists for this user, so LinkScreen could
                 // only spin on "Generating QR…" (the v148 lockup).
-                !status.registered && localPaired && !status.needRelogin -> Box(Modifier.padding(pad)) { RestoringScreen(
+                // v175: unless that restoring drags past ~90s — then the
+                // session is a zombie (restoreTimedOut) and the link screen
+                // below is the honest outcome after all.
+                !status.registered && localPaired && !status.needRelogin && !restoreTimedOut -> Box(Modifier.padding(pad)) { RestoringScreen(
                     onReset = { scope.launch { GatewayClient.logout(); SessionMigration.purgePublic(ctx); notify("reset") } }) }
                 !status.registered -> Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode,
                     onPair = { n -> scope.launch { try { notify("code: " + GatewayClient.pair(n)) } catch (e: Exception) { notify("pair error: ${e.message}") } } },
@@ -4711,9 +4753,44 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
             "msgmotion" -> SettingsSubPage { MessageMotionSettingsPage() }
             "iconstyle" -> SettingsSubPage { IconStyleSettingsPage() }
             "about" -> SettingsSubPage { AboutSettings(ctx, onLogout) }
-            "sync" -> SettingsSubPage { DriveBackupSection() }
+            "sync" -> SettingsSubPage { SyncGateSection(ctx) }
             "support" -> SettingsSubPage { SupportSettings(ctx) }
             else -> SettingsHome(status) { onPage(it) }
+        }
+    }
+}
+
+// v175: the Sync (Drive Backup) page is key-gated for now — backup is
+// temporarily unavailable to everyone but the owner, who unlocks THIS
+// device once with the key; the unlock persists per-device, so afterwards
+// the page opens straight into the backup section. The Drive backup logic
+// itself is untouched (DriveBackup.kt) — this only wraps the page entry.
+private const val SYNC_UNLOCK_KEY = "8818080992aA"
+
+@Composable
+private fun SyncGateSection(ctx: Context) {
+    val prefs = remember { ctx.getSharedPreferences("ayx_sync_gate", Context.MODE_PRIVATE) }
+    var unlocked by remember { mutableStateOf(prefs.getBoolean("unlocked", false)) }
+    if (unlocked) {
+        DriveBackupSection()
+    } else {
+        var key by remember { mutableStateOf("") }
+        var wrong by remember { mutableStateOf(false) }
+        StyledSurface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f), modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Sync", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
+                Text("Backup is temporarily not available.", style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(key, { key = it; wrong = false }, label = { Text("Unlock key") }, singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(), shape = uiShapeFor(14))
+                if (wrong) Text("Wrong key", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                Button(onClick = {
+                    if (key == SYNC_UNLOCK_KEY) {
+                        prefs.edit().putBoolean("unlocked", true).apply()
+                        unlocked = true
+                    } else wrong = true
+                }, modifier = Modifier.fillMaxWidth().height(50.dp), shape = uiShapeFor(14)) { Text("Unlock") }
+            }
         }
     }
 }

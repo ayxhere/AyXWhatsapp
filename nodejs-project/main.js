@@ -1562,6 +1562,7 @@ function handleConnUpdate(u) {
     currentQr = null; pairingCode = null; pairingNumber = null
     log('CONNECTED as', status.me)
     _retry = 0
+    _closeStreak = 0   // v175: a live open breaks any dead-session close streak
     // No gateway-side outbox flush: the app's SendQueue owns the queue
     // (see note above) and flushes on its own poll loop.
     setTimeout(async () => { try { const ls = new Set(); for (const e of msgLog) if (e && String(e.chat).endsWith('@lid')) ls.add(e.chat); for (const st of statuses) if (st && !st.mine && String(st.sender).endsWith('@lid')) ls.add(baseJid(st.sender)); for (const l of ls) await resolveLid(l) } catch (_) {} }, 4000)
@@ -1573,6 +1574,21 @@ function handleConnUpdate(u) {
     status.lastError = code || (lastDisconnect?.error?.message ?? 'closed')
     const alreadyLinked = isPaired()
     log('closed. code=', code, 'alreadyLinked=', alreadyLinked)
+
+    // v175 dead-session detection: a paired session (creds.me on disk)
+    // whose socket closes again and again WITHOUT an 'open' in between is
+    // a zombie — WhatsApp no longer honours the creds, yet Baileys never
+    // emits loggedOut for it, so nothing ever declared it dead and the app
+    // restored forever. Five closes in a row earn the same verdict the
+    // loggedOut path gives: needRelogin, and the app's existing escape.
+    // Reconnect/backoff behaviour is untouched.
+    if (alreadyLinked) {
+      _closeStreak++
+      if (_closeStreak >= 5 && !status.needRelogin) {
+        status.needRelogin = true
+        log('close streak', _closeStreak, 'with no open -> needRelogin (dead session)')
+      }
+    }
 
     if (code === DisconnectReason.loggedOut) {
       currentQr = null; pairingCode = null; pairingNumber = null
@@ -1601,6 +1617,7 @@ function handleConnUpdate(u) {
 }
 
 let _retry = 0
+let _closeStreak = 0   // v175: consecutive 'close' events with no 'open' between (paired sessions only)
 let _reconnTimer = null
 function scheduleReconnect(wait) {
   if (_reconnTimer) return                      // one pending reconnect at a time (no parallel sockets)
