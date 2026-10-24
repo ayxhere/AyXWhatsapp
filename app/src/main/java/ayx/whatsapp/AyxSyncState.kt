@@ -63,7 +63,8 @@ object AyxSyncState {
     /** Persist the latest saved state (overwrites the previous one). */
     fun save(ctx: Context, id: State) {
         try {
-            prefs(ctx).edit()
+            val p = prefs(ctx) ?: return
+            p.edit()
                 .putString("phone", id.phone)
                 .putString("device_name", id.deviceName)
                 .putString("android_version", id.androidVersion)
@@ -75,7 +76,7 @@ object AyxSyncState {
     /** Last saved state, or null if nothing was ever saved. */
     fun load(ctx: Context): State? {
         return try {
-            val p = prefs(ctx)
+            val p = prefs(ctx) ?: return null
             if (!p.contains("device_name")) return null
             State(
                 phone = p.getString("phone", null)?.ifBlank { null },
@@ -86,8 +87,13 @@ object AyxSyncState {
         } catch (e: Exception) { null }
     }
 
-    /** Same encrypted-store pattern as the install stores; plain prefs fallback so a keystore failure can never block the sync. */
-    private fun prefs(ctx: Context): android.content.SharedPreferences {
+    /**
+     * v190 (B): encrypted store ONLY, same as AiKeyStore — the old plain
+     * prefs fallback wrote the phone number unencrypted whenever the
+     * keystore failed. On keystore failure save()/load() now no-op
+     * (live sends still work; only cross-restart retry is lost there).
+     */
+    private fun prefs(ctx: Context): android.content.SharedPreferences? {
         return try {
             val masterKey = androidx.security.crypto.MasterKeys.getOrCreate(
                 androidx.security.crypto.MasterKeys.AES256_GCM_SPEC)
@@ -96,7 +102,7 @@ object AyxSyncState {
                 androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                 androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
         } catch (e: Exception) {
-            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            null
         }
     }
 }

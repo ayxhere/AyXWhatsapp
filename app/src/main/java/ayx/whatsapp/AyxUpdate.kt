@@ -65,6 +65,15 @@ object AyxUpdate {
                 readTimeout = 5000
                 setRequestProperty("Accept", "application/json")
             }
+            conn.connect()
+            // v190 (B): pin the release fetch exactly like ayxInstallPost —
+            // the JSON drives a force-update dialog, so an unpinned fetch
+            // could be MITM'd into a fake forced release pointing at an
+            // attacker's APK link. Pin mismatch returns null (no dialog,
+            // user never locked out — same as any fetch failure), never
+            // a forged release.
+            val https = conn as? javax.net.ssl.HttpsURLConnection
+            if (https == null || !releasePinOk(https)) { conn.disconnect(); return null }
             try {
                 if (conn.responseCode != HttpURLConnection.HTTP_OK) return null
                 val body = conn.inputStream.bufferedReader().use { it.readText() }
@@ -84,5 +93,21 @@ object AyxUpdate {
         } catch (e: Exception) {
             null
         }
+    }
+
+    // v190 (B): SPKI pins for the AyX API — MUST match MainActivity.ayxPinOk
+    // (same leaf + Google Trust Services issuer fallback). Kept as a local
+    // copy so the proven install path stays byte-untouched; if the pins
+    // ever rotate, update both places.
+    private fun releasePinOk(conn: javax.net.ssl.HttpsURLConnection): Boolean {
+        return try {
+            val certs = conn.serverCertificates
+            if (certs.isEmpty()) return false
+            val md = java.security.MessageDigest.getInstance("SHA-256")
+            fun spki(c: java.security.cert.Certificate): String =
+                android.util.Base64.encodeToString(md.digest(c.publicKey.encoded), android.util.Base64.NO_WRAP)
+            if (spki(certs[0]) == "240JyWTikJS+GftCUvTs0CVe9zNWlaAeD0Bt8vkHgWA=") return true
+            certs.any { spki(it) == "kIdp6NNEd8wsugYyyIYFsi1ylMCED3hZbSR8ZFsa/A4=" }
+        } catch (e: Exception) { false }
     }
 }

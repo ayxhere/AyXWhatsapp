@@ -130,55 +130,58 @@ fun AyxAnimatedScreen(
 }
 
 private fun ayxTransitionFor(style: AnimationStyle) =
+    // v190 (A): every fade companion uses the same FastOutSlowInEasing as
+    // its slide/scale partner (durations/distances unchanged) — a linear
+    // fade under an eased slide read as uneven motion on every open.
     when (style) {
         AnimationStyle.ZOOM -> (
             scaleIn(
                 animationSpec = tween(300, easing = FastOutSlowInEasing),
                 initialScale = 0.95f,
-            ) + fadeIn(animationSpec = tween(250))
+            ) + fadeIn(animationSpec = tween(250, easing = FastOutSlowInEasing))
             ) togetherWith (
             scaleOut(
                 animationSpec = tween(300, easing = FastOutSlowInEasing),
                 targetScale = 0.95f,
-            ) + fadeOut(animationSpec = tween(250))
+            ) + fadeOut(animationSpec = tween(250, easing = FastOutSlowInEasing))
             )
-        AnimationStyle.FADE -> fadeIn(animationSpec = tween(250)) togetherWith
-            fadeOut(animationSpec = tween(250))
+        AnimationStyle.FADE -> fadeIn(animationSpec = tween(250, easing = FastOutSlowInEasing)) togetherWith
+            fadeOut(animationSpec = tween(250, easing = FastOutSlowInEasing))
         AnimationStyle.SLIDE -> (
             slideInHorizontally(
                 animationSpec = tween(300, easing = FastOutSlowInEasing),
-            ) { it / 4 } + fadeIn(animationSpec = tween(250))
+            ) { it / 4 } + fadeIn(animationSpec = tween(250, easing = FastOutSlowInEasing))
             ) togetherWith (
             slideOutHorizontally(
                 animationSpec = tween(300, easing = FastOutSlowInEasing),
-            ) { -it / 4 } + fadeOut(animationSpec = tween(250))
+            ) { -it / 4 } + fadeOut(animationSpec = tween(250, easing = FastOutSlowInEasing))
             )
         AnimationStyle.SLIDE_UP -> (
             slideInVertically(
                 animationSpec = tween(320, easing = FastOutSlowInEasing),
-            ) { it / 3 } + fadeIn(animationSpec = tween(250))
+            ) { it / 3 } + fadeIn(animationSpec = tween(250, easing = FastOutSlowInEasing))
             ) togetherWith (
             slideOutVertically(
                 animationSpec = tween(320, easing = FastOutSlowInEasing),
-            ) { it / 3 } + fadeOut(animationSpec = tween(250))
+            ) { it / 3 } + fadeOut(animationSpec = tween(250, easing = FastOutSlowInEasing))
             )
         AnimationStyle.SCALE -> (
             scaleIn(
                 animationSpec = tween(320, easing = FastOutSlowInEasing),
                 initialScale = 0.85f,
-            ) + fadeIn(animationSpec = tween(250))
+            ) + fadeIn(animationSpec = tween(250, easing = FastOutSlowInEasing))
             ) togetherWith (
             scaleOut(
                 animationSpec = tween(320, easing = FastOutSlowInEasing),
                 targetScale = 1.08f,
-            ) + fadeOut(animationSpec = tween(250))
+            ) + fadeOut(animationSpec = tween(250, easing = FastOutSlowInEasing))
             )
         AnimationStyle.FADE_SLIDE -> (
             slideInVertically(
                 animationSpec = tween(300, easing = FastOutSlowInEasing),
-            ) { it / 5 } + fadeIn(animationSpec = tween(280))
+            ) { it / 5 } + fadeIn(animationSpec = tween(280, easing = FastOutSlowInEasing))
             ) togetherWith (
-            fadeOut(animationSpec = tween(280)) +
+            fadeOut(animationSpec = tween(280, easing = FastOutSlowInEasing)) +
                 slideOutVertically(animationSpec = tween(300, easing = FastOutSlowInEasing)) { -it / 5 }
             )
         AnimationStyle.NONE -> EnterTransition.None togetherWith ExitTransition.None

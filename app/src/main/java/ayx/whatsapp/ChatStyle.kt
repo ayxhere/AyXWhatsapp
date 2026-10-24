@@ -26,6 +26,8 @@ object ChatStyle {
 
     val bubbleStyles: List<Pair<String, String>> = listOf(
         "ios" to "iOS",
+        "iosround" to "iOS Round",
+        "iostail" to "iOS Tail",
         "whatsapp" to "Normal WhatsApp",
         "material" to "Material",
         "rounded" to "Rounded",
@@ -48,6 +50,7 @@ object ChatStyle {
         0xFF00ACC1.toInt(),      // cyan
         0xFF546E7A.toInt(),      // slate
         0xFF2C2C2E.toInt(),      // dark grey
+        0xFF000000.toInt(),      // v190: black
         0xFFE9E9EB.toInt(),      // light grey
         0xFFFFFFFF.toInt(),      // white
     )

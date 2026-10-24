@@ -287,6 +287,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
@@ -601,7 +602,7 @@ class MainActivity : ComponentActivity() {
                         prefs.edit()
                             .remove("installation_id")
                             .putString("access_token", newToken).apply()
-                        android.util.Log.i("AyxInstall", "Registered phone=$phone device=$device")
+                        android.util.Log.i("AyxInstall", "Registered")
                         // Register does not set last_seen_at — heartbeat in the same
                         // run so the admin "online / last seen" is alive from birth,
                         // then heal the profile (the gateway may be up by now).
@@ -3635,8 +3636,18 @@ private fun ChatDetail(
         var playPreview by remember(pendingMedia) { mutableStateOf(false) }
         val plusButton: @Composable () -> Unit = {
             Box {
-                IconButton(onClick = { attachMenu = true }) { AyxIcon(Icons.Filled.Add, "add") }
-                DropdownMenu(expanded = attachMenu, onDismissRequest = { attachMenu = false }, containerColor = MaterialTheme.colorScheme.surface.copy(alpha = ayxMenuAlpha())) {
+                // v190 (C): the old default DropdownMenu was focusable, so
+                // opening it stole focus from the text field -> keyboard
+                // hid -> window resized -> menu repositioned, every tap
+                // (the "disco dance"). focusable=false keeps the keyboard
+                // open and the menu opens beside it in one clean step;
+                // BackHandler restores menu-first back (a non-focusable
+                // popup does not consume back by itself). Icon pinned to
+                // 48dp button / 24dp glyph like the send button, so icon
+                // -pack bitmaps cannot render it at a stray size.
+                BackHandler(enabled = attachMenu) { attachMenu = false }
+                IconButton(onClick = { attachMenu = true }, modifier = Modifier.size(48.dp)) { AyxIcon(Icons.Filled.Add, "add", modifier = Modifier.size(24.dp)) }
+                DropdownMenu(expanded = attachMenu, onDismissRequest = { attachMenu = false }, properties = PopupProperties(focusable = false), containerColor = MaterialTheme.colorScheme.surface.copy(alpha = ayxMenuAlpha())) {
                     DropdownMenuItem(text = { Text("Camera") }, leadingIcon = { AyxIcon(Icons.Filled.PhotoCamera, null) }, onClick = { attachMenu = false; onCamera() })
                     DropdownMenuItem(text = { Text("Photos & Videos") }, leadingIcon = { AyxIcon(Icons.Filled.Image, null) }, onClick = { attachMenu = false; onPickChatPhoto() })
                     DropdownMenuItem(text = { Text("Videos") }, leadingIcon = { AyxIcon(Icons.Filled.VideoFile, null) }, onClick = { attachMenu = false; onPickChatVideo() })
@@ -4633,6 +4644,14 @@ private fun styleSpec(fromMe: Boolean, dark: Boolean, recvGrey: Color, recvText:
         "gb" ->
             if (fromMe) Triple(Color(0xFF128C7E), Color.White, RoundedCornerShape(14.dp, 14.dp, 4.dp, 14.dp))
             else Triple(if (dark) Color(0xFF1F2C34) else Color(0xFFEAEAEA), recvText, RoundedCornerShape(14.dp, 14.dp, 14.dp, 4.dp))
+        // v190 (E): iOS-family additions — same iOS colors as the default,
+        // shape-only variants, so they sit in the iOS family, not a new theme.
+        "iosround" ->
+            if (fromMe) Triple(IOS_BLUE, Color.White, RoundedCornerShape(24.dp, 24.dp, 8.dp, 24.dp))
+            else Triple(recvGrey, recvText, RoundedCornerShape(24.dp, 24.dp, 24.dp, 8.dp))
+        "iostail" ->
+            if (fromMe) Triple(IOS_BLUE, Color.White, RoundedCornerShape(18.dp, 18.dp, 2.dp, 18.dp))
+            else Triple(recvGrey, recvText, RoundedCornerShape(18.dp, 18.dp, 18.dp, 2.dp))
         else ->
             if (fromMe) Triple(IOS_BLUE, Color.White, RoundedCornerShape(18.dp, 18.dp, 5.dp, 18.dp))
             else Triple(recvGrey, recvText, RoundedCornerShape(18.dp, 18.dp, 18.dp, 5.dp))
@@ -4941,8 +4960,8 @@ private fun settingsTitle(page: String): String = when (page) {
     "imageai" -> "Image AI"; "aimemory" -> "AI Memory"; "voice" -> "AI Voice"; "font" -> "App font"; "emoji" -> "Emoji"
     "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "accent" -> "Accent Color"; "bluranim" -> "Blur & Animation"; "textanim" -> "Text Animation"; "msgmotion" -> "Message Motion"; "iconstyle" -> "Icon Style"; "about" -> "About"; "sync" -> "Sync"; "support" -> "Support Development"; else -> "Settings"
 }
-// parent page for nested back (Wallpaper under Chat Settings; Image AI / AI Memory / Voice under AI Assistant; Font under General)
-private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "general"; "emoji" -> "general"; "textanim" -> "appearance"; "msgmotion" -> "appearance"; "iconstyle" -> "appearance"; "accent" -> "appearance"; "bluranim" -> "appearance"; else -> "home" }
+// parent page for nested back (Wallpaper under Chat Settings; Image AI / AI Memory / Voice under AI Assistant; Font / Emoji / Text Animation / Message Motion / Icon Style / Accent / Blur & Animation under Appearance)
+private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "appearance"; "emoji" -> "appearance"; "textanim" -> "appearance"; "msgmotion" -> "appearance"; "iconstyle" -> "appearance"; "accent" -> "appearance"; "bluranim" -> "appearance"; else -> "home" }
 
 @Composable
 private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient.Settings, page: String, onPage: (String) -> Unit, wallpaperVersion: Int,
@@ -4951,9 +4970,11 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
     onPickWallpaper: () -> Unit, onRemoveWallpaper: () -> Unit, onPickPhoto: () -> Unit,
     dpCache: MutableMap<String, ImageBitmap?>, messages: List<GatewayClient.Msg>) {
     // back arrow + title live in the top app bar; sub-pages have no second arrow
-    AnimatedContent(targetState = page, transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(140)) }, label = "setpage") { p ->
-        when (p) {
-            "general" -> SettingsSubPage { GeneralSettings(settings, onToggle, onOpenFont = { onPage("font") }, onOpenEmoji = { onPage("emoji") }) }
+    // v190 (A): no inner AnimatedContent here — the outer AyxAnimatedScreen
+    // already animates on settingsPage (its key includes it), so a second
+    // fade stacked on top made every settings open stutter. One transition.
+    when (page) {
+            "general" -> SettingsSubPage { GeneralSettings(settings, onToggle) }
             "font" -> SettingsSubPage { FontSettings(ctx) }
             "emoji" -> SettingsSubPage { EmojiSettings(ctx) }
             "autoreply" -> SettingsSubPage { AutoReplySection(settings, onToggle, onRules) }
@@ -4963,7 +4984,7 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
             "voice" -> VoicePickerScreen(settings, onToggle, ctx)
             "chat" -> SettingsSubPage { ChatSettings(onOpenWallpaper = { onPage("wallpaper") }) }
             "wallpaper" -> SettingsSubPage { WallpaperSettings(ctx, wallpaperVersion, onPickWallpaper, onRemoveWallpaper) }
-            "appearance" -> SettingsSubPage { AppearanceSettings(onOpenTextAnim = { onPage("textanim") }, onOpenMsgMotion = { onPage("msgmotion") }, onOpenIconStyle = { onPage("iconstyle") }, onOpenAccentColor = { onPage("accent") }, onOpenBlurAnim = { onPage("bluranim") }) }
+            "appearance" -> SettingsSubPage { AppearanceSettings(onOpenTextAnim = { onPage("textanim") }, onOpenMsgMotion = { onPage("msgmotion") }, onOpenIconStyle = { onPage("iconstyle") }, onOpenAccentColor = { onPage("accent") }, onOpenBlurAnim = { onPage("bluranim") }, onOpenFont = { onPage("font") }, onOpenEmoji = { onPage("emoji") }) }
             "accent" -> SettingsSubPage { AccentColorSettingsPage() }
             "bluranim" -> SettingsSubPage { BlurAnimationSettingsPage() }
             "textanim" -> SettingsSubPage { TextAnimationSettings() }
@@ -4973,7 +4994,6 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
             "sync" -> SettingsSubPage { DriveBackupSection() }
             "support" -> SettingsSubPage { SupportSettings(ctx) }
             else -> SettingsHome(status) { onPage(it) }
-        }
     }
 }
 
@@ -5189,7 +5209,7 @@ private fun EmojiStyleRow(name: String, sub: String, selectedNow: Boolean, downl
 }
 
 @Composable
-private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit, onOpenFont: () -> Unit, onOpenEmoji: () -> Unit) {
+private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var refreshTick by remember { mutableStateOf(0) }
@@ -5209,28 +5229,6 @@ private fun GeneralSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
         SettingRow(Icons.Filled.PermMedia, CAT_AUTOREPLY, "Save media", "Download incoming photos/videos (needed for view, deleted media)", settings.saveMedia) { onToggle(JSONObject().put("saveMedia", it)) }
         SettingRow(Icons.AutoMirrored.Filled.ArrowForward, CAT_AI, "Forwarded tag", "Show the \"Forwarded\" label on forwarded messages", ChatStyle.showForwardTag.value) { ChatStyle.setShowForwardTag(it) }
     }
-    SettingsGroup("Appearance") {
-        ActionRow(Icons.Filled.TextFields, CAT_GENERAL, "App font", "Current: ${FontStore.appFont}  ·  preview, pick or upload .ttf/.otf") { onOpenFont() }
-        ActionRow(Icons.Filled.EmojiEmotions, CAT_GENERAL, "Emoji", "Current: ${EmojiStore.selected}  ·  download & apply emoji style") { onOpenEmoji() }
-    }
-
-    SettingsGroup("Message translation") {
-        Text("Double-tap any message in a chat to translate it. Pick how it works:",
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 4.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("off" to "Off", "manual" to "Double-tap", "auto" to "Auto (all)").forEach { (k, lbl) ->
-                FilterChip(selected = TranslateStore.mode == k, onClick = { TranslateStore.chooseMode(k) }, label = { Text(lbl) })
-            }
-        }
-        var tlang by remember { mutableStateOf(TranslateStore.lang) }
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(tlang, { tlang = it }, label = { Text("Translate to") }, singleLine = true,
-            placeholder = { Text("e.g. English, Hindi, Roman Hindi, Bangla") }, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            FilledTonalButton(onClick = { TranslateStore.chooseLang(tlang.trim().ifBlank { "English" }); Toast.makeText(ctx, "Translate language saved", Toast.LENGTH_SHORT).show() }) { Text("Save") }
-        }
-    }
-
     SettingsGroup("Background & battery") {
         SettingRow(Icons.Filled.CloudOff, CAT_AI, "Run in background", "Keeps a silent notification so messages arrive when the app is closed. Turn OFF to remove the notification (messages then arrive only while the app is open).", ChatStyle.runBackground.value) { ChatStyle.setRunBackground(it) }
         ActionRow(Icons.Filled.Bolt, WARN_AMBER, "Allow battery (no optimization)", "Keep the gateway alive in the background") {
@@ -5999,7 +5997,7 @@ private fun ChatSettings(onOpenWallpaper: () -> Unit) {
     SettingsGroup("Bubble color") {
         Text("Sent (right side)", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 10.dp, start = 2.dp))
         BubbleColorRow(ChatStyle.sentColor.value) { ChatStyle.setSentColor(it) }
-        Text("Received (left side)", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 6.dp, start = 2.dp))
+        Text("Received (left side)", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 10.dp, start = 2.dp))
         BubbleColorRow(ChatStyle.recvColor.value) { ChatStyle.setRecvColor(it) }
         Spacer(Modifier.height(4.dp))
     }
@@ -6190,7 +6188,8 @@ private fun VoiceNoteStyleGrid() {
 }
 
 @Composable
-private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -> Unit, onOpenIconStyle: () -> Unit, onOpenAccentColor: () -> Unit, onOpenBlurAnim: () -> Unit) {
+private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -> Unit, onOpenIconStyle: () -> Unit, onOpenAccentColor: () -> Unit, onOpenBlurAnim: () -> Unit, onOpenFont: () -> Unit, onOpenEmoji: () -> Unit) {
+    val ctx = LocalContext.current
     val accent = ThemeStore.accent.value
     val accentPair = ThemeStore.accents.firstOrNull { it.first == accent }
     SettingsGroup("Theme") {
@@ -6259,6 +6258,30 @@ private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -
             value = if (MessageMotionSettings.enabled.value) "On" else "Off",
             onClick = onOpenMsgMotion,
         )
+    }
+
+    // v190 (H): App font + Emoji + Message translation moved here from
+    // General — same rows, same stores/keys, only the location changed.
+    SettingsGroup("Font & Emoji") {
+        ActionRow(Icons.Filled.TextFields, CAT_GENERAL, "App font", "Current: ${FontStore.appFont}  ·  preview, pick or upload .ttf/.otf") { onOpenFont() }
+        ActionRow(Icons.Filled.EmojiEmotions, CAT_GENERAL, "Emoji", "Current: ${EmojiStore.selected}  ·  download & apply emoji style") { onOpenEmoji() }
+    }
+
+    SettingsGroup("Message translation") {
+        Text("Double-tap any message in a chat to translate it. Pick how it works:",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 4.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("off" to "Off", "manual" to "Double-tap", "auto" to "Auto (all)").forEach { (k, lbl) ->
+                FilterChip(selected = TranslateStore.mode == k, onClick = { TranslateStore.chooseMode(k) }, label = { Text(lbl) })
+            }
+        }
+        var tlang by remember { mutableStateOf(TranslateStore.lang) }
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(tlang, { tlang = it }, label = { Text("Translate to") }, singleLine = true,
+            placeholder = { Text("e.g. English, Hindi, Roman Hindi, Bangla") }, shape = uiShapeFor(14), modifier = Modifier.fillMaxWidth())
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            FilledTonalButton(onClick = { TranslateStore.chooseLang(tlang.trim().ifBlank { "English" }); Toast.makeText(ctx, "Translate language saved", Toast.LENGTH_SHORT).show() }) { Text("Save") }
+        }
     }
 
     SettingsGroup("Icons") {
@@ -7486,7 +7509,7 @@ private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, chats: List<Gatew
         val isActive = pg == pager.currentPage || style == ayx.whatsapp.ui.AnimationStyle.NONE
         val tabAlpha by animateFloatAsState(
             targetValue = if (isActive) 1f else 0.6f,
-            animationSpec = tween(250), label = "tabFade",
+            animationSpec = tween(250, easing = FastOutSlowInEasing), label = "tabFade",
         )
         val tabScale by animateFloatAsState(
             targetValue = if (isActive) 1f else when (style) {
@@ -7494,7 +7517,7 @@ private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, chats: List<Gatew
                 ayx.whatsapp.ui.AnimationStyle.SCALE -> 0.88f
                 else -> 1f
             },
-            animationSpec = tween(280), label = "tabScale",
+            animationSpec = tween(280, easing = FastOutSlowInEasing), label = "tabScale",
         )
         val tabOffsetY by animateFloatAsState(
             targetValue = if (isActive) 0f else when (style) {
@@ -7502,7 +7525,7 @@ private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, chats: List<Gatew
                 ayx.whatsapp.ui.AnimationStyle.FADE_SLIDE -> 60f
                 else -> 0f
             },
-            animationSpec = tween(280), label = "tabSlide",
+            animationSpec = tween(280, easing = FastOutSlowInEasing), label = "tabSlide",
         )
         Box(Modifier.fillMaxSize().graphicsLayer {
             alpha = tabAlpha; scaleX = tabScale; scaleY = tabScale; translationY = tabOffsetY
@@ -8902,17 +8925,17 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                     Box(Modifier.matchParentSize().background(CaptionFieldTint()))
                                     if (TextAnimSettings.enabled.value) {
                                         AnimatedOutlinedField(caption, { caption = it }, placeholderText = "Add a caption…", maxLines = 3, shape = uiShapeFor(24),
-                                            textColor = Color(0xFFFF4848), hintColor = Color.White.copy(alpha = 0.6f), accentColor = Color.White,
+                                            textColor = Color.White, hintColor = Color.White.copy(alpha = 0.6f), accentColor = Color.White,
                                             borderColor = Color.White.copy(alpha = 0.10f), focusedBorderColor = Color.White.copy(alpha = 0.22f),
                                             modifier = Modifier.fillMaxWidth())
                                     } else {
                                         OutlinedTextField(caption, { caption = it }, placeholder = { Text("Add a caption…", color = Color.White.copy(alpha = 0.6f)) }, maxLines = 3, shape = uiShapeFor(24),
                                             colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.White.copy(alpha = 0.22f), unfocusedBorderColor = Color.White.copy(alpha = 0.10f),
                                                 focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
-                                                // v169 (user): his own typed text gets the
-                                                // same colored treatment as the lyrics —
-                                                // the lyric accent instead of plain white.
-                                                focusedTextColor = Color(0xFFFF4848), unfocusedTextColor = Color(0xFFFF4848), cursorColor = Color(0xFFFF4848)),
+                                                // v190 (user): typed caption back to plain
+                                                // white — the v169 lyric-accent red made
+                                                // typed text unreadable as input.
+                                                focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White),
                                             modifier = Modifier.fillMaxWidth())
                                     }
                                 }

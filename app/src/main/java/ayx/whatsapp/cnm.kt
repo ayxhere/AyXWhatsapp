@@ -245,7 +245,7 @@ private fun LogLine(m: GatewayClient.MemMsg) {
     }
 }
 
-// ---- AI Voice picker: male/female artists, demo-play then select (free Edge voices, no key) ----
+// ---- AI Voice picker: demo-play then select (Groq key, Sarvam key, Backup) ----
 private data class VoiceOpt(val id: String, val label: String, val sub: String)
 
 // Groq PlayAI voices (English) — run on YOUR Groq key, real & different male/female. Most reliable here.
@@ -264,13 +264,6 @@ private val GROQ_MALE = listOf(
     VoiceOpt("Mitch-PlayAI", "Mitch", "English · friendly"),
     VoiceOpt("Thunder-PlayAI", "Thunder", "English · bold"),
     VoiceOpt("Calum-PlayAI", "Calum", "English · chill"),
-)
-// Hindi / Bangla neural voices (Edge) — use these when reply language is Hindi/Bangla (need open network)
-private val INDIC_VOICES = listOf(
-    VoiceOpt("hi-IN-SwaraNeural", "Swara", "Hindi · female 🇮🇳"),
-    VoiceOpt("hi-IN-MadhurNeural", "Madhur", "Hindi · male 🇮🇳"),
-    VoiceOpt("bn-IN-TanishaaNeural", "Tanishaa", "Bangla · female 🇮🇳"),
-    VoiceOpt("bn-IN-BashkarNeural", "Bashkar", "Bangla · male 🇮🇳"),
 )
 // reliable backup (Amazon Polly via StreamElements) — used if the above don't play
 private val BACKUP_VOICES = listOf(
@@ -405,9 +398,6 @@ internal fun VoicePickerScreen(settings: GatewayClient.Settings, onToggle: (JSON
 
         Text("ENGLISH · MALE (Groq)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
         GROQ_MALE.forEach { v -> VoiceRow(v, selected == v.id, playing == v.id, loading == v.id, { demo(v.id) }, { pick(v.id) }) }
-
-        Text("HINDI / BANGLA (no key — may not play on your network)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
-        INDIC_VOICES.forEach { v -> VoiceRow(v, selected == v.id, playing == v.id, loading == v.id, { demo(v.id) }, { pick(v.id) }) }
 
         Text("BACKUP", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
         BACKUP_VOICES.forEach { v -> VoiceRow(v, selected == v.id, playing == v.id, loading == v.id, { demo(v.id) }, { pick(v.id) }) }
