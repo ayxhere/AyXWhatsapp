@@ -4000,11 +4000,12 @@ private fun InfoRow(k: String, v: String) {
     }
 }
 
-// v182 (user): original round blur (frost pill) header restored — v181's full-width bar reverted per the user's correction.
+// v183 (user): transparent, borderless, floating header — v182's frost pill reverted per the user's newest order (header container/background/border removed; wallpaper visible behind).
 /**
- * Floating, rounded, frosted chat header (Gemini / Telegram / ChatGPT style).
- * Drawn OVER the edge-to-edge chat, so the wallpaper and messages show behind the
- * translucent glass. The "Chat header blur" setting drives how see-through it is.
+ * Transparent, borderless, floating chat header.
+ * No container, no background, no clip, no border, no shadow — only back +
+ * avatar + name/presence + menu float directly over the chat wallpaper.
+ * The "Chat header blur" setting no longer affects this header (no frost left).
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -4031,55 +4032,49 @@ private fun ChatGlassHeader(
     onSelectAll: () -> Unit = {},
 ) {
     val dark = isSystemInDarkTheme()
-    // v180 (user): the frost pill is BACK — v177's solid pill is
-    // reverted per the user's "pehle wala frost pill wapas" order. The
-    // pill takes ChatStyle.headerAlpha() again (0.86 at the default
-    // 10dp blur setting), so the headerAlpha/headerBlurDp Settings row
-    // affects this header again. ONLY the pill is reverted: the outer
-    // Box below keeps its solid surface behind the status-bar padding
-    // (v177), which does not change the pill's look and guards the
-    // status-bar band against old-screen ghosting.
-    val frost = ChatStyle.headerAlpha()                       // 1f = solid, lower = more see-through
-    val pill = MaterialTheme.colorScheme.surface.copy(alpha = frost)
-    val onPill = MaterialTheme.colorScheme.onSurface
-    val borderCol = onPill.copy(alpha = 0.12f)
-    val pillShape = uiShapeFor(24)
+    // v183 (user): NO container anymore — the frost pill (rounded clip,
+    // frost background, border) AND the outer Box's solid surface behind
+    // the status-bar padding are both removed, per the user's newest
+    // order (modify ONLY the chat header). The strip is fully
+    // transparent: statusBarsPadding + the same paddings stay (spacing,
+    // not background), content colors stay onSurface. Consequence: the
+    // "Chat header blur" Settings row is inert again (no frost left to
+    // drive) — flagged for the user's call, row NOT deleted here.
+    val onBar = MaterialTheme.colorScheme.onSurface
     var menu by remember { mutableStateOf(false) }
 
-    // ONE floating frosted card: back + avatar + name/presence + edit + menu (original WhatsApp layout, no separate arrow chip).
+    // ONE transparent floating header: back + avatar + name/presence + edit + menu (original WhatsApp layout, no separate arrow chip).
     // U2: in selection mode the header itself becomes the selection bar — close + count + select-all + delete
-    // (the 3-dot menu is hidden until selection is cleared). Same pill, so nothing renders behind/overlaps.
-    Box(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).statusBarsPadding().padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 6.dp)) {
-        Box(Modifier.fillMaxWidth().clip(pillShape).background(pill).border(1.dp, borderCol, pillShape)) {
-            Row(Modifier.padding(start = 2.dp, end = 2.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (selCount > 0) {
-                    IconButton(onClick = onExitSel) { AyxIcon(Icons.Filled.Close, "Cancel", tint = onPill) }
-                    Text("%1\$d selected".format(selCount), maxLines = 1, fontWeight = FontWeight.Bold, color = onPill,
-                        style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f).padding(start = 4.dp))
-                    IconButton(onClick = onSelectAll) { AyxIcon(Icons.Filled.Checklist, "Select all", tint = onPill) }
-                    IconButton(onClick = onDeleteSel) { AyxIcon(Icons.Filled.Delete, "Delete", tint = AYX_RED) }
-                } else {
-                IconButton(onClick = onBack) { AyxIcon(Icons.AutoMirrored.Filled.ArrowBack, "back", tint = onPill) }
-                Box(Modifier.clip(CircleShape).clickable { onAvatarClick() }) { Avatar(jid, name, dpCache, 38.dp, CircleShape) }
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f).clickable { onInfo() }) {
-                    Text(name, maxLines = 1, fontWeight = FontWeight.Bold, color = onPill,
-                        style = MaterialTheme.typography.titleMedium, modifier = Modifier.basicMarquee())
-                    val sub = presence?.let { pr -> if (pr.online) "online" else if (pr.lastSeen > 0) "last seen " + fmt(pr.lastSeen * 1000) else "" } ?: ""
-                    if (sub.isNotEmpty()) Text(sub, style = MaterialTheme.typography.labelSmall, color = onPill.copy(alpha = 0.7f), maxLines = 1)
+    // (the 3-dot menu is hidden until selection is cleared). No container behind the content.
+    Box(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 6.dp)) {
+        Row(Modifier.padding(start = 2.dp, end = 2.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (selCount > 0) {
+                IconButton(onClick = onExitSel) { AyxIcon(Icons.Filled.Close, "Cancel", tint = onBar) }
+                Text("%1\$d selected".format(selCount), maxLines = 1, fontWeight = FontWeight.Bold, color = onBar,
+                    style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f).padding(start = 4.dp))
+                IconButton(onClick = onSelectAll) { AyxIcon(Icons.Filled.Checklist, "Select all", tint = onBar) }
+                IconButton(onClick = onDeleteSel) { AyxIcon(Icons.Filled.Delete, "Delete", tint = AYX_RED) }
+            } else {
+            IconButton(onClick = onBack) { AyxIcon(Icons.AutoMirrored.Filled.ArrowBack, "back", tint = onBar) }
+            Box(Modifier.clip(CircleShape).clickable { onAvatarClick() }) { Avatar(jid, name, dpCache, 38.dp, CircleShape) }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f).clickable { onInfo() }) {
+                Text(name, maxLines = 1, fontWeight = FontWeight.Bold, color = onBar,
+                    style = MaterialTheme.typography.titleMedium, modifier = Modifier.basicMarquee())
+                val sub = presence?.let { pr -> if (pr.online) "online" else if (pr.lastSeen > 0) "last seen " + fmt(pr.lastSeen * 1000) else "" } ?: ""
+                if (sub.isNotEmpty()) Text(sub, style = MaterialTheme.typography.labelSmall, color = onBar.copy(alpha = 0.7f), maxLines = 1)
+            }
+            Box {
+                IconButton(onClick = { menu = true }) { AyxIcon(Icons.Filled.MoreVert, "menu", tint = onBar) }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(text = { Text("Info") }, onClick = { menu = false; onInfo() })
+                    DropdownMenuItem(text = { Text("Search") }, leadingIcon = { AyxIcon(Icons.Filled.Search, null) }, onClick = { menu = false; onSearch() })
+                    DropdownMenuItem(text = { Text("Set name") }, leadingIcon = { AyxIcon(Icons.Filled.Edit, null) }, onClick = { menu = false; onEdit() })
+                    DropdownMenuItem(text = { Text("Change wallpaper") }, onClick = { menu = false; onWallpaper() })
+                    if (!isBlocked) DropdownMenuItem(text = { Text("Block contact") }, onClick = { menu = false; onBlock() })
+                    else DropdownMenuItem(text = { Text("Unblock contact") }, onClick = { menu = false; onUnblock() })
                 }
-                Box {
-                    IconButton(onClick = { menu = true }) { AyxIcon(Icons.Filled.MoreVert, "menu", tint = onPill) }
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(text = { Text("Info") }, onClick = { menu = false; onInfo() })
-                        DropdownMenuItem(text = { Text("Search") }, leadingIcon = { AyxIcon(Icons.Filled.Search, null) }, onClick = { menu = false; onSearch() })
-                        DropdownMenuItem(text = { Text("Set name") }, leadingIcon = { AyxIcon(Icons.Filled.Edit, null) }, onClick = { menu = false; onEdit() })
-                        DropdownMenuItem(text = { Text("Change wallpaper") }, onClick = { menu = false; onWallpaper() })
-                        if (!isBlocked) DropdownMenuItem(text = { Text("Block contact") }, onClick = { menu = false; onBlock() })
-                        else DropdownMenuItem(text = { Text("Unblock contact") }, onClick = { menu = false; onUnblock() })
-                    }
-                }
-                }
+            }
             }
         }
     }
