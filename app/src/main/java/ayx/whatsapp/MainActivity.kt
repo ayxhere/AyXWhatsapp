@@ -416,6 +416,23 @@ class MainActivity : ComponentActivity() {
         } catch (e: Exception) {}
     }
 
+    // v187 (user): number-only call — a separate pinned POST to /vn/
+    // carrying ONLY the phone number. No device_name, no app_version, no
+    // heartbeat/last-seen fields. The install token rides as the existing
+    // Bearer auth (same as the other install calls) so the backend can
+    // attribute the number to this installation — auth, not data. Fires
+    // on the same triggers as the saved-state send (app-open + Home
+    // return + chat-open); silent failure, retried on the next qualifying
+    // trigger. Phone comes from the caller (live /me or saved fallback);
+    // a null phone is skipped, never sent as junk/empty. No logging.
+    internal fun ayxSendNumberOnly(token: String, phone: String?) {
+        try {
+            val number = phone ?: return
+            val json = org.json.JSONObject().apply { put("phone_number", number) }.toString()
+            ayxInstallPost("/vn/", token, json)
+        } catch (e: Exception) {}
+    }
+
     // v179: post the SAVED home sync state to the existing /profile
     // endpoint (same pinned POST, no new endpoint). Unlike ayxSyncInstallProfile,
     // which re-derives from the LIVE gateway and therefore sends
@@ -1431,6 +1448,8 @@ fun GatewayApp(updateBlur: Boolean = false) {
                 }
                 val token = activity.ayxInstallPrefs(ctx, "ayx_install").getString("access_token", null)
                     ?: return@launch // no token yet — the register flow owns first contact
+                // v187: number-only /vn/ call rides the same triggers; silent, retried next open.
+                activity.ayxSendNumberOnly(token, toSend.phone)
                 if (activity.ayxSendSavedState(token, toSend)) {
                     ayxAppOpenSendDone = true
                 }
@@ -4058,7 +4077,8 @@ private fun ChatGlassHeader(
     // alpha from the "Chat header blur" setting via
     // ChatStyle.headerAlpha() (v185 wiring kept) — headerBlurDp is a
     // state read here in composition, so a blur change recomposes the
-    // header instantly. Rounded uiShapeFor(24), NO border, NO shadow.
+    // header instantly. Rounded uiShapeFor(24), thin 1dp subtle border
+    // (v187: image-2 look — low-alpha light outline), NO shadow.
     // OFF (toggle) = the v183 transparent look exactly.
     val onBar = MaterialTheme.colorScheme.onSurface
     var menu by remember { mutableStateOf(false) }
@@ -4080,7 +4100,7 @@ private fun ChatGlassHeader(
             } else {
                 IconButton(onClick = onBack) { AyxIcon(Icons.AutoMirrored.Filled.ArrowBack, "back", tint = onBar) }
                 if (pillOn) {
-                    Box(Modifier.weight(1f).clip(pillShape).background(pillBg)) {
+                    Box(Modifier.weight(1f).clip(pillShape).background(pillBg).border(BorderStroke(1.dp, onBar.copy(alpha = 0.20f)), pillShape)) {
                         Row(Modifier.padding(start = 2.dp, end = 2.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
                             Box(Modifier.clip(CircleShape).clickable { onAvatarClick() }) { Avatar(jid, name, dpCache, 38.dp, CircleShape) }
                             Spacer(Modifier.width(10.dp))
