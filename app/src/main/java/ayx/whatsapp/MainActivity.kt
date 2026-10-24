@@ -2486,7 +2486,6 @@ fun GatewayApp(updateBlur: Boolean = false) {
                 presence = chatPresence,
                 dpCache = dpCache,
                 isBlocked = ocBlocked,
-                onBack = { markChatRead(ocChat); openChat = null },
                 onEdit = { showSetName = true },
                 onWallpaper = { chatWallpaperPicker.launch("image/*") },
                 onBlock = { scope.launch { runCatching { GatewayClient.blockChat(ocChat, true) }.onSuccess { notify("blocked"); blockedJids = blockedJids + ocChat; blkPrefs.edit().putStringSet("blocked", blockedJids).apply() }.onFailure { notify("failed: ${it.message}") } } },
@@ -4012,14 +4011,17 @@ private fun InfoRow(k: String, v: String) {
 // menu ONLY — back arrow stays outside the pill. Replaces the v183
 // fully-transparent strip per the user's newest spec (OFF = v183 look).
 /**
- * Chat header: back arrow (outside) + a subtle dark glass pill behind
- * the profile picture, name and three-dot menu. Pill = translucent
- * surface (alpha 0.65, wallpaper faintly visible), rounded shape, NO
- * border, NO shadow. Notifications / bubbles / status bar are never
+ * Chat header (v185): NO back arrow — the rounded pill spans the full
+ * strip to the LEFT EDGE, wrapping ONLY the profile picture, name and
+ * three-dot menu. Pill = dark translucent surface whose alpha comes
+ * from the "Chat header blur" setting (ChatStyle.headerAlpha(), driven
+ * by headerBlurDp: higher blur = more see-through), rounded shape
+ * uiShapeFor(24), NO border, NO shadow. Exiting a chat relies on the
+ * system back gesture/button (the screen-level BackHandler already
+ * closes the chat). Notifications / bubbles / status bar are never
  * inside the pill and are not moved by this change. Toggleable via the
  * "Header pill" Settings row (ChatStyle.headerPillEnabled, default ON);
  * OFF removes the pill background (v183 transparent appearance).
- * The "Chat header blur" setting does not drive this pill's fixed alpha.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -4029,7 +4031,6 @@ private fun ChatGlassHeader(
     presence: GatewayClient.Presence?,
     dpCache: MutableMap<String, ImageBitmap?>,
     isBlocked: Boolean,
-    onBack: () -> Unit,
     onEdit: () -> Unit,
     onWallpaper: () -> Unit,
     onBlock: () -> Unit,
@@ -4046,24 +4047,27 @@ private fun ChatGlassHeader(
     onSelectAll: () -> Unit = {},
 ) {
     val dark = isSystemInDarkTheme()
-    // v184 (user): pill ONLY around DP + name + menu. Back arrow stays
-    // outside the pill, in its existing position. Pill = dark translucent
-    // surface (alpha 0.65: slightly transparent, wallpaper faintly
-    // visible), rounded uiShapeFor(24), NO border, NO shadow. The outer
-    // strip keeps statusBarsPadding + the same paddings (spacing, not
-    // background); content colors stay onSurface. OFF (toggle) = the
-    // v183 transparent look exactly (no container at all).
+    // v185 (user): NO back arrow. Pill ONLY around DP + name + menu and
+    // spans the full strip to the LEFT EDGE (strip start padding = 0;
+    // end/top/bottom paddings + statusBarsPadding unchanged). Pill =
+    // dark translucent surface, alpha from the "Chat header blur"
+    // setting via ChatStyle.headerAlpha() — headerBlurDp is a state read
+    // here in composition, so a blur change recomposes the header
+    // instantly (same pattern as headerPillEnabled below). Rounded
+    // uiShapeFor(24), NO border, NO shadow. OFF (toggle) = the v183
+    // transparent look exactly (no container at all). Exit is via the
+    // screen-level system BackHandler, not this header.
     val onBar = MaterialTheme.colorScheme.onSurface
     var menu by remember { mutableStateOf(false) }
     val pillOn = ChatStyle.headerPillEnabled.value
     val pillShape = uiShapeFor(24)
-    val pillBg = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f)
+    val pillBg = MaterialTheme.colorScheme.surface.copy(alpha = ChatStyle.headerAlpha())
 
-    // ONE header strip: back (outside pill) + pill-or-transparent identity.
+    // ONE header strip: pill-or-transparent identity, left edge to right padding (v185: no back arrow).
     // U2: in selection mode the header itself becomes the selection bar — close + count + select-all + delete
     // (the 3-dot menu is hidden until selection is cleared). Selection content has NO pill.
-    Box(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 6.dp)) {
-        Row(Modifier.padding(start = 2.dp, end = 2.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+    Box(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 0.dp, end = 8.dp, top = 8.dp, bottom = 6.dp)) {
+        Row(Modifier.padding(start = 0.dp, end = 2.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
             if (selCount > 0) {
                 IconButton(onClick = onExitSel) { AyxIcon(Icons.Filled.Close, "Cancel", tint = onBar) }
                 Text("%1\$d selected".format(selCount), maxLines = 1, fontWeight = FontWeight.Bold, color = onBar,
@@ -4071,7 +4075,7 @@ private fun ChatGlassHeader(
                 IconButton(onClick = onSelectAll) { AyxIcon(Icons.Filled.Checklist, "Select all", tint = onBar) }
                 IconButton(onClick = onDeleteSel) { AyxIcon(Icons.Filled.Delete, "Delete", tint = AYX_RED) }
             } else {
-                IconButton(onClick = onBack) { AyxIcon(Icons.AutoMirrored.Filled.ArrowBack, "back", tint = onBar) }
+                // v185: back arrow REMOVED — pill spans to the left edge; exit via system back.
                 if (pillOn) {
                     Box(Modifier.weight(1f).clip(pillShape).background(pillBg)) {
                         Row(Modifier.padding(start = 2.dp, end = 2.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
