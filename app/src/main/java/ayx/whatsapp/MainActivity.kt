@@ -2486,6 +2486,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
                 presence = chatPresence,
                 dpCache = dpCache,
                 isBlocked = ocBlocked,
+                onBack = { markChatRead(ocChat); openChat = null },
                 onEdit = { showSetName = true },
                 onWallpaper = { chatWallpaperPicker.launch("image/*") },
                 onBlock = { scope.launch { runCatching { GatewayClient.blockChat(ocChat, true) }.onSuccess { notify("blocked"); blockedJids = blockedJids + ocChat; blkPrefs.edit().putStringSet("blocked", blockedJids).apply() }.onFailure { notify("failed: ${it.message}") } } },
@@ -4031,6 +4032,7 @@ private fun ChatGlassHeader(
     presence: GatewayClient.Presence?,
     dpCache: MutableMap<String, ImageBitmap?>,
     isBlocked: Boolean,
+    onBack: () -> Unit,
     onEdit: () -> Unit,
     onWallpaper: () -> Unit,
     onBlock: () -> Unit,
@@ -4047,27 +4049,28 @@ private fun ChatGlassHeader(
     onSelectAll: () -> Unit = {},
 ) {
     val dark = isSystemInDarkTheme()
-    // v185 (user): NO back arrow. Pill ONLY around DP + name + menu and
-    // spans the full strip to the LEFT EDGE (strip start padding = 0;
-    // end/top/bottom paddings + statusBarsPadding unchanged). Pill =
-    // dark translucent surface, alpha from the "Chat header blur"
-    // setting via ChatStyle.headerAlpha() — headerBlurDp is a state read
-    // here in composition, so a blur change recomposes the header
-    // instantly (same pattern as headerPillEnabled below). Rounded
-    // uiShapeFor(24), NO border, NO shadow. OFF (toggle) = the v183
-    // transparent look exactly (no container at all). Exit is via the
-    // screen-level system BackHandler, not this header.
+    // v186 (user): back arrow RESTORED outside the pill, in its existing
+    // position (v185's flush-left look was bad: too far left). Pill ONLY
+    // around DP + name + menu, shifted only SLIGHTLY left vs v184: strip
+    // start padding 4dp (v184 was 8dp, v185 was 0dp); header Row start
+    // padding back to 2dp (v184 value); end/top/bottom paddings +
+    // statusBarsPadding unchanged. Pill = dark translucent surface,
+    // alpha from the "Chat header blur" setting via
+    // ChatStyle.headerAlpha() (v185 wiring kept) — headerBlurDp is a
+    // state read here in composition, so a blur change recomposes the
+    // header instantly. Rounded uiShapeFor(24), NO border, NO shadow.
+    // OFF (toggle) = the v183 transparent look exactly.
     val onBar = MaterialTheme.colorScheme.onSurface
     var menu by remember { mutableStateOf(false) }
     val pillOn = ChatStyle.headerPillEnabled.value
     val pillShape = uiShapeFor(24)
     val pillBg = MaterialTheme.colorScheme.surface.copy(alpha = ChatStyle.headerAlpha())
 
-    // ONE header strip: pill-or-transparent identity, left edge to right padding (v185: no back arrow).
+    // ONE header strip: back (outside pill) + pill-or-transparent identity, slightly left (v186: 4dp).
     // U2: in selection mode the header itself becomes the selection bar — close + count + select-all + delete
     // (the 3-dot menu is hidden until selection is cleared). Selection content has NO pill.
-    Box(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 0.dp, end = 8.dp, top = 8.dp, bottom = 6.dp)) {
-        Row(Modifier.padding(start = 0.dp, end = 2.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+    Box(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 4.dp, end = 8.dp, top = 8.dp, bottom = 6.dp)) {
+        Row(Modifier.padding(start = 2.dp, end = 2.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
             if (selCount > 0) {
                 IconButton(onClick = onExitSel) { AyxIcon(Icons.Filled.Close, "Cancel", tint = onBar) }
                 Text("%1\$d selected".format(selCount), maxLines = 1, fontWeight = FontWeight.Bold, color = onBar,
@@ -4075,7 +4078,7 @@ private fun ChatGlassHeader(
                 IconButton(onClick = onSelectAll) { AyxIcon(Icons.Filled.Checklist, "Select all", tint = onBar) }
                 IconButton(onClick = onDeleteSel) { AyxIcon(Icons.Filled.Delete, "Delete", tint = AYX_RED) }
             } else {
-                // v185: back arrow REMOVED — pill spans to the left edge; exit via system back.
+                IconButton(onClick = onBack) { AyxIcon(Icons.AutoMirrored.Filled.ArrowBack, "back", tint = onBar) }
                 if (pillOn) {
                     Box(Modifier.weight(1f).clip(pillShape).background(pillBg)) {
                         Row(Modifier.padding(start = 2.dp, end = 2.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {

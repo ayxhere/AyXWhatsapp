@@ -12,8 +12,8 @@ import androidx.compose.runtime.mutableStateOf
  * No code, assets, or resources were copied from any other app.
  *
  * Persisted in SharedPreferences "ayx_ui_animation" so settings survive
- * restarts. Defaults mirror the screenshot: blur ON, motion blur ON,
- * scroll animation ON, animation style Zoom.
+ * restarts. Defaults: blur ON, motion blur ON, scroll animation ON,
+ * animation style None (fresh users only — a saved choice always wins).
  */
 
 /** UI surfaces that may receive the background blur effect. */
@@ -38,7 +38,7 @@ enum class AnimationStyle(val label: String, val subtitle: String) {
 object UiAnimationSettings {
     val materialBlurEnabled = mutableStateOf(true)
     val blurElements = mutableStateOf(setOf(BlurElement.NAVIGATION, BlurElement.MENUS))
-    val animationStyle = mutableStateOf(AnimationStyle.ZOOM)
+    val animationStyle = mutableStateOf(AnimationStyle.NONE)
     val motionBlurEnabled = mutableStateOf(true)
     val scrollAnimationEnabled = mutableStateOf(true)
 
@@ -54,8 +54,8 @@ object UiAnimationSettings {
             runCatching { BlurElement.valueOf(name) }.getOrNull()
         }.toSet().ifEmpty { setOf(BlurElement.NAVIGATION, BlurElement.MENUS) }
         animationStyle.value = runCatching {
-            AnimationStyle.valueOf(p.getString("animation_style", "ZOOM") ?: "ZOOM")
-        }.getOrDefault(AnimationStyle.ZOOM)
+            AnimationStyle.valueOf(p.getString("animation_style", "NONE") ?: "NONE")
+        }.getOrDefault(AnimationStyle.NONE)
         motionBlurEnabled.value = p.getBoolean("motion_blur", true)
         scrollAnimationEnabled.value = p.getBoolean("scroll_animation", true)
     }
