@@ -13,6 +13,8 @@ object ChatStyle {
     val bubbleStyle = mutableStateOf("ios")
     // header frost intensity in dp: 0 (off), 5, 10, 15, 20, 30, 40
     val headerBlurDp = mutableStateOf(10)
+    // v184: rounded header pill toggle (default ON)
+    val headerPillEnabled = mutableStateOf(true)
     // custom bubble colors as ARGB Int; 0 = use the style's default color
     val sentColor = mutableStateOf(0)   // right side (my messages)
     val recvColor = mutableStateOf(0)   // left side (their messages)
@@ -55,6 +57,7 @@ object ChatStyle {
         prefs = ctx.getSharedPreferences("chatstyle", Context.MODE_PRIVATE)
         bubbleStyle.value = prefs!!.getString("bubble", "ios") ?: "ios"
         headerBlurDp.value = prefs!!.getInt("headerBlur", 10)
+        headerPillEnabled.value = prefs!!.getBoolean("headerPill", true)
         sentColor.value = prefs!!.getInt("sentColor", 0)
         recvColor.value = prefs!!.getInt("recvColor", 0)
         showForwardTag.value = prefs!!.getBoolean("showForwardTag", true)
@@ -63,6 +66,7 @@ object ChatStyle {
 
     fun setBubble(s: String) { bubbleStyle.value = s; prefs?.edit()?.putString("bubble", s)?.apply() }
     fun setHeaderBlur(dp: Int) { headerBlurDp.value = dp; prefs?.edit()?.putInt("headerBlur", dp)?.apply() }
+    fun setHeaderPillEnabled(on: Boolean) { headerPillEnabled.value = on; prefs?.edit()?.putBoolean("headerPill", on)?.apply() }
     fun setSentColor(c: Int) { sentColor.value = c; prefs?.edit()?.putInt("sentColor", c)?.apply() }
     fun setRecvColor(c: Int) { recvColor.value = c; prefs?.edit()?.putInt("recvColor", c)?.apply() }
     fun setShowForwardTag(b: Boolean) { showForwardTag.value = b; prefs?.edit()?.putBoolean("showForwardTag", b)?.apply() }
