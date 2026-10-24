@@ -2644,19 +2644,48 @@ app.get('/music/lyrics', async (req, res) => {
     if (!rawTitle) return res.json({ synced: '', plain: '', lyricsDuration: 0 })
     const title = rawTitle.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').replace(/\bfrom\b.*$/i, '').replace(/\s*-\s*.*$/, '').trim() || rawTitle
     const firstArtist = artist.split(',')[0].trim()
+    // v176 (user-approved 2026-10-24): artist+duration gate. lrclib search is
+    // fuzzy text search, so a title match can be a DIFFERENT artist's song
+    // with the same title (proven: "Nakhre" by Zack Knight returned Satyum's
+    // "Nakhre (Lofi Remix)" lines). A synced set from another artist is
+    // worse than no synced set: wrong lines AND wrong timings. pick() only
+    // ever returns an entry whose artist agrees with the request AND (when
+    // a duration is known) whose duration is within 10s. Anything else
+    // falls through to a matching artist's plain lyrics, or to empty
+    // ("Lyrics not found") — never to a stranger's synced lines.
+    const normArtist = (s) => String(s || '').toLowerCase()
+      .replace(/\(.*?\)|\[.*?\]/g, '')
+      .replace(/\b(feat\.?|ft\.?|featuring)\b.*$/i, '')
+      .replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').replace(/^the\s+/, '').trim()
+    const artistAgrees = (entryArtist) => {
+      const want = normArtist(firstArtist); const got = normArtist(entryArtist)
+      if (!want) return true // no artist supplied: nothing to check against
+      if (!got) return false
+      return got === want || got.startsWith(want + ' ') || want.startsWith(got + ' ')
+    }
     const pick = (arr) => {
       if (!Array.isArray(arr) || !arr.length) return null
-      if (wantDur > 0) {
-        const synced = arr.filter(x => x && x.syncedLyrics)
-        const pool = synced.length ? synced : arr
-        return pool.slice().sort((a, b) => Math.abs((a.duration || 0) - wantDur) - Math.abs((b.duration || 0) - wantDur))[0] || null
-      }
-      return arr.find(x => x.syncedLyrics) || arr[0]
+      // Artist gate first: drop every entry that is not this artist's song.
+      const own = arr.filter(x => x && artistAgrees(x.artistName))
+      if (!own.length) return null
+      // Duration gate (only when the real duration is known): same song,
+      // different cut still has wrong timings — reject beyond ±10s.
+      const pool = wantDur > 0 ? own.filter(x => Math.abs((x.duration || 0) - wantDur) <= 10) : own
+      if (!pool.length) return null
+      const synced = pool.filter(x => x && x.syncedLyrics)
+      const cand = synced.length ? synced : pool
+      if (wantDur > 0) return cand.slice().sort((a, b) => Math.abs((a.duration || 0) - wantDur) - Math.abs((b.duration || 0) - wantDur))[0] || null
+      return cand[0] || null
     }
     let data = {}
     try {
       const body = await httpGet('https://lrclib.net/api/get?track_name=' + encodeURIComponent(title) + '&artist_name=' + encodeURIComponent(firstArtist) + (wantDur > 0 ? '&duration=' + wantDur : ''), { 'User-Agent': 'AyXWhatsApp/1.0', 'Accept': 'application/json' })
       data = JSON.parse(body)
+      // v176: /api/get can also return an approximate match — verify it
+      // against the same gates before trusting it, else fall through to
+      // the gated search fallbacks below.
+      if (data && data.artistName && !artistAgrees(data.artistName)) data = {}
+      else if (data && wantDur > 0 && data.duration && Math.abs(data.duration - wantDur) > 10) data = {}
     } catch (_) {}
     if (!data || (!data.syncedLyrics && !data.plainLyrics)) {
       try {

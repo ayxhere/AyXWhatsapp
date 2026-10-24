@@ -413,7 +413,14 @@ object GatewayClient {
                     val ratio = durationSec.toDouble() / lyrDur.toDouble()
                     // Only rescale a plausible same-song drift; a wildly different ratio means a
                     // different cut entirely, where stretching would make things worse.
-                    if (diffSec >= 3 && ratio in 0.85..1.18) {
+                    // v176 (user-approved 2026-10-24): NO dead zone. The old
+                    // `diffSec >= 3` left 1–2s of drift uncorrected (the v166
+                    // chimera case); with the gateway's artist+duration gate,
+                    // a same-band ratio is a same-song drift, so every
+                    // difference is now rescaled. App-pipeline timing error
+                    // target: under 1s (poll 80–90ms + 170ms smoothing tween
+                    // + 200ms editor lookahead ≈ ±0.1s worst case).
+                    if (diffSec > 0 && ratio in 0.85..1.18) {
                         return@withContext parsed.map { (it.first * ratio).toLong() to it.second }
                     }
                 }

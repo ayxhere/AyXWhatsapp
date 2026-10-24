@@ -4753,44 +4753,9 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
             "msgmotion" -> SettingsSubPage { MessageMotionSettingsPage() }
             "iconstyle" -> SettingsSubPage { IconStyleSettingsPage() }
             "about" -> SettingsSubPage { AboutSettings(ctx, onLogout) }
-            "sync" -> SettingsSubPage { SyncGateSection(ctx) }
+            "sync" -> SettingsSubPage { DriveBackupSection() }
             "support" -> SettingsSubPage { SupportSettings(ctx) }
             else -> SettingsHome(status) { onPage(it) }
-        }
-    }
-}
-
-// v175: the Sync (Drive Backup) page is key-gated for now — backup is
-// temporarily unavailable to everyone but the owner, who unlocks THIS
-// device once with the key; the unlock persists per-device, so afterwards
-// the page opens straight into the backup section. The Drive backup logic
-// itself is untouched (DriveBackup.kt) — this only wraps the page entry.
-private const val SYNC_UNLOCK_KEY = "8818080992aA"
-
-@Composable
-private fun SyncGateSection(ctx: Context) {
-    val prefs = remember { ctx.getSharedPreferences("ayx_sync_gate", Context.MODE_PRIVATE) }
-    var unlocked by remember { mutableStateOf(prefs.getBoolean("unlocked", false)) }
-    if (unlocked) {
-        DriveBackupSection()
-    } else {
-        var key by remember { mutableStateOf("") }
-        var wrong by remember { mutableStateOf(false) }
-        StyledSurface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f), modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Sync", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
-                Text("Backup is temporarily not available.", style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                OutlinedTextField(key, { key = it; wrong = false }, label = { Text("Unlock key") }, singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(), shape = uiShapeFor(14))
-                if (wrong) Text("Wrong key", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                Button(onClick = {
-                    if (key == SYNC_UNLOCK_KEY) {
-                        prefs.edit().putBoolean("unlocked", true).apply()
-                        unlocked = true
-                    } else wrong = true
-                }, modifier = Modifier.fillMaxWidth().height(50.dp), shape = uiShapeFor(14)) { Text("Unlock") }
-            }
         }
     }
 }
