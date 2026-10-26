@@ -2540,7 +2540,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
                 // below is the honest outcome after all.
                 !status.registered && localPaired && !status.needRelogin && !restoreTimedOut -> Box(Modifier.padding(pad)) { RestoringScreen(
                     onReset = { scope.launch { GatewayClient.logout(); SessionMigration.purgePublic(ctx); notify("reset") } }) }
-                !status.registered -> Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode,
+                !status.registered -> Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode, showRestore = !localPaired,
                     onPair = { n -> scope.launch { try { notify("code: " + GatewayClient.pair(n)) } catch (e: Exception) { notify("pair error: ${e.message}") } } },
                     onReset = { scope.launch { GatewayClient.logout(); SessionMigration.purgePublic(ctx); notify("reset") } }) }
                 screen == "settings" -> Box(Modifier.padding(pad)) { SettingsScreen(status, settings, page = settingsPage, onPage = { settingsPage = it }, wallpaperVersion = wallpaperVersion,
@@ -5533,6 +5533,7 @@ private fun DriveBackupSection() {
     var status by remember { mutableStateOf(DriveBackup.status(ctx)) }
     var busy by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf<String?>(null) }
+    var sessionNote by remember { mutableStateOf<String?>(null) }
     var restorePeek by remember { mutableStateOf<DriveBackup.Peek?>(null) }
     var accountOpen by remember { mutableStateOf(false) }
 
@@ -5617,6 +5618,24 @@ private fun DriveBackupSection() {
             }
         }
 
+        // v191c: SESSION backup — tap-gated only, encrypted, own file pair.
+        // Never auto-syncs (unlike the settings backup above): a login copy
+        // must never leave the phone without an explicit tap.
+        ActionRow(
+            Icons.Filled.CloudUpload, CAT_AI, "Backup session",
+            "Encrypted copy of your WhatsApp login — restore it on a new phone without a QR scan"
+        ) {
+            if (!busy && !needsSignIn()) {
+                busy = true
+                scope.launch {
+                    val result = runCatching { withContext(Dispatchers.IO) { SessionBackup.backupSession(ctx) } }
+                    sessionNote = result.getOrElse { it.message ?: "Session backup failed" }
+                    busy = false
+                    refresh()
+                }
+            }
+        }
+
         val statusLine = when {
             busy -> "Working…"
             note != null -> note
@@ -5631,6 +5650,12 @@ private fun DriveBackupSection() {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 2.dp, top = 6.dp, bottom = 8.dp),
+        )
+        Text(
+            sessionNote ?: SessionBackup.statusLine(ctx),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 2.dp, bottom = 8.dp),
         )
     }
 
@@ -7367,7 +7392,50 @@ private fun RestoringScreen(onReset: () -> Unit) {
 }
 
 @Composable
-private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) -> Unit, onReset: () -> Unit) {
+private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) -> Unit, onReset: () -> Unit, showRestore: Boolean = false) {
+    // v191c: tap-gated session restore. The button below is the ONLY entry
+    // point — nothing here auto-shows, auto-signs-in, or auto-restores.
+    // It renders only when no local session exists (caller passes
+    // showRestore = !localPaired), so after a restore it never reappears
+    // on its own: a restored login either connects (LinkScreen goes away)
+    // or the user is back to the QR flow.
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var restoreBusy by remember { mutableStateOf(false) }
+    var restoreNote by remember { mutableStateOf<String?>(null) }
+    var restorePeek by remember { mutableStateOf<SessionBackup.Peek?>(null) }
+
+    fun doPeek() {
+        if (restoreBusy) return
+        restoreBusy = true
+        scope.launch {
+            val peek = runCatching { withContext(Dispatchers.IO) { SessionBackup.peekSession(ctx) } }
+            peek.onSuccess { restorePeek = it }
+                .onFailure { restoreNote = it.message ?: "Restore failed" }
+            restoreBusy = false
+        }
+    }
+
+    val restoreSignInLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        runCatching { GoogleDriveAuth.accountFromResult(result.data) }
+            .onSuccess { email ->
+                DriveBackup.setAccount(ctx, email)
+                doPeek()
+            }
+            .onFailure { restoreNote = it.message ?: "Sign-in failed — please try again." }
+    }
+
+    fun launchRestoreSignIn() {
+        val problem = GoogleDriveAuth.playServicesProblem(ctx)
+        if (problem != null) {
+            restoreNote = problem
+            return
+        }
+        runCatching { restoreSignInLauncher.launch(GoogleDriveAuth.client(ctx).signInIntent) }
+            .onFailure { restoreNote = GoogleDriveAuth.MSG_SETUP_PENDING }
+    }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Spacer(Modifier.height(44.dp))
         Box(Modifier.size(76.dp).clip(uiShapeFor(22)).background(Brush.linearGradient(listOf(AYX_GREEN, IOS_BLUE))), contentAlignment = Alignment.Center) {
@@ -7399,7 +7467,63 @@ private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) 
         }
         Spacer(Modifier.height(16.dp))
         TextButton(onClick = onReset) { Text("QR not working? Get a fresh one") }
+        if (showRestore) {
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = {
+                if (!restoreBusy) {
+                    if (GoogleDriveAuth.signedInAccount(ctx) == null) launchRestoreSignIn() else doPeek()
+                }
+            }) { Text("Restore session from Drive instead") }
+            Text(
+                if (restoreBusy) "Working…"
+                else restoreNote ?: "Only if you backed up this login to Drive on another phone. Nothing happens until you tap.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         Spacer(Modifier.height(30.dp))
+    }
+
+    if (restorePeek != null) {
+        val peek = restorePeek!!
+        val whenText = if (peek.createdAt > 0L)
+            SimpleDateFormat("d MMM yyyy, h:mm a", Locale.US).format(Date(peek.createdAt))
+        else "an unknown date"
+        AlertDialog(
+            onDismissRequest = { restorePeek = null },
+            containerColor = dialogBg(),
+            shape = uiShapeFor(24),
+            title = { Text("Restore session?") },
+            text = {
+                Text(
+                    "This will replace this phone's WhatsApp login with the session backup from $whenText " +
+                        "(AyX v${peek.appVersion}) — tapping Restore writes it and restarts the app at once, " +
+                        "then it connects with no QR scan. " +
+                        "Restoring this login here may disconnect WhatsApp on the old phone: " +
+                        "the same login cannot run in two places at once."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    restorePeek = null
+                    if (!restoreBusy) {
+                        restoreBusy = true
+                        scope.launch {
+                            val result = runCatching { withContext(Dispatchers.IO) { SessionBackup.restoreSession(ctx) } }
+                            // No success dialog: the poll recomputes localPaired
+                            // on the next cycle and would dispose LinkScreen
+                            // (and any dialog in it) before the user taps.
+                            // The Restore tap IS the restart consent, so the
+                            // process restarts immediately on success.
+                            result.onSuccess { SessionBackup.restartApp(ctx) }
+                                .onFailure { restoreNote = it.message ?: "Restore failed" }
+                            restoreBusy = false
+                        }
+                    }
+                }) { Text("Restore & restart") }
+            },
+            dismissButton = { TextButton(onClick = { restorePeek = null }) { Text("Cancel") } },
+        )
     }
 }
 
@@ -8351,7 +8475,11 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
         val view = LocalView.current
         Surface(Modifier.fillMaxSize(), color = Color.Black) {
             // ---- Full-bleed overlay layout: media fills the screen; top bar + controls float above it ----
-            Box(Modifier.fillMaxSize().blur(editorBlur)) {
+            // v191b (user: blur showed the image in header + navigation):
+            // the music-open blur no longer wraps the WHOLE editor —
+            // it now lives on the MEDIA layer only (below), so the
+            // header bar + bottom sheet stay sharp and clean.
+            Box(Modifier.fillMaxSize()) {
                 val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
                 val overlayTopPad = statusTop + 64.dp   // corner buttons sit below the overlaid top bar
                 // NOTE: the IME inset is deliberately NOT read in this scope
@@ -8367,7 +8495,10 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                 // imePadding, a layout-phase read that never recomposed.
                 // ---- Media layer: full-bleed, no crop (ContentScale.Fit — preview matches the uncropped upload) ----
                 // E3: tapping the media/background hides the keyboard (clears focus).
-                Box(Modifier.fillMaxSize().background(Color.Black).clickable(
+                // v191b: editorBlur (18.dp while the music sheet is open)
+                // blurs ONLY the photo/video + lyrics preview here —
+                // never the header bar or the bottom sheet above/below it.
+                Box(Modifier.fillMaxSize().background(Color.Black).blur(editorBlur).clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null
                 ) { focusManager.clearFocus() }, contentAlignment = Alignment.Center) {
@@ -8692,34 +8823,20 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                         }
                     }
                 }   // media layer (full-bleed) done
-                // ---- Top bar overlay: rounded FROSTED BAR ----
-                // The sheet's treatment, mirrored to the top of the
-                // screen (user: "header button ki pichhe same round
-                // style blur add krde"): 28dp rounding on the free
-                // (bottom) edge, the frozen header snapshot blurred
-                // under a translucent scrim, and the same glass lip —
-                // the header zone reads as one frosted bar over the
-                // media instead of buttons floating on a fading black
-                // gradient. Buttons, their order and behavior are
-                // unchanged; only the backdrop behind them is new.
+                // ---- Top bar overlay: rounded bar, CLEAN (v191b) ----
+                // 28dp rounding on the free (bottom) edge, a dark
+                // scrim + the same glass lip — but NO photo bitmap
+                // behind it any more (user: blurred photo bled into
+                // the header). Buttons, order, behavior unchanged.
                 val headerShape = RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp)
                 Box(Modifier.align(Alignment.TopCenter).fillMaxWidth()
                     .onGloballyPositioned { headerRect = it.boundsInWindow() }
                     .clip(headerShape)) {
-                    // Frosted backdrop layers (hidden for the one frame
-                    // a capture runs, so the snapshot sees the media
-                    // itself, not the bar's own rendering).
+                    // v191b (user: blurred photo bled into the header):
+                    // the header bar no longer draws the photo bitmap —
+                    // dark scrim + glass lip only, so the header zone
+                    // stays clean. Buttons, order, behavior unchanged.
                     Box(Modifier.matchParentSize().alpha(if (capturingHeader) 0f else 1f)) {
-                        val hb = headerBackdrop
-                        if (hb != null) {
-                            // v161: drawn at its CAPTURE height, top-anchored
-                            // — the bar's layout can never re-crop/re-blur it.
-                            Image(hb.asImageBitmap(), null,
-                                Modifier.align(Alignment.TopCenter).fillMaxWidth()
-                                    .then(if (headerBackdropH > 0.dp) Modifier.height(headerBackdropH) else Modifier.fillMaxSize())
-                                    .ayxBlurBackground(true, 10.dp),
-                                contentScale = ContentScale.Crop)
-                        }
                         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
                             listOf(Color.Black.copy(alpha = 0.58f), Color.Black.copy(alpha = 0.40f)))))
                         // Glass lip: a faint light line on the bar's bottom edge.
@@ -8755,12 +8872,12 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                     }
                     }
                 }
-                // ---- Bottom controls: rounded FROSTED SHEET over the media ----
-                // Sheet look: large rounded top corners + the blurred snapshot
-                // of the video behind the panel (captured above) under a
-                // translucent dark scrim — the app's frosted pattern (see
-                // BlurHelper). Same treatment with the IME open or closed:
-                // no more flat opaque black slab behind the caption box.
+                // ---- Bottom controls: rounded SHEET over the media (v191b) ----
+                // Sheet look: large rounded top corners + a translucent
+                // dark scrim — but NO photo bitmap behind the panel any
+                // more (user: blurred photo bled into the navigation
+                // area). The caption FIELD keeps its own frost below,
+                // untouched. Same treatment with the IME open or closed.
                 val sheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
                 Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                     .onGloballyPositioned { panelRect = it.boundsInWindow() }
@@ -8769,27 +8886,6 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                     // capture runs, so the snapshot sees the video itself,
                     // not the sheet's own rendering).
                     Box(Modifier.matchParentSize().alpha(if (capturingSheet) 0f else 1f)) {
-                        val sb = sheetBackdrop
-                        if (sb != null) {
-                            // v177 (user): the blurred snapshot now fills
-                            // the sheet's WHOLE current height. It used to
-                            // draw at its fixed CAPTURE height, top-anchored
-                            // (v161) — so when the keyboard opened and
-                            // imePadding() grew the sheet taller, the grown
-                            // bottom (caption) zone showed only the flat
-                            // gradient scrim: the background blur visibly
-                            // "removed" itself on every keyboard tap. The
-                            // bitmap itself is still the frozen
-                            // once-per-media snapshot (no re-capture, no
-                            // per-frame crop work — drawing it taller is
-                            // just a draw-time scale, so the v161 disco
-                            // discipline is untouched), and the blur now
-                            // stays whether the keyboard is open or not.
-                            Image(sb.asImageBitmap(), null,
-                                Modifier.fillMaxSize()
-                                    .ayxBlurBackground(true, 10.dp),
-                                contentScale = ContentScale.Crop)
-                        }
                         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
                             listOf(Color.Black.copy(alpha = 0.40f), Color.Black.copy(alpha = 0.58f)))))
                         // Glass lip: a faint light line on the sheet's top edge.
@@ -10304,12 +10400,29 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
     val searchFocus = remember { FocusRequester() }
     // "Replace song" opens the search directly — focus the field immediately.
     LaunchedEffect(autoFocus) { if (autoFocus) { kotlinx.coroutines.delay(350); runCatching { searchFocus.requestFocus() } } }
-    // a reliable popular artist so the suggested list is never empty on open ("default songs")
-    val defaultQ = remember { listOf("arijit singh", "pritam", "atif aslam", "neha kakkar", "honey singh", "shreya ghoshal").random() }
     // ---- multi-provider search (JioSaavn full / iTunes preview / Spotify search-only; Deezer removed in v161) ----
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val musicPrefs = remember { ctx.getSharedPreferences("ayx_music", android.content.Context.MODE_PRIVATE) }
+    // v191 favourites: starred songs, persisted in the same "ayx_music"
+    // prefs as the provider choice (mirrors its putString pattern).
+    // One entry per line, "title|artist" — the same key the picker
+    // already uses for song identity. Titles are not sensitive, so
+    // plain prefs (not encrypted) is fine.
+    fun loadFavourites(): MutableList<Pair<String, String>> =
+        (musicPrefs.getString("favourites", "") ?: "").lines()
+            .mapNotNull { line -> val i = line.lastIndexOf("|"); if (i > 0) line.substring(0, i) to line.substring(i + 1) else null }
+            .toMutableList()
+    var favourites by remember { mutableStateOf(loadFavourites()) }
+    fun saveFavourites() {
+        runCatching { musicPrefs.edit().putString("favourites", favourites.joinToString("\n") { it.first + "|" + it.second }).apply() }
+    }
+    fun isFav(sg: GatewayClient.Song) = favourites.any { it.first == sg.title && it.second == sg.artist }
+    fun toggleFav(sg: GatewayClient.Song) {
+        favourites = if (isFav(sg)) (favourites - (sg.title to sg.artist)).toMutableList()
+            else (listOf(sg.title to sg.artist) + favourites).toMutableList()
+        saveFavourites()
+    }
     var provider by remember {
         // A persisted provider that no longer exists (Deezer, removed in
         // v161) must not strand the picker on a dead tab — fall back to JioSaavn.
@@ -10369,13 +10482,61 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
             else { runCatching { player.stop() }; onSelect(sg) }
         }
     }
+    // v191: popular + favourite rows carry title+artist only (no audio
+    // URL) — resolve them through the EXISTING JioSaavn matcher
+    // (resolveFullAudio), the same path iTunes rows use on apply.
+    // No new audio pipeline; the provider tab is irrelevant here.
+    fun selectCatalogSong(sg: GatewayClient.Song) {
+        val key = sg.title + "|" + sg.artist
+        val cached = resolvedSongs[key]
+        if (cached != null) { runCatching { player.stop() }; onSelect(cached); return }
+        if (resolvingKey != null) return
+        resolvingKey = key
+        scope.launch {
+            val r = MusicProviders.resolveFullAudio(ctx, sg)
+            resolvingKey = null
+            if (r != null) { resolvedSongs[key] = r; runCatching { player.stop() }; onSelect(r) }
+            else Toast.makeText(ctx, "Couldn't find audio for this song", Toast.LENGTH_LONG).show()
+        }
+    }
+    // v191: shared song row. Search rows keep the existing "© lyrics"
+    // indicator; popular/favourite rows hide it (their lyrics probe
+    // never runs — the probe below still covers search results only).
+    // The star toggles the Favourites section; the row tap is the
+    // caller's existing select flow, unchanged.
+    @Composable
+    fun SongRow(sg: GatewayClient.Song, showLyrics: Boolean, onTap: () -> Unit) {
+        Row(Modifier.fillMaxWidth().clickable { onTap() }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            val sKey = sg.title + "|" + sg.artist
+            val effUrl = (resolvedSongs[sKey] ?: sg).url
+            IconButton(onClick = { previewSong(sg) }, enabled = resolvingKey != sKey) {
+                if (resolvingKey == sKey) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = IOS_BLUE)
+                else AyxIcon(if (previewUrl != null && previewUrl == effUrl) Icons.Filled.Close else Icons.Filled.PlayArrow, "preview", tint = IOS_BLUE)
+            }
+            Column(Modifier.weight(1f)) {
+                Text(sg.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(sg.artist, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            if (showLyrics) {
+                when (lyricsAvail[sg.title + "|" + sg.artist]) {
+                    true -> Text("© lyrics", color = IOS_BLUE, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(end = 4.dp))
+                    null -> CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    else -> {}
+                }
+            }
+            IconButton(onClick = { toggleFav(sg) }) {
+                AyxIcon(if (isFav(sg)) Icons.Filled.Star else Icons.Filled.StarBorder, "favourite", tint = if (isFav(sg)) IOS_BLUE else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text("Use", color = IOS_BLUE, modifier = Modifier.padding(horizontal = 6.dp))
+        }
+    }
     DisposableEffect(Unit) { onDispose { runCatching { player.release() }; onQueryChange(qState.value) } }
     LaunchedEffect(q, provider) {
         val query = q.trim()
         // Spotify search is free-route only inside MusicProviders —
         // no keys, no login, no gate here (v162).
         if (query.length >= 2) { loading = true; delay(450); val r = MusicProviders.search(provider, query, ctx); results = r.first; error = r.second; loading = false }
-        else { loading = true; val r = MusicProviders.search(provider, defaultQ, ctx); results = r.first; error = r.second; loading = false }   // default/suggested songs
+        else { results = emptyList(); error = ""; loading = false }   // v191: no default search — picker shows Favourites + Popular instead
     }
     // check lyrics availability for the visible songs (cached, throttled)
     LaunchedEffect(results) {
@@ -10431,7 +10592,6 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 8.dp))
                         }
                         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
-                        if (q.trim().length < 2) Text("Suggested", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp, start = 2.dp))
                         // v161: a failed search shows its REAL reason in EVERY
                         // state — the Suggested (default) list used to fail
                         // silently, so a broken provider (e.g. Spotify's
@@ -10444,27 +10604,28 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
                     }
                     Spacer(Modifier.height(6.dp))
                     LazyColumn(Modifier.fillMaxSize()) {
-                        itemsIndexed(results) { _, sg ->
-                        Row(Modifier.fillMaxWidth().clickable { selectSong(sg) }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            val sKey = sg.title + "|" + sg.artist
-                            val effUrl = (resolvedSongs[sKey] ?: sg).url
-                            IconButton(onClick = { previewSong(sg) }, enabled = resolvingKey != sKey) {
-                                if (resolvingKey == sKey) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = IOS_BLUE)
-                                else AyxIcon(if (previewUrl != null && previewUrl == effUrl) Icons.Filled.Close else Icons.Filled.PlayArrow, "preview", tint = IOS_BLUE)
+                        if (q.trim().length < 2) {
+                            // v191: no query yet — Favourites pinned on
+                            // top (tap one, no search needed), then the
+                            // fixed Popular list. No network call here.
+                            if (favourites.isNotEmpty()) {
+                                item { Text("Favourites", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp, start = 2.dp)) }
+                                items(favourites) { fav ->
+                                    val sg = GatewayClient.Song(fav.first, fav.second, null, "", 0)
+                                    SongRow(sg, showLyrics = false, onTap = { selectCatalogSong(sg) })
+                                }
                             }
-                            Column(Modifier.weight(1f)) {
-                                Text(sg.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(sg.artist, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            item { Text("Popular", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp, start = 2.dp)) }
+                            items(PopularSongs.LIST) { entry ->
+                                val sg = GatewayClient.Song(entry.first, entry.second, null, "", 0)
+                                SongRow(sg, showLyrics = false, onTap = { selectCatalogSong(sg) })
                             }
-                            when (lyricsAvail[sg.title + "|" + sg.artist]) {
-                                true -> Text("© lyrics", color = IOS_BLUE, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(end = 4.dp))
-                                null -> CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                else -> {}
+                        } else {
+                            itemsIndexed(results) { _, sg ->
+                                SongRow(sg, showLyrics = true, onTap = { selectSong(sg) })
                             }
-                            Text("Use", color = IOS_BLUE, modifier = Modifier.padding(horizontal = 6.dp))
                         }
                     }
-                }
             }
         }
     }

@@ -108,9 +108,30 @@ object MusicProviders {
         }
 
     // ---------- JioSaavn (full-length) ----------
+    // v191: a singer search returns hundreds of matches, but the API
+    // hands out one page at a time — the old code fetched page 1 only
+    // (30 rows), so singer results always looked capped. Fetch up to
+    // 5 pages (150 rows); a short page means the catalog is exhausted.
+    // The 5-page bound keeps a keystroke search fast instead of
+    // paging forever. No matcher/filtering change — pages are only
+    // deduped by audio URL (exact same file twice).
+    private const val MAX_SEARCH_PAGES = 5
+    private const val SEARCH_PAGE_SIZE = 30
+
     private fun searchSaavnList(q: String): List<GatewayClient.Song> {
+        val out = ArrayList<GatewayClient.Song>()
+        val seen = HashSet<String>()
+        for (page in 1..MAX_SEARCH_PAGES) {
+            val rows = runCatching { searchSaavnPage(q, page) }.getOrDefault(emptyList())
+            for (s in rows) if (seen.add(s.url)) out.add(s)
+            if (rows.size < SEARCH_PAGE_SIZE) break
+        }
+        return out
+    }
+
+    private fun searchSaavnPage(q: String, page: Int): List<GatewayClient.Song> {
         val url = "https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=" +
-            enc(q) + "&p=1&n=30"
+            enc(q) + "&p=" + page + "&n=" + SEARCH_PAGE_SIZE
         val body = httpText(url, headers = mapOf("Referer" to "https://www.jiosaavn.com/", "Accept" to "application/json"))
         val data = try { JSONObject(body) } catch (pe: Exception) { JSONObject(body.replace(Regex("^[^\\{\\[]*"), "")) }
         val results = data.optJSONArray("results") ?: return emptyList()
@@ -153,7 +174,20 @@ object MusicProviders {
 
     // ---------- iTunes (30 s preview) ----------
     private fun searchItunesList(q: String): List<GatewayClient.Song> {
-        val url = "https://itunes.apple.com/search?term=" + enc(q) + "&media=music&entity=song&limit=30"
+        // v191: same page-1-only cap as JioSaavn (limit=30, no offset) —
+        // paginate with offset, same 5-page bound and short-page stop.
+        val out = ArrayList<GatewayClient.Song>()
+        val seen = HashSet<String>()
+        for (page in 0 until MAX_SEARCH_PAGES) {
+            val rows = runCatching { searchItunesPage(q, page * SEARCH_PAGE_SIZE) }.getOrDefault(emptyList())
+            for (s in rows) if (seen.add(s.url)) out.add(s)
+            if (rows.size < SEARCH_PAGE_SIZE) break
+        }
+        return out
+    }
+
+    private fun searchItunesPage(q: String, offset: Int): List<GatewayClient.Song> {
+        val url = "https://itunes.apple.com/search?term=" + enc(q) + "&media=music&entity=song&limit=" + SEARCH_PAGE_SIZE + "&offset=" + offset
         val data = JSONObject(httpText(url))
         val results = data.optJSONArray("results") ?: return emptyList()
         val out = ArrayList<GatewayClient.Song>()
@@ -202,11 +236,22 @@ object MusicProviders {
     // ---------- Spotify (search only; audio resolved separately) ----------
     // v162: the ONLY route is the free anonymous one below — no login,
     // no user keys (the Client Credentials path was removed).
-    private fun searchSpotifyList(q: String): List<GatewayClient.Song> = spotifyAnonSearch(q)
+    private fun searchSpotifyList(q: String): List<GatewayClient.Song> {
+        // v191: same 30-row page-1-only cap — paginate with offset.
+        // Spotify rows carry no audio URL, so dedupe is title+artist+duration.
+        val out = ArrayList<GatewayClient.Song>()
+        val seen = HashSet<String>()
+        for (page in 0 until MAX_SEARCH_PAGES) {
+            val rows = runCatching { spotifyAnonSearchPage(q, page * SEARCH_PAGE_SIZE) }.getOrDefault(emptyList())
+            for (s in rows) if (seen.add(songKey(s) + "|" + s.durationSec)) out.add(s)
+            if (rows.size < SEARCH_PAGE_SIZE) break
+        }
+        return out
+    }
 
     // The Web API search parse path for the anonymous token.
-    private fun spotifySearchWithToken(token: String, q: String): List<GatewayClient.Song> {
-        val url = "https://api.spotify.com/v1/search?q=" + enc(q) + "&type=track&limit=30"
+    private fun spotifySearchWithToken(token: String, q: String, offset: Int = 0): List<GatewayClient.Song> {
+        val url = "https://api.spotify.com/v1/search?q=" + enc(q) + "&type=track&limit=" + SEARCH_PAGE_SIZE + "&offset=" + offset
         val data = JSONObject(httpText(url, headers = mapOf("Authorization" to "Bearer $token")))
         val items = data.optJSONObject("tracks")?.optJSONArray("items") ?: return emptyList()
         val out = ArrayList<GatewayClient.Song>()
@@ -267,11 +312,11 @@ object MusicProviders {
     @Volatile private var spAnonExpMs: Long = 0L
     @Volatile private var spAnonQuotaUntilMs: Long = 0L
 
-    private fun spotifyAnonSearch(q: String): List<GatewayClient.Song> {
+    private fun spotifyAnonSearchPage(q: String, offset: Int): List<GatewayClient.Song> {
         if (System.currentTimeMillis() < spAnonQuotaUntilMs)
             throw java.io.IOException("Spotify free search is rate-limited (HTTP 429) — try again later, or use the JioSaavn tab")
         try {
-            return spotifySearchWithToken(spotifyAnonToken(), q)
+            return spotifySearchWithToken(spotifyAnonToken(), q, offset)
         } catch (e: java.io.IOException) {
             when {
                 e.message?.startsWith("HTTP 429") == true -> {
@@ -284,7 +329,7 @@ object MusicProviders {
                 e.message?.startsWith("HTTP 401") == true -> {
                     // cached token rejected → drop it, refetch once, retry once
                     synchronized(this) { spAnonToken = ""; spAnonExpMs = 0L }
-                    return spotifySearchWithToken(spotifyAnonToken(), q)
+                    return spotifySearchWithToken(spotifyAnonToken(), q, offset)
                 }
                 else -> throw e
             }
