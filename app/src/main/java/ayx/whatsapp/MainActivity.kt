@@ -1753,10 +1753,13 @@ fun GatewayApp(updateBlur: Boolean = false) {
         while (true) {
             status = GatewayClient.status()
             if (!status.reachable) {
-                // Gateway down (Node dead / still starting) — restart it
-                // instead of waiting for the user. NodeRuntime resets its
-                // `started` flag when Node exits, so this revives a dead
-                // gateway instead of being a permanent no-op.
+                // Gateway down (Node dead / still starting) — ask
+                // NodeRuntime to start it. v195: if Node already ran and
+                // exited in THIS process, ensureStarted() is a deliberate
+                // no-op (a second nativeStart in one process asserts and
+                // kills the app); revival then needs a fresh process (app
+                // relaunch / restart alarm), so this loop just keeps
+                // reporting unreachable until then.
                 withContext(Dispatchers.IO) { NodeRuntime.ensureStarted(ctx.applicationContext) }
             }
             if (status.needRelogin) {
@@ -2468,9 +2471,11 @@ fun GatewayApp(updateBlur: Boolean = false) {
                     val opt = OptMsg(ocChat, text, ts)
                     optimistic.add(opt)
                     scope.launch {
-                        // Make sure the gateway is up before sending — if
-                        // Node died, ensureStarted() revives it (the flag
-                        // resets when Node exits, so this is not a no-op).
+                        // Make sure the gateway is up before sending —
+                        // ensureStarted() starts it if it never ran in this
+                        // process (v195: after a Node exit in this process
+                        // it is a deliberate no-op; revival needs a fresh
+                        // process, not an in-process restart).
                         withContext(Dispatchers.IO) { NodeRuntime.ensureStarted(ctx.applicationContext) }
                         // ONE stable id for this send: shared by the retry
                         // attempts AND the later queue flush, so the
