@@ -22,6 +22,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
+import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.provider.Settings
 import android.widget.Toast
@@ -1536,6 +1537,51 @@ fun GatewayApp(updateBlur: Boolean = false) {
             pendingStatus = uri to (if (mime.startsWith("video")) "video" else "image")
         }
     }
+    // v194: real camera for status — system camera intents only, no CameraX,
+    // no CAMERA permission (the camera app owns capture). Photo goes through
+    // a FileProvider Uri in cache/shared (already declared in the manifest);
+    // video comes back as the camera app's own content Uri. Both land in
+    // pendingStatus, the exact same entry point the gallery picker uses, so
+    // photo -> photo editor and video -> video editor are unchanged.
+    var statusCameraChoice by remember { mutableStateOf(false) }
+    var statusCameraPhotoFile by remember { mutableStateOf<File?>(null) }
+    var statusCameraPhotoUri by remember { mutableStateOf<Uri?>(null) }
+    val statusCameraPhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        val f = statusCameraPhotoFile; val u = statusCameraPhotoUri
+        statusCameraPhotoFile = null; statusCameraPhotoUri = null
+        if (ok && u != null) pendingStatus = u to "image"
+        else f?.delete() // cancelled / failed: drop the empty temp file, back to Home
+    }
+    val statusCameraVideo = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val u = result.data?.data
+            if (u != null) {
+                runCatching { ctx.contentResolver.takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+                pendingStatus = u to "video"
+            }
+        }
+        // cancelled: nothing — back to Home, no crash
+    }
+    fun launchStatusCameraPhoto() {
+        try {
+            val probe = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+            val camPkg = ctx.packageManager.resolveActivity(probe, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName
+            if (camPkg == null) { notify("No camera app found"); return }
+            val dir = File(ctx.cacheDir, "shared").apply { mkdirs() }
+            val f = File(dir, "status_" + System.currentTimeMillis() + ".jpg")
+            val u = FileProvider.getUriForFile(ctx, ctx.packageName + ".fileprovider", f)
+            ctx.grantUriPermission(camPkg, u, Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            statusCameraPhotoFile = f; statusCameraPhotoUri = u
+            statusCameraPhoto.launch(u)
+        } catch (e: Exception) { notify("Camera failed: ${e.message}") }
+    }
+    fun launchStatusCameraVideo() {
+        try {
+            val intent = Intent(MediaStore.ACTION_VIDEO_CAPTURE)
+            if (ctx.packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY) == null) { notify("No camera app found"); return }
+            statusCameraVideo.launch(intent)
+        } catch (e: Exception) { notify("Camera failed: ${e.message}") }
+    }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null && openChat != null) {
             val mime = ctx.contentResolver.getType(uri) ?: "application/octet-stream"
@@ -2186,15 +2232,45 @@ fun GatewayApp(updateBlur: Boolean = false) {
         }
     }
 
+    // v194: camera chooser — camera first, gallery path intact.
+    if (statusCameraChoice) {
+        Dialog(onDismissRequest = { statusCameraChoice = false }) {
+            StyledSurface(shape = uiShapeFor(16), color = dialogBg()) {
+                Column(Modifier.padding(16.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Photo / Video", style = MaterialTheme.typography.titleLarge)
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth().clip(uiShapeFor(12)).clickable { statusCameraChoice = false; launchStatusCameraPhoto() }.padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        AyxIcon(Icons.Filled.PhotoCamera, null)
+                        Spacer(Modifier.width(14.dp))
+                        Text("Take photo", style = MaterialTheme.typography.bodyLarge)
+                    }
+                    Row(Modifier.fillMaxWidth().clip(uiShapeFor(12)).clickable { statusCameraChoice = false; launchStatusCameraVideo() }.padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        AyxIcon(Icons.Filled.Videocam, null)
+                        Spacer(Modifier.width(14.dp))
+                        Text("Record video", style = MaterialTheme.typography.bodyLarge)
+                    }
+                    Row(Modifier.fillMaxWidth().clip(uiShapeFor(12)).clickable { statusCameraChoice = false; statusPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) }.padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        AyxIcon(Icons.Filled.Image, null)
+                        Spacer(Modifier.width(14.dp))
+                        Text("Choose from gallery", style = MaterialTheme.typography.bodyLarge)
+                    }
+                    TextButton(onClick = { statusCameraChoice = false }, modifier = Modifier.align(Alignment.End)) { Text("Cancel") }
+                }
+            }
+        }
+    }
+
     Scaffold(
         floatingActionButton = {
             if (status.registered && openChat == null && screen == "chats") {
                 if (chatsPage == 1) Box {
                     FloatingActionButton(onClick = { statusFabMenu = true }) { AyxIcon(Icons.Filled.PhotoCamera, "add status") }
-                    DropdownMenu(expanded = statusFabMenu, onDismissRequest = { statusFabMenu = false }) {
-                        DropdownMenuItem(text = { Text("Photo / Video") }, leadingIcon = { AyxIcon(Icons.Filled.PhotoCamera, null) },
-                            onClick = { statusFabMenu = false; ensureContacts(); statusPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) })
-                        DropdownMenuItem(text = { Text("Text status") }, leadingIcon = { AyxIcon(Icons.Filled.TextFields, null) },
+                    // v194: premium popup — rounded card, app menu tint, soft lift; items/order/behavior unchanged.
+                    DropdownMenu(expanded = statusFabMenu, onDismissRequest = { statusFabMenu = false },
+                        shape = uiShapeFor(16), containerColor = MaterialTheme.colorScheme.surface.copy(alpha = ayxMenuAlpha()), shadowElevation = 8.dp, tonalElevation = 0.dp) {
+                        DropdownMenuItem(text = { Text("Photo / Video", style = MaterialTheme.typography.bodyLarge) }, leadingIcon = { AyxIcon(Icons.Filled.PhotoCamera, null) },
+                            onClick = { statusFabMenu = false; ensureContacts(); statusCameraChoice = true })
+                        DropdownMenuItem(text = { Text("Text status", style = MaterialTheme.typography.bodyLarge) }, leadingIcon = { AyxIcon(Icons.Filled.TextFields, null) },
                             onClick = { statusFabMenu = false; ensureContacts(); textStatusDlg = true })
                     }
                 }
