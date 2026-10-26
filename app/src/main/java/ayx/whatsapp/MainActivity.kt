@@ -129,6 +129,8 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.DonutLarge
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.CloudUpload
