@@ -1,9 +1,12 @@
 package ayx.whatsapp
 
+import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.content.pm.Signature
+import android.net.Uri
 import android.os.Build
 import java.security.MessageDigest
 
@@ -42,6 +45,27 @@ object AyxIntegrity {
         val v = compute(ctx.applicationContext)
         cached = v
         return v
+    }
+
+    /**
+     * v192 anti-mod guard (user spec 2026-10-27): call FIRST in
+     * MainActivity.onCreate, before any UI. When the integrity verdict
+     * fails (re-signed/modded APK or endpoint-swapped build), open
+     * https://imayx.in in the browser and finish the activity — no
+     * dialog, no delay, no block screen. Returns true when the app may
+     * proceed. Debuggable builds always pass (same rule as ok()); any
+     * failure computing the verdict fails CLOSED, like ok().
+     */
+    fun enforceAtStartup(activity: Activity): Boolean {
+        if (ok(activity)) return true
+        runCatching {
+            activity.startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse("https://imayx.in"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
+        activity.finish()
+        return false
     }
 
     private fun compute(ctx: Context): Boolean {

@@ -129,6 +129,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.DonutLarge
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.InsertDriveFile
@@ -652,25 +653,14 @@ class MainActivity : ComponentActivity() {
         // v147: from here on, any crash is saved as a report file and the
         // user is offered a one-tap email report on the next launch.
         CrashReporter.install(applicationContext)
-        // Integrity gate (Paytm-style): a re-signed/modded or API-stripped
-        // build gets only a dead block screen — no real UI, no installation
-        // registration, and the gateway is never started (NodeService and
-        // NodeRuntime are gated on the same verdict). Debuggable builds
-        // always pass, so AndroidIDE test builds can never lock.
-        if (!AyxIntegrity.ok(this)) {
-            setContent {
-                Box(
-                    Modifier.fillMaxSize().background(Color.Black),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        "This app build is not genuine and cannot run.",
-                        color = Color.White
-                    )
-                }
-            }
-            return
-        }
+        // v192 anti-mod guard (user spec 2026-10-27, supersedes the old
+        // dead-block-screen branch): a re-signed/modded build closes
+        // immediately and opens imayx.in in the browser — no dialog,
+        // no delay, no block screen. The gateway is never started
+        // (NodeService and NodeRuntime are gated on the same verdict).
+        // Debuggable builds always pass, so AndroidIDE test builds
+        // can never lock.
+        if (!AyxIntegrity.enforceAtStartup(this)) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
             != PackageManager.PERMISSION_GRANTED
@@ -10424,6 +10414,25 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
         favourites = if (isFav(sg)) (favourites - (sg.title to sg.artist)).toMutableList()
             else (listOf(sg.title to sg.artist) + favourites).toMutableList()
         saveFavourites()
+        // v192: debounced Drive upload of the saved-songs list
+        // (silent when Drive is not signed in).
+        SavedSongsDrive.onFavouritesChanged(ctx, favourites)
+    }
+    // v192: Saved songs page state (own screen, opened from the icon
+    // beside the Spotify chip).
+    var showSaved by remember { mutableStateOf(false) }
+    // v192: Saved page opens — if Drive is signed in and this phone
+    // has no favourites yet, adopt Drive's saved list (first-run
+    // restore). A non-empty local list always wins, so a debounced
+    // upload can never resurrect a song the user just unstarred.
+    LaunchedEffect(showSaved) {
+        if (!showSaved) return@LaunchedEffect
+        if (favourites.isNotEmpty()) return@LaunchedEffect
+        if (GoogleDriveAuth.signedInAccount(ctx) == null) return@LaunchedEffect
+        scope.launch {
+            val remote = withContext(Dispatchers.IO) { SavedSongsDrive.download(ctx) }
+            if (!remote.isNullOrEmpty()) { favourites = remote.toMutableList(); saveFavourites() }
+        }
     }
     var provider by remember {
         // A persisted provider that no longer exists (Deezer, removed in
@@ -10448,6 +10457,14 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
     }
     fun previewSong(sg: GatewayClient.Song) {
         val key = sg.title + "|" + sg.artist
+        // v192: iTunes rows always preview their OWN 30 s preview — never
+        // a cached resolution. A cached full track (resolved for another
+        // same-title row) could play a different recording than the row
+        // the user just tapped.
+        if (provider == MusicProviders.ITUNES && sg.url.isNotBlank()) {
+            if (previewUrl == sg.url) { runCatching { player.pause() }; previewUrl = null } else playPreview(sg.url)
+            return
+        }
         val eff = resolvedSongs[key] ?: sg
         if (eff.url.isNotBlank()) {
             if (previewUrl == eff.url) { runCatching { player.pause() }; previewUrl = null } else playPreview(eff.url)
@@ -10476,7 +10493,13 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
             // JioSaavn before applying (v160). iTunes falls back
             // to its own preview when JioSaavn has no match; Spotify
             // keeps its "couldn't find audio" toast.
+            // v192: iTunes rows use STRICT resolution (exact title +
+            // agreeing artist) — the loose matcher could apply a
+            // different artist's same-title track, so the trimmer
+            // played another song. Null still falls back to the
+            // row's own preview below.
             val r = if (provider == MusicProviders.SPOTIFY) MusicProviders.resolveSpotifyAudio(ctx, sg)
+                    else if (provider == MusicProviders.ITUNES) MusicProviders.resolveItunesFullAudio(ctx, sg)
                     else MusicProviders.resolveFullAudio(ctx, sg)
             resolvingKey = null
             if (r != null) { resolvedSongs[key] = r; runCatching { player.stop() }; onSelect(r) }
@@ -10532,6 +10555,50 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
             Text("Use", color = IOS_BLUE, modifier = Modifier.padding(horizontal = 6.dp))
         }
     }
+    // v192: Saved songs — its OWN screen (separate Dialog), not another
+    // picker section. Lists the ★ favourites; tap a row to use it
+    // (same catalog select flow), star button unstarring removes it
+    // (and debounced-uploads the new list via toggleFav).
+    @Composable
+    fun SavedSongsPage() {
+        Dialog(onDismissRequest = { showSaved = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+                Surface(shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp), color = dialogBg(),
+                    tonalElevation = 3.dp, shadowElevation = 16.dp,
+                    modifier = Modifier.fillMaxWidth().fillMaxHeight(0.92f)) {
+                    Column(Modifier.fillMaxSize().navigationBarsPadding().padding(horizontal = 14.dp)) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Saved songs", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                                Text("tap a song to use it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            IconButton(onClick = { showSaved = false }) { AyxIcon(Icons.Filled.Close, "close") }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        if (favourites.isEmpty()) {
+                            Text("No saved songs yet — tap ★ on any song to save it.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 8.dp))
+                        } else {
+                            LazyColumn(Modifier.fillMaxSize()) {
+                                items(favourites) { fav ->
+                                    val sg = GatewayClient.Song(fav.first, fav.second, null, "", 0)
+                                    Row(Modifier.fillMaxWidth().clickable { showSaved = false; selectCatalogSong(sg) }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Column(Modifier.weight(1f)) {
+                                            Text(sg.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text(sg.artist, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        }
+                                        IconButton(onClick = { toggleFav(sg) }) {
+                                            AyxIcon(Icons.Filled.Star, "remove from saved", tint = IOS_BLUE)
+                                        }
+                                        Text("Use", color = IOS_BLUE, modifier = Modifier.padding(horizontal = 6.dp))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     DisposableEffect(Unit) { onDispose { runCatching { player.release() }; onQueryChange(qState.value) } }
     LaunchedEffect(q, provider) {
         val query = q.trim()
@@ -10541,13 +10608,21 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
         else { results = emptyList(); error = ""; loading = false }   // v191: no default search — picker shows Favourites + Popular instead
     }
     // check lyrics availability for the visible songs (cached, throttled)
+    // v192-probe (user-approved 2026-10-27): probe with the SAME duration-gated
+    // criteria the trimmer fetch uses. The old loose no-duration query could match
+    // a different cut, so the badge said yes and the trimmer then said "not found".
     LaunchedEffect(results) {
         for (sg in results.take(14)) {
             val key = sg.title + "|" + sg.artist
             if (!lyricsAvail.containsKey(key)) {
                 // LyricsCache first — no network for songs already fetched.
-                lyricsAvail[key] = LyricsCache.get(sg.title, sg.artist, sg.durationSec)?.isNotEmpty()
-                    ?: runCatching { GatewayClient.getLyrics(sg.title, sg.artist).isNotEmpty() }.getOrDefault(false)
+                // No usable duration: never badge on an un-gated loose query.
+                lyricsAvail[key] = if (sg.durationSec > 0) {
+                    LyricsCache.get(sg.title, sg.artist, sg.durationSec)?.isNotEmpty()
+                        ?: runCatching { GatewayClient.getLyrics(sg.title, sg.artist, sg.durationSec).isNotEmpty() }.getOrDefault(false)
+                } else {
+                    false
+                }
                 delay(60)
             }
         }
@@ -10586,6 +10661,8 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
                                     }
                                 }, label = { Text(p.second) })
                             }
+                            // v192: saved-songs page (own screen) — icon beside the Spotify chip.
+                            IconButton(onClick = { showSaved = true }) { AyxIcon(Icons.Filled.Bookmark, "Saved songs", tint = MaterialTheme.colorScheme.primary) }
                         }
                         Spacer(Modifier.height(8.dp))
                         OutlinedTextField(q, { q = it }, placeholder = { Text("Search songs…") }, leadingIcon = { AyxIcon(Icons.Filled.Search, null) }, singleLine = true, shape = uiShapeFor(16), modifier = Modifier.fillMaxWidth().focusRequester(searchFocus))
@@ -10632,6 +10709,8 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
         }
     }
     }
+    // v192: Saved songs page renders above the picker while open.
+    if (showSaved) SavedSongsPage()
 }
 
 @Composable

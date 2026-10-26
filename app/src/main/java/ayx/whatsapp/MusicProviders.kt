@@ -404,6 +404,39 @@ object MusicProviders {
             } catch (e: Exception) { null }
         }
 
+    /**
+     * v192 — iTunes rows ONLY: strict resolution. The loose pickMatch
+     * above (substring titles + fallback to non-agreeing artists when
+     * no hit agrees) could apply a different artist's same-title track,
+     * so the trimmer played ANOTHER song than the tapped iTunes row.
+     * Strict = normalized title must EQUAL (no substring), the artist
+     * must AGREE (blank target artist = no confident match), and a
+     * known target duration more than 10 s from every hit = no
+     * confident match. Null → the caller falls back to the row's own
+     * iTunes preview audio instead of a wrong full track. JioSaavn and
+     * Spotify rows keep pickMatch unchanged.
+     */
+    suspend fun resolveItunesFullAudio(ctx: Context, song: GatewayClient.Song): GatewayClient.Song? =
+        withContext(Dispatchers.IO) {
+            try {
+                val t = normTitle(song.title)
+                if (t.isBlank() || normArtist(song.artist).isEmpty()) return@withContext null
+                val q = (song.title + " " + song.artist).trim()
+                val saavn = runCatching { searchSaavnList(q) }.getOrDefault(emptyList())
+                val pool = saavn.filter { normTitle(it.title) == t && artistAgrees(song.artist, it.artist) }
+                if (pool.isEmpty()) return@withContext null
+                val best = if (song.durationSec > 0) {
+                    val near = pool.filter { it.durationSec <= 0 || kotlin.math.abs(it.durationSec - song.durationSec) <= 10 }
+                    if (near.isEmpty()) return@withContext null
+                    near.minByOrNull { kotlin.math.abs(it.durationSec - song.durationSec) }
+                } else pool.first()
+                best?.let {
+                    song.copy(url = it.url,
+                        durationSec = if (it.durationSec > 0) it.durationSec else song.durationSec)
+                }
+            } catch (e: Exception) { null }
+        }
+
     // Base-title comparison: "(From …)" / "[…]" suffixes and punctuation
     // differ across catalogs for the very same recording.
     private fun normTitle(s: String): String = s.lowercase()
