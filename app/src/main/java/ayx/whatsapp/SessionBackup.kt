@@ -73,9 +73,14 @@ object SessionBackup {
     private const val P_LAST_OK = "last_session_backup_ok_ms"
     private const val P_LAST_ERROR = "last_session_error"
 
-    // Sanity caps: a Baileys auth dir is a few dozen small JSON files.
-    private const val MAX_FILES = 500
-    private const val MAX_TOTAL_BYTES = 5L * 1024 * 1024
+    // Sanity caps: a Baileys auth dir holds creds.json plus per-chat /
+    // per-device key files (sessions, sender keys, pre-keys, app-state
+    // keys) — thousands for an active user, so these caps are absurdity
+    // guards only (a corrupt or attacker-grown dir), never normal-size
+    // limits. The old 500-file cap false-tripped on real accounts
+    // (2026-10-27: "unexpectedly many files" on a live session).
+    private const val MAX_FILES = 50000
+    private const val MAX_TOTAL_BYTES = 32L * 1024 * 1024
 
     /** A failure with a user-readable message (shown as-is in the UI). */
     class SessionError(message: String) : Exception(message)

@@ -5558,10 +5558,24 @@ private fun DriveBackupSection() {
 
     /** Backup/Restore gate: signed out → explain, then start sign-in. */
     fun needsSignIn(): Boolean {
-        if (status.accountEmail != null) return false
-        note = "Add your Google account first — one sign-in, then backups go straight to Drive."
-        launchSignIn()
-        return true
+        if (status.accountEmail == null) {
+            note = "Add your Google account first — one sign-in, then backups go straight to Drive."
+            launchSignIn()
+            return true
+        }
+        // Account recorded but Drive scope missing (or the Play-services
+        // sign-in state is gone while the stored email lingers): the old
+        // code let Backup taps fall through to a "sign in again" message
+        // while tapping "Google account" only opened the account dialog
+        // (Sign out / Switch / Cancel — no re-consent) — a stuck loop
+        // with no way to re-allow Drive. Re-run sign-in instead, so the
+        // consent screen (with the Drive scope) appears again.
+        if (!GoogleDriveAuth.hasDrivePermission(ctx)) {
+            note = "Drive access wasn't allowed — sign in again and allow Drive access."
+            launchSignIn()
+            return true
+        }
+        return false
     }
 
     SettingsGroup("Drive Backup") {
