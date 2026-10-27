@@ -82,6 +82,18 @@ object SessionBackup {
     private const val MAX_FILES = 50000
     private const val MAX_TOTAL_BYTES = 32L * 1024 * 1024
 
+    // v198: peek→restore ran the full multi-MB Drive download + decrypt
+    // TWICE (peek for the dialog date, restore for the write), each with
+    // its own token + folder + find round trips. The peeked bytes are
+    // cached in memory (10 min) so the restore that follows the dialog
+    // skips the second download entirely. The cache is consumed on
+    // restore success and refreshed by every peek, so a peek always
+    // describes exactly the bytes its restore would write.
+    private var cachedBackupRaw: ByteArray? = null
+    private var cachedKey: ByteArray? = null
+    private var cachedAt: Long = 0L
+    private const val PEEK_CACHE_MS = 10 * 60 * 1000L
+
     /** A failure with a user-readable message (shown as-is in the UI). */
     class SessionError(message: String) : Exception(message)
 
@@ -224,13 +236,19 @@ object SessionBackup {
      * Full restore: decrypt + validate EVERYTHING first; only then write
      * into the private auth dir, verifying creds.json landed. A corrupt
      * backup can never half-apply: a mid-write failure rolls the written
-     * files back. On success the caller MUST restart the app (see
-     * [restartApp]) — the running gateway never re-reads the auth dir.
+     * files back. On success the caller tries GatewayClient.reloadAuth()
+     * first (direct login, no restart); only gateways without that
+     * endpoint need [restartApp] — the running gateway never re-reads
+     * the auth dir on its own.
      */
     fun restoreSession(ctx: Context): String {
         try {
             requireAccount(ctx)
-            val payload = readPayload(ctx)
+            // v198: the dialog's peek already downloaded + verified these
+            // exact bytes — reuse them (10-min cache) instead of a second
+            // full Drive download. Without a preceding peek this just
+            // downloads fresh (empty cache falls through).
+            val payload = readPayload(ctx, useCache = true)
             val files = payload.optJSONObject("files")
                 ?: throw SessionError("The session backup is damaged (no login inside). Nothing was restored.")
             validatePayloadFiles(files)
@@ -263,6 +281,9 @@ object SessionBackup {
                 throw SessionError("The session did not land — nothing was restored.")
             }
             ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(P_LAST_ERROR).apply()
+            // v198: the peek cache is consumed — a later restore must
+            // re-download, never reuse bytes from an older backup.
+            cachedBackupRaw = null; cachedKey = null; cachedAt = 0L
             Log.i(TAG, "session restored (${written.size} files) — app restart required")
             return "Session restored from Drive."
         } catch (e: SessionError) {
@@ -305,10 +326,16 @@ object SessionBackup {
         }
     }
 
-    private fun readPayload(ctx: Context): JSONObject {
-        val key = resolveKeyForRestore(ctx)
-        val raw = readRemote(ctx, SESSION_BACKUP_FILE)
-            ?: throw SessionError("No session backup found in Drive ($SESSION_BACKUP_FILE is missing). Nothing was restored.")
+    private fun readPayload(ctx: Context, useCache: Boolean = false): JSONObject {
+        val now = System.currentTimeMillis()
+        val (key, raw) = if (useCache && cachedBackupRaw != null && cachedKey != null && now - cachedAt < PEEK_CACHE_MS) {
+            cachedKey!! to cachedBackupRaw!!
+        } else {
+            val k = resolveKeyForRestore(ctx)
+            val r = readRemote(ctx, SESSION_BACKUP_FILE)
+                ?: throw SessionError("No session backup found in Drive ($SESSION_BACKUP_FILE is missing). Nothing was restored.")
+            k to r
+        }
         val envelope = try {
             JSONObject(String(raw, Charsets.UTF_8))
         } catch (e: Exception) {
@@ -327,6 +354,8 @@ object SessionBackup {
         if (payload.optInt("v", 0) != 1) {
             throw SessionError("This session backup was made by a newer app version. Update AyX WhatsApp first. Nothing was restored.")
         }
+        // Cache the verified bytes for the restore that follows a peek.
+        cachedBackupRaw = raw; cachedKey = key; cachedAt = now
         return payload
     }
 
@@ -334,7 +363,9 @@ object SessionBackup {
      * Restart the app so the fresh process boots node against the restored
      * auth dir. Always exits the process; if the launcher intent is
      * missing, reopening the app by hand still connects (the restored
-     * creds are already in place).
+     * creds are already in place). Only needed when the gateway lacks
+     * /reload-auth (see GatewayClient.reloadAuth) — otherwise the
+     * restore connects directly with no restart.
      */
     fun restartApp(ctx: Context) {
         runCatching {

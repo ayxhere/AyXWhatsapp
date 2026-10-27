@@ -1374,12 +1374,21 @@ fun GatewayApp(updateBlur: Boolean = false) {
     // v149: a paired session exists in the private auth dir (creds.me).
     // While true, an unregistered gateway status means "still restoring",
     // never "show the QR screen".
-    var localPaired by remember { mutableStateOf(false) }
+    // v198: read once synchronously at startup (creds.json is tiny) so a
+    // fresh boot with restored creds goes straight to Restoring instead
+    // of flashing "Generating QR…" until the first poll returns.
+    var localPaired by remember { mutableStateOf(localPairedSession(ctx)) }
     // v175: flipped by the status poll once "paired locally but not
     // restored" has persisted ~90s straight — the saved session is then
     // treated as dead and the link screen takes over (see the poll loop
     // and the screen switch below).
     var restoreTimedOut by remember { mutableStateOf(false) }
+    // v198: true once the gateway has been unreachable for 20 s straight
+    // (node boot takes seconds, so a short grace first). Lets the
+    // Restoring screen say the gateway is down instead of spinning
+    // "Connecting…" blindly; the 90 s timeout + QR fallback still fire
+    // on their own schedule.
+    var gatewayDownLong by remember { mutableStateOf(false) }
     var lastQrHash by remember { mutableStateOf(0) }
     var settings by remember { mutableStateOf(GatewayClient.Settings()) }
     var messages by remember { mutableStateOf(listOf<GatewayClient.Msg>()) }
@@ -1768,9 +1777,12 @@ fun GatewayApp(updateBlur: Boolean = false) {
     LaunchedEffect(Unit) {
         var toldRelogin = false
         var restoreSince = 0L   // v175: start of the current unbroken "paired but not restored" window
+        var unreachableSince = 0L   // v198: start of the current unbroken "gateway unreachable" window
         while (true) {
             status = GatewayClient.status()
             if (!status.reachable) {
+                if (unreachableSince == 0L) unreachableSince = System.currentTimeMillis()
+                gatewayDownLong = System.currentTimeMillis() - unreachableSince >= 20_000L
                 // Gateway down (Node dead / still starting) — ask
                 // NodeRuntime to start it. v195: if Node already ran and
                 // exited in THIS process, ensureStarted() is a deliberate
@@ -1779,7 +1791,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
                 // relaunch / restart alarm), so this loop just keeps
                 // reporting unreachable until then.
                 withContext(Dispatchers.IO) { NodeRuntime.ensureStarted(ctx.applicationContext) }
-            }
+            } else { unreachableSince = 0L; gatewayDownLong = false }
             if (status.needRelogin) {
                 if (!toldRelogin) { toldRelogin = true; notify("Session expired — scan QR again") }
             } else toldRelogin = false
@@ -2630,8 +2642,11 @@ fun GatewayApp(updateBlur: Boolean = false) {
                 // session is a zombie (restoreTimedOut) and the link screen
                 // below is the honest outcome after all.
                 !status.registered && localPaired && !status.needRelogin && !restoreTimedOut -> Box(Modifier.padding(pad)) { RestoringScreen(
-                    onReset = { scope.launch { GatewayClient.logout(); SessionMigration.purgePublic(ctx); notify("reset") } }) }
-                !status.registered -> Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode, showRestore = !localPaired, zombieGateway = restoreTimedOut && !status.reachable,
+                    onReset = { scope.launch { GatewayClient.logout(); SessionMigration.purgePublic(ctx); notify("reset") } },
+                    gatewayDown = gatewayDownLong,
+                    lastError = status.lastError,
+                    onRestart = { SessionBackup.restartApp(ctx) }) }
+                !status.registered -> Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode, showRestore = !localPaired, zombieGateway = restoreTimedOut && !status.reachable, gatewayReachable = status.reachable,
                     onPair = { n -> scope.launch { try { notify("code: " + GatewayClient.pair(n)) } catch (e: Exception) { notify("pair error: ${e.message}") } } },
                     onReset = { scope.launch { GatewayClient.logout(); SessionMigration.purgePublic(ctx); notify("reset") } }) }
                 screen == "settings" -> Box(Modifier.padding(pad)) { SettingsScreen(status, settings, page = settingsPage, onPage = { settingsPage = it }, wallpaperVersion = wallpaperVersion,
@@ -7480,7 +7495,7 @@ private fun localPairedSession(ctx: Context): Boolean = runCatching {
  * raising needRelogin.
  */
 @Composable
-private fun RestoringScreen(onReset: () -> Unit) {
+private fun RestoringScreen(onReset: () -> Unit, gatewayDown: Boolean = false, lastError: String? = null, onRestart: () -> Unit = {}) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Spacer(Modifier.height(44.dp))
         Text(APP_NAME, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -7490,6 +7505,22 @@ private fun RestoringScreen(onReset: () -> Unit) {
         CircularProgressIndicator(color = AYX_GREEN, strokeWidth = 3.dp)
         Spacer(Modifier.height(20.dp))
         Text("Your WhatsApp login is saved on this device — no QR needed.\nConnecting to WhatsApp…", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+        // v198: "Connecting…" while the gateway itself is down is a lie
+        // by omission — after the 20 s grace, say so and offer the one
+        // recovery that works (fresh process). The 90 s timeout + QR
+        // fallback still fire on their own schedule.
+        if (gatewayDown) {
+            Spacer(Modifier.height(16.dp))
+            Text("The gateway isn't responding.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(12.dp))
+            Button(onClick = onRestart) { Text("Restart app") }
+        }
+        // v198: surface the gateway's own last error (e.g. 440/401) so
+        // "stuck at Connecting" stops being a black box.
+        if (lastError != null) {
+            Spacer(Modifier.height(16.dp))
+            Text("Last connection error: $lastError", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+        }
         Spacer(Modifier.height(30.dp))
         TextButton(onClick = onReset) { Text("Taking too long? Log out and link again") }
         Spacer(Modifier.height(30.dp))
@@ -7497,7 +7528,7 @@ private fun RestoringScreen(onReset: () -> Unit) {
 }
 
 @Composable
-private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) -> Unit, onReset: () -> Unit, showRestore: Boolean = false, zombieGateway: Boolean = false) {
+private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) -> Unit, onReset: () -> Unit, showRestore: Boolean = false, zombieGateway: Boolean = false, gatewayReachable: Boolean = true) {
     // v191c: tap-gated session restore. The button below is the ONLY entry
     // point — nothing here auto-shows, auto-signs-in, or auto-restores.
     // It renders only when no local session exists (caller passes
@@ -7613,8 +7644,8 @@ private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) 
             text = {
                 Text(
                     "This will replace this phone's WhatsApp login with the session backup from $whenText " +
-                        "(AyX v${peek.appVersion}) — tapping Restore writes it and restarts the app at once, " +
-                        "then it connects with no QR scan. " +
+                        "(AyX v${peek.appVersion}) — tapping Restore writes it and connects with no QR scan " +
+                        "(the app restarts once only if the gateway needs it). " +
                         "Restoring this login here may disconnect WhatsApp on the old phone: " +
                         "the same login cannot run in two places at once."
                 )
@@ -7638,14 +7669,24 @@ private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) 
                             // No success dialog: the poll recomputes localPaired
                             // on the next cycle and would dispose LinkScreen
                             // (and any dialog in it) before the user taps.
-                            // The Restore tap IS the restart consent, so the
-                            // process restarts immediately on success.
-                            result.onSuccess { SessionBackup.restartApp(ctx) }
+                            // v198: reload-first direct login. The running
+                            // gateway never re-reads the auth dir, so after
+                            // the write we ask it to reload auth + restart
+                            // its socket in-node (POST /reload-auth). If it
+                            // answers ok, NO process restart happens — the
+                            // poll drives Restoring → chats directly. Only
+                            // gateways without that endpoint (today: all of
+                            // them, 404) fall back to restartApp. The
+                            // Restore tap IS the consent for either path.
+                            result.onSuccess {
+                                val reloaded = if (gatewayReachable) runCatching { withContext(Dispatchers.IO) { GatewayClient.reloadAuth() } }.getOrDefault(false) else false
+                                if (!reloaded) SessionBackup.restartApp(ctx)
+                            }
                                 .onFailure { restoreNote = it.message ?: "Restore failed" }
                             restoreBusy = false
                         }
                     }
-                }) { Text("Restore & restart") }
+                }) { Text("Restore & connect") }
             },
             dismissButton = { TextButton(onClick = { restorePeek = null }) { Text("Cancel") } },
         )

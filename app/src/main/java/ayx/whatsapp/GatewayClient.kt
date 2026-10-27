@@ -578,6 +578,21 @@ object GatewayClient {
         try { post("/logout", JSONObject()).optBoolean("ok", false) } catch (e: Exception) { false }
     }
 
+    /**
+     * v198: ask the RUNNING gateway to re-read the auth dir from disk
+     * and restart its WA socket in-node (POST /reload-auth). Returns
+     * true ONLY when the gateway answers ok:true. The current gateway
+     * has no such endpoint (its catch-all answers 404 {ok:false}), so
+     * this is false there and the caller falls back to restartApp —
+     * no behavior change until the gateway gains the endpoint. This
+     * can never throw (gateway down = false) and is NEVER a second
+     * nativeStart: the socket restart happens inside the already
+     * running node process, so the v195 start-once gate is untouched.
+     */
+    suspend fun reloadAuth(): Boolean = withContext(Dispatchers.IO) {
+        try { post("/reload-auth", JSONObject()).optBoolean("ok", false) } catch (e: Exception) { false }
+    }
+
     suspend fun getSettings(): Settings = withContext(Dispatchers.IO) {
         parseSettings(get("/settings"))
     }
