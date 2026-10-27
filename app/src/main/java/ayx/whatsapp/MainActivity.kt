@@ -343,8 +343,14 @@ private const val PRIVACY_TEXT = """WA Gateway runs entirely on your device. It 
 By continuing you agree to use this app responsibly and accept these terms."""
 
 class MainActivity : ComponentActivity() {
-    private val notifPermission =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    // v199: notification permission REMOVED at the user's order — the
+    // app never asks for it anymore (no manifest entry, no request
+    // here). Note: this does NOT remove the "Background service"
+    // notification — that is NodeService's foreground-service notice,
+    // which Android shows regardless of this permission. Removing it
+    // needs demoting the service out of foreground (a liveness
+    // trade-off, not done here). New-message + reminder notifications
+    // stop with the permission; message delivery itself is unaffected.
 
     // v147: a crash report saved by the previous run (CrashReporter) and a
     // pending update (AyxUpdate) — both surface as dialogs at the root of
@@ -663,10 +669,6 @@ class MainActivity : ComponentActivity() {
         // Debuggable builds always pass, so AndroidIDE test builds
         // can never lock.
         if (!AyxIntegrity.enforceAtStartup(this)) return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
-            != PackageManager.PERMISSION_GRANTED
-        ) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
 
         handleDeepLink(intent)
         // Stamp the foreground-heartbeat throttle so this launch's register
@@ -5640,6 +5642,7 @@ private fun DriveBackupSection() {
     var busy by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf<String?>(null) }
     var sessionNote by remember { mutableStateOf<String?>(null) }
+    var chatsNote by remember { mutableStateOf<String?>(null) }
     var restorePeek by remember { mutableStateOf<DriveBackup.Peek?>(null) }
     var accountOpen by remember { mutableStateOf(false) }
 
@@ -5756,6 +5759,24 @@ private fun DriveBackupSection() {
             }
         }
 
+        // v199: CHATS backup — same tap-gated philosophy as the session
+        // backup above: chats + photos + videos, encrypted, own file
+        // pair, NEVER automatic. The login/session is not part of it.
+        ActionRow(
+            Icons.Filled.CloudUpload, CAT_AI, "Backup chats",
+            "Encrypted copy of chats + photos + videos — restore them on a new phone from Drive"
+        ) {
+            if (!busy && !needsSignIn()) {
+                busy = true
+                scope.launch {
+                    val result = runCatching { withContext(Dispatchers.IO) { ChatsBackup.backupChats(ctx) } }
+                    chatsNote = result.getOrElse { it.message ?: "Chats backup failed" }
+                    busy = false
+                    refresh()
+                }
+            }
+        }
+
         val statusLine = when {
             busy -> "Working…"
             note != null -> note
@@ -5773,6 +5794,12 @@ private fun DriveBackupSection() {
         )
         Text(
             sessionNote ?: SessionBackup.statusLine(ctx),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 2.dp, bottom = 8.dp),
+        )
+        Text(
+            chatsNote ?: ChatsBackup.statusLine(ctx),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 2.dp, bottom = 8.dp),
@@ -7540,6 +7567,11 @@ private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) 
     var restoreBusy by remember { mutableStateOf(false) }
     var restoreNote by remember { mutableStateOf<String?>(null) }
     var restorePeek by remember { mutableStateOf<SessionBackup.Peek?>(null) }
+    // v199: chats restore — separate state/launcher from the session
+    // restore above; same placement rule (only when unpaired).
+    var chatsRestoreBusy by remember { mutableStateOf(false) }
+    var chatsRestoreNote by remember { mutableStateOf<String?>(null) }
+    var chatsRestorePeek by remember { mutableStateOf<ChatsBackup.Peek?>(null) }
 
     fun doPeek() {
         if (restoreBusy) return
@@ -7571,6 +7603,38 @@ private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) 
         }
         runCatching { restoreSignInLauncher.launch(GoogleDriveAuth.client(ctx).signInIntent) }
             .onFailure { restoreNote = GoogleDriveAuth.MSG_SETUP_PENDING }
+    }
+
+    fun doChatsPeek() {
+        if (chatsRestoreBusy) return
+        chatsRestoreBusy = true
+        scope.launch {
+            val peek = runCatching { withContext(Dispatchers.IO) { ChatsBackup.peekChats(ctx) } }
+            peek.onSuccess { chatsRestorePeek = it }
+                .onFailure { chatsRestoreNote = it.message ?: "Restore failed" }
+            chatsRestoreBusy = false
+        }
+    }
+
+    val chatsRestoreSignInLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        runCatching { GoogleDriveAuth.accountFromResult(result.data) }
+            .onSuccess { email ->
+                DriveBackup.setAccount(ctx, email)
+                doChatsPeek()
+            }
+            .onFailure { chatsRestoreNote = it.message ?: "Sign-in failed — please try again." }
+    }
+
+    fun launchChatsRestoreSignIn() {
+        val problem = GoogleDriveAuth.playServicesProblem(ctx)
+        if (problem != null) {
+            chatsRestoreNote = problem
+            return
+        }
+        runCatching { chatsRestoreSignInLauncher.launch(GoogleDriveAuth.client(ctx).signInIntent) }
+            .onFailure { chatsRestoreNote = GoogleDriveAuth.MSG_SETUP_PENDING }
     }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Spacer(Modifier.height(44.dp))
@@ -7624,6 +7688,18 @@ private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) 
             Text(
                 if (restoreBusy) "Working…"
                 else restoreNote ?: "Only if you backed up this login to Drive on another phone. Nothing happens until you tap.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = {
+                if (!chatsRestoreBusy) {
+                    if (GoogleDriveAuth.signedInAccount(ctx) == null) launchChatsRestoreSignIn() else doChatsPeek()
+                }
+            }) { Text("Restore chats from Drive instead") }
+            Text(
+                if (chatsRestoreBusy) "Working…"
+                else chatsRestoreNote ?: "Only if you backed up chats to Drive on another phone. Your login is not touched by this restore. Nothing happens until you tap.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -7689,6 +7765,47 @@ private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) 
                 }) { Text("Restore & connect") }
             },
             dismissButton = { TextButton(onClick = { restorePeek = null }) { Text("Cancel") } },
+        )
+    }
+
+    if (chatsRestorePeek != null) {
+        val peek = chatsRestorePeek!!
+        val whenText = if (peek.createdAt > 0L)
+            SimpleDateFormat("d MMM yyyy, h:mm a", Locale.US).format(Date(peek.createdAt))
+        else "an unknown date"
+        AlertDialog(
+            onDismissRequest = { chatsRestorePeek = null },
+            containerColor = dialogBg(),
+            shape = uiShapeFor(24),
+            title = { Text("Restore chats?") },
+            text = {
+                Text(
+                    "This will replace this phone's chats with the chats backup from $whenText " +
+                        "(AyX v${peek.appVersion}) — ${peek.chatCount} chats, ${peek.messageCount} messages, " +
+                        "${peek.mediaCount} photos/videos (${peek.totalBytes / 1048576} MB). " +
+                        "Your WhatsApp login is NOT touched by this restore. " +
+                        "The app restarts once afterwards so the gateway re-reads the restored chats."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    chatsRestorePeek = null
+                    if (!chatsRestoreBusy) {
+                        chatsRestoreBusy = true
+                        // Same v196 discipline as the session restore:
+                        // the activity scope survives LinkScreen being
+                        // disposed; on success the process dies anyway.
+                        val actScope = (ctx as? ComponentActivity)?.lifecycleScope
+                        (actScope ?: scope).launch {
+                            val result = runCatching { withContext(Dispatchers.IO) { ChatsBackup.restoreChats(ctx) } }
+                            result.onSuccess { SessionBackup.restartApp(ctx) }
+                                .onFailure { chatsRestoreNote = it.message ?: "Restore failed" }
+                            chatsRestoreBusy = false
+                        }
+                    }
+                }) { Text("Restore chats") }
+            },
+            dismissButton = { TextButton(onClick = { chatsRestorePeek = null }) { Text("Cancel") } },
         )
     }
 }
