@@ -348,7 +348,7 @@ object ChatsBackup {
                 swapIntoPlace(ctx, staged)
             } catch (e: Exception) {
                 rollbackSwap(ctx)
-                runCatching { staged.deleteRecursively() }
+                runCatching { File(ctx.cacheDir, "ayx-chats-restore").deleteRecursively() }
                 // NOTE: .bak files are deliberately NOT deleted here —
                 // they are the only copy of the old chats if the
                 // rollback itself failed midway. The next restore
@@ -356,7 +356,7 @@ object ChatsBackup {
                 throw ChatsError("The chats could not be written — the old chats were kept. (${e.message ?: "write failed"})")
             }
             // Success only: drop staging + the superseded .bak copies.
-            runCatching { staged.deleteRecursively() }
+            runCatching { File(ctx.cacheDir, "ayx-chats-restore").deleteRecursively() }
             runCatching { File(gatewayDir(ctx), "chats.json.bak").delete() }
             runCatching { File(gatewayDir(ctx), "messages.json.bak").delete() }
             runCatching { File(ctx.filesDir, "media.bak").deleteRecursively() }
