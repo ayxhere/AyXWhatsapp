@@ -257,6 +257,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontStyle
@@ -804,8 +805,19 @@ private fun CrashReportDialog(report: String, onDone: () -> Unit) {
                     putExtra(Intent.EXTRA_SUBJECT, CrashReporter.subject(report))
                     putExtra(Intent.EXTRA_TEXT, report)
                 }
-                runCatching { ctx.startActivity(intent) }
-                onDone()
+                // v196: the old code fired a bare SENDTO and swallowed the
+                // ActivityNotFoundException, so with no resolving mail app the
+                // tap silently did nothing AND still deleted the saved report.
+                // Now: check resolution first, offer a chooser, and keep the
+                // report (no onDone()) when nothing can send, so the dialog
+                // offers again on the next launch instead of losing the report.
+                val canSend = runCatching { intent.resolveActivity(ctx.packageManager) != null }.getOrDefault(false)
+                if (!canSend) {
+                    Toast.makeText(ctx, "No mail app found — open a mail app to send the report", Toast.LENGTH_LONG).show()
+                } else {
+                    runCatching { ctx.startActivity(Intent.createChooser(intent, "Send crash report")) }
+                    onDone()
+                }
             }) { Text("Send crash report") }
         },
         dismissButton = { TextButton(onClick = onDone) { Text("Not now") } },
@@ -1787,7 +1799,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
                 // v148: no session restore from public storage — the login
                 // lives only in the private auth dir (see SessionMigration,
                 // which runs once inside NodeRuntime before node boots).
-                if (status.needRelogin || !localPaired) {
+                if (status.needRelogin || !localPaired || restoreTimedOut) {
                     val b = GatewayClient.qrBytes()
                     if (b != null) {
                         val h = b.contentHashCode()
@@ -2613,7 +2625,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
                 // below is the honest outcome after all.
                 !status.registered && localPaired && !status.needRelogin && !restoreTimedOut -> Box(Modifier.padding(pad)) { RestoringScreen(
                     onReset = { scope.launch { GatewayClient.logout(); SessionMigration.purgePublic(ctx); notify("reset") } }) }
-                !status.registered -> Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode, showRestore = !localPaired,
+                !status.registered -> Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode, showRestore = !localPaired, zombieGateway = restoreTimedOut && !status.reachable,
                     onPair = { n -> scope.launch { try { notify("code: " + GatewayClient.pair(n)) } catch (e: Exception) { notify("pair error: ${e.message}") } } },
                     onReset = { scope.launch { GatewayClient.logout(); SessionMigration.purgePublic(ctx); notify("reset") } }) }
                 screen == "settings" -> Box(Modifier.padding(pad)) { SettingsScreen(status, settings, page = settingsPage, onPage = { settingsPage = it }, wallpaperVersion = wallpaperVersion,
@@ -7479,7 +7491,7 @@ private fun RestoringScreen(onReset: () -> Unit) {
 }
 
 @Composable
-private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) -> Unit, onReset: () -> Unit, showRestore: Boolean = false) {
+private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) -> Unit, onReset: () -> Unit, showRestore: Boolean = false, zombieGateway: Boolean = false) {
     // v191c: tap-gated session restore. The button below is the ONLY entry
     // point — nothing here auto-shows, auto-signs-in, or auto-restores.
     // It renders only when no local session exists (caller passes
@@ -7538,8 +7550,19 @@ private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) 
                 Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(uiShapeFor(18)).background(MaterialTheme.colorScheme.surface), contentAlignment = Alignment.Center) {
                     if (qr != null) Image(qr, "QR", Modifier.fillMaxSize().padding(16.dp), contentScale = ContentScale.Fit)
                     else Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator(color = AYX_GREEN, strokeWidth = 3.dp)
-                        Spacer(Modifier.height(12.dp)); Text("Generating QR…", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                        if (zombieGateway) {
+                            // v196: the 90 s restore timeout fired but the gateway
+                            // is still down, so no QR can ever load — spinning on
+                            // "Generating QR…" here is a dead end. Offer the one
+                            // recovery that works: a fresh process, where the
+                            // v195 node gate is fresh and node can start again.
+                            Text("The gateway is not responding, so no QR can load.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                            Spacer(Modifier.height(12.dp))
+                            Button(onClick = { SessionBackup.restartApp(ctx) }) { Text("Restart app") }
+                        } else {
+                            CircularProgressIndicator(color = AYX_GREEN, strokeWidth = 3.dp)
+                            Spacer(Modifier.height(12.dp)); Text("Generating QR…", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                 }
             }
@@ -7595,7 +7618,16 @@ private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) 
                     restorePeek = null
                     if (!restoreBusy) {
                         restoreBusy = true
-                        scope.launch {
+                        // v196: restore+restart must NOT run in LinkScreen's
+                        // rememberCoroutineScope. The poll recomputes localPaired
+                        // the moment the restore writes creds, which disposes
+                        // LinkScreen and cancels its scope — the restart then
+                        // never runs, and the old process (dead node, v195 gate
+                        // blocking any in-process restart) stays stuck on
+                        // Restoring forever. The activity scope survives the
+                        // composable leaving; on success the process dies anyway.
+                        val actScope = (ctx as? ComponentActivity)?.lifecycleScope
+                        (actScope ?: scope).launch {
                             val result = runCatching { withContext(Dispatchers.IO) { SessionBackup.restoreSession(ctx) } }
                             // No success dialog: the poll recomputes localPaired
                             // on the next cycle and would dispose LinkScreen
