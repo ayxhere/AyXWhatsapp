@@ -567,7 +567,15 @@ object GatewayClient {
     }
 
     suspend fun logout(): Boolean = withContext(Dispatchers.IO) {
-        post("/logout", JSONObject()).optBoolean("ok", false)
+        // v197: logout() used to throw (post() connect-timeout) when the
+        // gateway was down — exactly the Restoring-screen situation — and
+        // all three callers launch it bare (Restoring/Link onReset, Settings
+        // onLogout), so the SocketTimeoutException escaped the coroutine
+        // uncaught and the crash reporter caught it (02:46 + 11:12
+        // tombstones: POST -> getOutputStream, 3000 ms timeout). Logout
+        // must never throw: false on any failure, callers already ignore
+        // the result and the gateway-side wipe simply does not happen.
+        try { post("/logout", JSONObject()).optBoolean("ok", false) } catch (e: Exception) { false }
     }
 
     suspend fun getSettings(): Settings = withContext(Dispatchers.IO) {

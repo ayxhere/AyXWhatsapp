@@ -801,16 +801,22 @@ private fun CrashReportDialog(report: String, onDone: () -> Unit) {
         },
         confirmButton = {
             TextButton(onClick = {
-                val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:raju@imayx.in")).apply {
+                // v197: ACTION_SEND + message/rfc822 so the chooser lists
+                // EVERY installed mail app (Gmail, Proton Mail, Hotmail,
+                // Outlook...). The old ACTION_SENDTO mailto: form only
+                // matches mailto filters AND, with no <queries> in the
+                // manifest (Android 11+ package visibility), resolveActivity
+                // returned null even with mail apps installed — the exact
+                // v196 "No mail app found" toast on a device that HAS mail
+                // apps. Same recipient, subject, and full report body.
+                // Preservation (v196) kept: nothing resolves -> toast and
+                // NO onDone(), so the report stays saved for next launch.
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                    type = "message/rfc822"
+                    putExtra(Intent.EXTRA_EMAIL, arrayOf("raju@imayx.in"))
                     putExtra(Intent.EXTRA_SUBJECT, CrashReporter.subject(report))
                     putExtra(Intent.EXTRA_TEXT, report)
                 }
-                // v196: the old code fired a bare SENDTO and swallowed the
-                // ActivityNotFoundException, so with no resolving mail app the
-                // tap silently did nothing AND still deleted the saved report.
-                // Now: check resolution first, offer a chooser, and keep the
-                // report (no onDone()) when nothing can send, so the dialog
-                // offers again on the next launch instead of losing the report.
                 val canSend = runCatching { intent.resolveActivity(ctx.packageManager) != null }.getOrDefault(false)
                 if (!canSend) {
                     Toast.makeText(ctx, "No mail app found — open a mail app to send the report", Toast.LENGTH_LONG).show()
@@ -3039,7 +3045,7 @@ private fun ChatList(messages: List<GatewayClient.Msg>, chats: List<GatewayClien
         if (groups.isEmpty() && hiddenCount == 0) {
             item {
                 Box(Modifier.fillMaxWidth().padding(top = 48.dp), contentAlignment = Alignment.Center) {
-                    Text("No chats yet.\\nIncoming messages will appear here.", style = MaterialTheme.typography.bodyMedium)
+                    Text("No chats yet.\nIncoming messages will appear here.", style = MaterialTheme.typography.bodyMedium)
                 }
             }
         } else {

@@ -17,6 +17,23 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
+    <!-- v197: Android 11+ package visibility — without <queries>, intent
+         resolution is blind and resolveActivity() returns null even with
+         mail apps installed (the v196 crash-dialog "No mail app found"
+         toast on a device that HAS Gmail/Proton/Hotmail). These entries
+         let the crash-report mail chooser see every mail app. Not a
+         permission; no new data access. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.SENDTO" />
+            <data android:scheme="mailto" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="message/rfc822" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
