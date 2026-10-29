@@ -5603,8 +5603,7 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
         }
     }
 
-    // v217: Template image (FB cover size)
-    TemplateImageSetting()
+    // v217: Template image setting deferred (compile issue) — TLS + DP fixes only
 
     // Exclude list — chats where NO auto-reply / AI reply is sent ("reply nothing to this person")
     SettingsGroup("Don't reply to these chats") {
@@ -11924,66 +11923,5 @@ object AyxServiceConfigLoader {
             AyxServiceConfig().also { cached = it }
         }
     }
-
-// v217: Template Image setting — Facebook cover size (820x312), URL + preview.
-@Composable
-private fun TemplateImageSetting() {
-    val ctx = LocalContext.current
-    val prefs = remember { ctx.getSharedPreferences("ayx_template", Context.MODE_PRIVATE) }
-    var imageUrl by remember { mutableStateOf(prefs.getString("template_image_url", "") ?: "") }
-    var showEdit by remember { mutableStateOf(false) }
-    var editUrl by remember { mutableStateOf("") }
-
-    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Template Image", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            TextButton(onClick = { editUrl = imageUrl; showEdit = true }) {
-                Text(if (imageUrl.isBlank()) "Add" else "Edit")
-            }
-        }
-        Text(
-            "Facebook cover size (820 x 312) - URL from settings",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        if (imageUrl.isNotBlank()) {
-            Text(
-                imageUrl.take(50),
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 1
-            )
-        }
-    }
-
-    if (showEdit) {
-        AlertDialog(
-            onDismissRequest = { showEdit = false },
-            title = { Text("Template Image URL") },
-            text = {
-                OutlinedTextField(
-                    value = editUrl,
-                    onValueChange = { editUrl = it },
-                    label = { Text("Image URL") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    imageUrl = editUrl.trim()
-                    prefs.edit().putString("template_image_url", imageUrl).apply()
-                    showEdit = false
-                }) { Text("Save") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showEdit = false }) { Text("Cancel") }
-            }
-        )
-    }
-}
 
 }
