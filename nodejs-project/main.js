@@ -2566,11 +2566,19 @@ app.get('/dp', async (req, res) => {
   const jid = String(req.query.jid || '')
   if (!jid || !sock) return res.status(404).end()
   try {
-    if (!dpCache.has(jid)) {
-      const url = await sock.profilePictureUrl(jid, 'image').catch(() => null)
-      dpCache.set(jid, url || null)
+    // v220: Don't permanently cache nulls — if profilePictureUrl fails (rate limit),
+    // retry next time instead of returning 404 forever. Only cache successful URLs.
+    // Cache entries expire after 1 hour to pick up DP changes.
+    const cached = dpCache.get(jid)
+    const now = Date.now()
+    let url = null
+    if (cached && cached.url && (now - cached.ts) < 3600000) {
+      url = cached.url
+    } else {
+      url = await sock.profilePictureUrl(jid, 'image').catch(() => null)
+      if (url) dpCache.set(jid, { url, ts: now })
+      // v220: if url is null, don't cache — next request will retry
     }
-    const url = dpCache.get(jid)
     if (!url) return res.status(404).end()
     const r = await fetch(url)
     if (!r.ok) return res.status(404).end()

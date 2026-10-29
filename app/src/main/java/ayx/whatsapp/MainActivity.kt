@@ -312,8 +312,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -2784,8 +2782,6 @@ private fun ForwardPicker(messages: List<GatewayClient.Msg>, dpCache: MutableMap
     }
 }
 
-private val dpSemaphore = Semaphore(3)
-
 // resolve a chat's display title from its message log
 private fun chatTitleOf(messages: List<GatewayClient.Msg>, jid: String): String {
     val msgs = messages.filter { it.chat == jid }
@@ -2807,10 +2803,10 @@ internal fun Avatar(jid: String, name: String, cache: MutableMap<String, ImageBi
         // v217: Semaphore limits concurrent DP fetches to 3 — prevents WhatsApp rate-limiting
         // when many DPs are requested at once (e.g. scrolling lists).
         if (cache[normJid] == null) {
-            val b = dpSemaphore.withPermit {
-                GatewayClient.dpBytes(normJid)
-                    ?: jid.takeIf { it != normJid }?.let { GatewayClient.dpBytes(it) }
-            }
+            // v220: Small stagger to avoid hammering WhatsApp (no semaphore — was blocking scroll)
+            delay((0..500).random().toLong())
+            val b = GatewayClient.dpBytes(normJid)
+                ?: jid.takeIf { it != normJid }?.let { GatewayClient.dpBytes(it) }
             // v180: the decode used to run on Main (LaunchedEffect resumes
             // on Main after the IO await), so a fast fling queued a
             // full-size decode per newly visible row on the UI thread and
@@ -5548,55 +5544,113 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
             Toast.makeText(langCtx, "AI will reply in $label", Toast.LENGTH_SHORT).show()
         }
         if (showLangWelcome && !showMoreLangs) {
-            // WhatsApp Business template style: dark card, body text, button rows with dividers.
-            StyledSurface(shape = uiShapeFor(16), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+            // v220: Heyo/WhatsApp Business template style — like official business API messages.
+            // Light card, header + body + footer, divider-separated buttons.
+            Card(
+                shape = uiShapeFor(12),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFF0F2F5)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+            ) {
                 Column(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(14.dp)) {
-                        Text("Welcome to AI Reply", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    // Body
+                    Column(Modifier.padding(12.dp)) {
+                        Text(
+                            "Welcome to AI Reply",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF111B21)
+                        )
                         Spacer(Modifier.height(4.dp))
-                        Text("Select your language for AI replies:",
+                        Text(
+                            "Please select your preferred language for AI replies. You can change this anytime in settings.",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            color = Color(0xFF111B21)
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "AyX Business",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF667781)
+                        )
                     }
-                    // Template buttons — like "Complete Now" in bank messages.
+                    // Buttons — WhatsApp Business style (blue, centered, dividers)
                     listOf("English", "Bangla", "Hindi").forEachIndexed { i, label ->
-                        if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
-                        Row(Modifier.fillMaxWidth().clickable { pickLang(label, label) }.padding(vertical = 12.dp),
-                            horizontalArrangement = Arrangement.Center) {
-                            Text(label, color = AYX_GREEN, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                        if (i > 0) HorizontalDivider(color = Color(0xFFD1D7DB), thickness = 0.5.dp)
+                        else HorizontalDivider(color = Color(0xFFD1D7DB), thickness = 0.5.dp)
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .clickable { pickLang(label, label) }
+                                .padding(vertical = 10.dp),
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Text(
+                                label,
+                                color = Color(0xFF00A884),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Normal
+                            )
                         }
                     }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
-                    Row(Modifier.fillMaxWidth().clickable { showMoreLangs = true }.padding(vertical = 12.dp),
-                        horizontalArrangement = Arrangement.Center) {
-                        Text("More languages", color = MaterialTheme.colorScheme.primary,
-                            style = MaterialTheme.typography.bodyMedium)
+                    HorizontalDivider(color = Color(0xFFD1D7DB), thickness = 0.5.dp)
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .clickable { showMoreLangs = true }
+                            .padding(vertical = 10.dp),
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            "More languages",
+                            color = Color(0xFF00A884),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
                     }
                 }
             }
         }
         if (showMoreLangs) {
-            // More languages — template style list.
-            StyledSurface(shape = uiShapeFor(16), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+            // v220: More languages — Heyo business template style.
+            Card(
+                shape = uiShapeFor(12),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFF0F2F5)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+            ) {
                 Column(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(14.dp)) {
-                        Text("Select Language", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Column(Modifier.padding(12.dp)) {
+                        Text(
+                            "Select Language",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF111B21)
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            "AyX Business",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF667781)
+                        )
                     }
                     listOf("Spanish", "French", "German", "Arabic", "Portuguese", "Russian",
-                        "Japanese", "Korean", "Chinese", "Turkish", "Urdu", "Tamil", "Telugu").forEachIndexed { i, lang ->
-                        if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
-                        Row(Modifier.fillMaxWidth().clickable { pickLang(lang, lang) }.padding(vertical = 12.dp),
-                            horizontalArrangement = Arrangement.Center) {
-                            Text(lang, color = AYX_GREEN, style = MaterialTheme.typography.bodyLarge)
+                        "Japanese", "Korean", "Chinese", "Turkish", "Urdu", "Tamil", "Telugu").forEach { lang ->
+                        HorizontalDivider(color = Color(0xFFD1D7DB), thickness = 0.5.dp)
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .clickable { pickLang(lang, lang) }
+                                .padding(vertical = 10.dp),
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Text(lang, color = Color(0xFF00A884), style = MaterialTheme.typography.bodyMedium)
                         }
                     }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
-                    Row(Modifier.fillMaxWidth().clickable { showMoreLangs = false }.padding(vertical = 12.dp),
-                        horizontalArrangement = Arrangement.Center) {
-                        Text("Back", color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodyMedium)
+                    HorizontalDivider(color = Color(0xFFD1D7DB), thickness = 0.5.dp)
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .clickable { showMoreLangs = false }
+                            .padding(vertical = 10.dp),
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Text("Back", color = Color(0xFF667781), style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }
