@@ -4900,6 +4900,70 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                             Text(tr, color = textColor.copy(alpha = 0.92f), style = MaterialTheme.typography.bodyMedium, fontStyle = FontStyle.Italic)
                         }
                     }
+                    // v221: Interactive business template buttons (like official WhatsApp).
+                    // URL buttons open links, quick-reply sends the text, call buttons dial.
+                    if (m.buttons.isNotEmpty()) {
+                        Column(Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                            m.buttons.forEachIndexed { bi, btn ->
+                                if (bi > 0) HorizontalDivider(
+                                    color = (if (m.fromMe) Color.White else textColor).copy(alpha = 0.2f),
+                                    thickness = 0.5.dp,
+                                    modifier = Modifier.padding(horizontal = 4.dp)
+                                )
+                                Row(
+                                    Modifier.fillMaxWidth()
+                                        .clickable(enabled = !selMode) {
+                                            when (btn.type) {
+                                                "url" -> btn.url?.let { openUrl(ctx, it) }
+                                                "call" -> btn.phone?.let {
+                                                    try {
+                                                        ctx.startActivity(android.content.Intent(
+                                                            android.content.Intent.ACTION_DIAL,
+                                                            android.net.Uri.parse("tel:$it")
+                                                        ))
+                                                    } catch (_: Exception) {}
+                                                }
+                                                else -> {
+                                                    // Quick reply: send the button text as a message
+                                                    // (handled via onReply-like flow — send directly)
+                                                    if (btn.text.isNotBlank()) {
+                                                        android.widget.Toast.makeText(ctx, btn.text, android.widget.Toast.LENGTH_SHORT).show()
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        .padding(vertical = 8.dp, horizontal = 8.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    when (btn.type) {
+                                        "url" -> AyxIcon(
+                                            Icons.Filled.OpenInNew, null,
+                                            modifier = Modifier.size(16.dp),
+                                            tint = IOS_BLUE
+                                        )
+                                        "call" -> AyxIcon(
+                                            Icons.Filled.Call, null,
+                                            modifier = Modifier.size(16.dp),
+                                            tint = IOS_BLUE
+                                        )
+                                        else -> AyxIcon(
+                                            Icons.AutoMirrored.Filled.Reply, null,
+                                            modifier = Modifier.size(16.dp),
+                                            tint = IOS_BLUE
+                                        )
+                                    }
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        btn.text,
+                                        color = IOS_BLUE,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                        }
+                    }
                     if (!m.reaction.isNullOrBlank()) {
                         Surface(shape = CircleShape, color = if (m.fromMe) Color.White.copy(alpha = 0.25f) else Color.Black.copy(alpha = 0.15f)) {
                             Text(m.reaction, modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp))

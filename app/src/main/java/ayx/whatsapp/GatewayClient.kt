@@ -64,13 +64,15 @@ object GatewayClient {
         val aiLyricsApis: List<LyricApi> = emptyList(),
     )
     data class Contact(val jid: String, val name: String, val number: String)
+    data class MsgButton(val type: String, val text: String, val url: String? = null, val phone: String? = null)
     data class Msg(val chat: String, val name: String, val fromMe: Boolean, val text: String, val ts: Long,
                    val mediaName: String? = null, val mediaType: String? = null, val thumb: String? = null, val deleted: Boolean = false, val id: String? = null, val reaction: String? = null, val sender: String? = null, val quotedText: String? = null, val quotedId: String? = null, val edited: Boolean = false, val status: Int = 0, val forwarded: Boolean = false,
                    val albumId: String? = null,
                    // Group chats only: the Baileys group subject (group name) from the
                    // gateway. NOTE: `name` on a group message is the SENDER's pushName,
                    // never the group name — use chatName for group titles.
-                   val chatName: String? = null)
+                   val chatName: String? = null,
+                   val buttons: List<MsgButton> = emptyList())
 
     suspend fun status(): Status = withContext(Dispatchers.IO) {
         try {
@@ -923,6 +925,17 @@ object GatewayClient {
                     forwarded = m.optBoolean("forwarded", false),
                     chatName = m.optString("chatName").ifEmpty { null },
                     albumId = m.optString("albumId").ifEmpty { null },
+                    buttons = m.optJSONArray("buttons")?.let { ba ->
+                        List(ba.length()) { bi ->
+                            val b = ba.getJSONObject(bi)
+                            MsgButton(
+                                type = b.optString("type"),
+                                text = b.optString("text"),
+                                url = b.optString("url").ifEmpty { null },
+                                phone = b.optString("phone").ifEmpty { null }
+                            )
+                        }
+                    } ?: emptyList(),
                 ))
             }
         }

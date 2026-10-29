@@ -644,6 +644,41 @@ function buttonLines(m) {
   return out
 }
 
+// v221: Structured button data for app rendering (interactive templates like official WhatsApp).
+// Returns [{type:'url'|'quick_reply'|'call', text, url?, phone?}]
+function extractButtons(m) {
+  const out = []
+  try {
+    const nf = m.interactiveMessage?.nativeFlowMessage?.buttons
+    if (Array.isArray(nf)) for (const b of nf) {
+      try {
+        const p = JSON.parse(b.buttonParamsJson || '{}')
+        if (p.display_text) {
+          if (p.url) out.push({ type: 'url', text: p.display_text, url: p.url })
+          else if (b.name === 'cta_call') out.push({ type: 'call', text: p.display_text, phone: p.phone_number || '' })
+          else out.push({ type: 'quick_reply', text: p.display_text })
+        } else if (b.name) {
+          out.push({ type: 'quick_reply', text: b.name })
+        }
+      } catch (_) {
+        if (b.name) out.push({ type: 'quick_reply', text: b.name })
+      }
+    }
+    const hb = m.templateMessage?.hydratedTemplate?.hydratedButtons || m.templateMessage?.hydratedFourRowTemplate?.hydratedButtons
+    if (Array.isArray(hb)) for (const b of hb) {
+      if (b.urlButton) out.push({ type: 'url', text: b.urlButton.displayText || 'Open', url: b.urlButton.url || '' })
+      else if (b.callButton) out.push({ type: 'call', text: b.callButton.displayText || b.callButton.phoneNumber || '', phone: b.callButton.phoneNumber || '' })
+      else if (b.quickReplyButton) out.push({ type: 'quick_reply', text: b.quickReplyButton.displayText || '' })
+    }
+    const bb = m.buttonsMessage?.buttons
+    if (Array.isArray(bb)) for (const b of bb) {
+      const t = b.buttonText?.displayText
+      if (t) out.push({ type: 'quick_reply', text: t })
+    }
+  } catch (_) {}
+  return out
+}
+
 function extractText(m) {
   if (!m) return ''
   let base = m.conversation
@@ -677,10 +712,10 @@ function extractText(m) {
     || m.templateMessage?.hydratedTemplate?.hydratedFooterText
     || m.templateMessage?.hydratedFourRowTemplate?.hydratedFooterText
     || m.buttonsMessage?.footerText || ''
-  const btns = buttonLines(m)
+  // v221: Button lines NOT appended — app renders structured buttons from extractButtons().
+  // (buttonLines kept for backward compat if needed, but not used in text)
   let full = base
   if (footer && footer.trim() && footer.trim() !== base) full += (full ? '\n' : '') + footer.trim()
-  if (btns.length) full += (full ? '\n' : '') + btns.join('\n')
   return full
 }
 
@@ -1874,7 +1909,7 @@ async function handleMessagesBatch({ messages, type }) {
         continue
       }
       const ts = msg.messageTimestamp ? Number(msg.messageTimestamp) * 1000 : Date.now()
-      const entry = { chat: chatJid, name: resolveName(msg, chatJid), sender, fromMe, text: extractText(msg.message), ts, id }
+      const entry = { chat: chatJid, name: resolveName(msg, chatJid), sender, fromMe, text: extractText(msg.message), buttons: extractButtons(msg.message), ts, id }
       // Group chats: attach the Baileys GROUP SUBJECT as chatName. entry.name
       // is the SENDER's pushName for group messages — the app must use
       // chatName (never name) for group titles, or rows show a person's name.
@@ -2112,7 +2147,7 @@ async function handleHistory({ messages, contacts: cts }) {
       }
       const fromMe = !!msg.key.fromMe
       const ts = msg.messageTimestamp ? Number(msg.messageTimestamp) * 1000 : Date.now()
-      const entry = { chat: from, name: resolveName(msg, from), fromMe, text: extractText(msg.message), ts, id: msg.key.id }
+      const entry = { chat: from, name: resolveName(msg, from), fromMe, text: extractText(msg.message), buttons: extractButtons(msg.message), ts, id: msg.key.id }
       if (fromMe) entry.status = (typeof msg.status === 'number' ? msg.status : 0)
       if (msg.key.id) msgStore.set(msg.key.id, entry)
       msgLog.push(entry)
