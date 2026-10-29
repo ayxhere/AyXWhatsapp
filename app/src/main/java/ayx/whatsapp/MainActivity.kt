@@ -1560,24 +1560,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
     // The Permission Denial crash happened because we launched the intent without
     // the CAMERA permission granted. Now we request it first, then launch.
     var pendingCameraFor by remember { mutableStateOf<String?>(null) } // "status" or "chat"
-    // System camera state for STATUS
-    var statusCameraFile by remember { mutableStateOf<File?>(null) }
-    var statusCameraUri by remember { mutableStateOf<Uri?>(null) }
-    val statusCameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
-        val f = statusCameraFile; val u = statusCameraUri
-        statusCameraFile = null; statusCameraUri = null
-        if (ok && u != null) pendingStatus = u to "image"
-        else f?.delete()
-    }
-    fun launchSystemCameraPhoto() {
-        try {
-            val dir = File(ctx.cacheDir, "shared").apply { mkdirs() }
-            val f = File(dir, "status_" + System.currentTimeMillis() + ".jpg")
-            val u = FileProvider.getUriForFile(ctx, ctx.packageName + ".fileprovider", f)
-            statusCameraFile = f; statusCameraUri = u
-            statusCameraLauncher.launch(u)
-        } catch (e: Exception) { notify("Camera failed: ${e.message}") }
-    }
+    // v212: Status camera REMOVED per user order — gallery only for status.
     // System camera for CHAT (photo; user switches to video inside the camera app)
     var chatCameraFile by remember { mutableStateOf<File?>(null) }
     var chatCameraUri by remember { mutableStateOf<Uri?>(null) }
@@ -1604,10 +1587,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
     }
     val cameraPermLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
-            pendingCameraFor?.let { target ->
-                if (target == "status") launchSystemCameraPhoto()
-                else launchSystemCameraChat()
-            }
+            pendingCameraFor?.let { launchSystemCameraChat() }
         } else {
             notify("Camera permission needed")
         }
@@ -1616,22 +1596,13 @@ fun GatewayApp(updateBlur: Boolean = false) {
     fun ensureCameraPermission(target: String) {
         pendingCameraFor = target
         if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            if (target == "status") launchSystemCameraPhoto()
-            else launchSystemCameraChat()
+            launchSystemCameraChat()
             pendingCameraFor = null
         } else {
             cameraPermLauncher.launch(Manifest.permission.CAMERA)
         }
     }
     // System camera for STATUS (photo; user switches to video inside the camera app)
-    var statusCameraFile by remember { mutableStateOf<File?>(null) }
-    var statusCameraUri by remember { mutableStateOf<Uri?>(null) }
-    val statusCameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
-        val f = statusCameraFile; val u = statusCameraUri
-        statusCameraFile = null; statusCameraUri = null
-        if (ok && u != null) pendingStatus = u to "image"
-        else f?.delete()
-    }
     fun openCamera() { ensureCameraPermission("chat") }
 
     var deviceContacts by remember { mutableStateOf<List<DeviceContact>>(emptyList()) }
@@ -2220,7 +2191,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
                     DropdownMenu(expanded = statusFabMenu, onDismissRequest = { statusFabMenu = false },
                         shape = uiShapeFor(16), containerColor = MaterialTheme.colorScheme.surface.copy(alpha = ayxMenuAlpha()), shadowElevation = 8.dp, tonalElevation = 0.dp) {
                         DropdownMenuItem(text = { Text("Photo / Video", style = MaterialTheme.typography.bodyLarge) }, leadingIcon = { AyxIcon(Icons.Filled.PhotoCamera, null) },
-                            onClick = { statusFabMenu = false; ensureContacts(); ensureCameraPermission("status") })
+                            onClick = { statusFabMenu = false; ensureContacts(); statusPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) })
                         DropdownMenuItem(text = { Text("Text status", style = MaterialTheme.typography.bodyLarge) }, leadingIcon = { AyxIcon(Icons.Filled.TextFields, null) },
                             onClick = { statusFabMenu = false; ensureContacts(); textStatusDlg = true })
                     }
