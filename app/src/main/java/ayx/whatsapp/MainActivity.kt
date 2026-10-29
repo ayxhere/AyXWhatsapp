@@ -4775,6 +4775,7 @@ private fun BubbleTimeTicks(m: GatewayClient.Msg, textColor: Color, modifier: Mo
 @Composable
 private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String, ImageBitmap?>, dpCache: MutableMap<String, ImageBitmap?>, onMedia: (GatewayClient.Msg) -> Unit, onShare: (GatewayClient.Msg) -> Unit, onDownload: (GatewayClient.Msg) -> Unit, onReply: (GatewayClient.Msg) -> Unit, onAvatarClick: (String) -> Unit, selMode: Boolean = false, selected: Boolean = false, onToggleSelect: (GatewayClient.Msg) -> Unit = {}, onTranslate: (GatewayClient.Msg) -> Unit = {}, onLongClick: (GatewayClient.Msg) -> Unit, highlighted: Boolean = false, onQuoteTap: (GatewayClient.Msg) -> Unit = {}) {
     val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
     val dark = isSystemInDarkTheme()
     val spec = bubbleSpec(m.fromMe, dark)
     val bubbleColor = spec.first
@@ -4927,10 +4928,15 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                                                     } catch (_: Exception) {}
                                                 }
                                                 else -> {
-                                                    // Quick reply: send the button text as a message
-                                                    // (handled via onReply-like flow — send directly)
+                                                    // v224: Quick reply — SEND the button text as a message (not just toast)
                                                     if (btn.text.isNotBlank()) {
-                                                        android.widget.Toast.makeText(ctx, btn.text, android.widget.Toast.LENGTH_SHORT).show()
+                                                        scope.launch {
+                                                            try {
+                                                                GatewayClient.send(m.chat, btn.text)
+                                                            } catch (_: Exception) {
+                                                                android.widget.Toast.makeText(ctx, "Send failed", android.widget.Toast.LENGTH_SHORT).show()
+                                                            }
+                                                        }
                                                     }
                                                 }
                                             }
