@@ -33,6 +33,19 @@ const STATUS_FILE = path.join(path.dirname(AUTH_DIR), 'statuses.json')
 const STATUS_DELETED_FILE = path.join(path.dirname(AUTH_DIR), 'status-deleted.json')
 const STATUS_VIEWERS_FILE = path.join(path.dirname(AUTH_DIR), 'status-viewers.json')
 const AIMEM_FILE = path.join(path.dirname(AUTH_DIR), 'aimemory.json')
+// v204: website pairing — custom linked-device name. Stored OUTSIDE AUTH_DIR
+// because POST /pair wipes AUTH_DIR on every fresh pairing.
+const DEVICE_NAME_FILE = path.join(path.dirname(AUTH_DIR), 'device_name')
+
+// v204: website pairing — reads the custom device name at socket-creation
+// time (no process restart needed). Sanitized; falls back to 'imayx'.
+function readDeviceName() {
+  try {
+    const raw = fs.readFileSync(DEVICE_NAME_FILE, 'utf8').trim().replace(/\s+/g, ' ')
+    if (/^[A-Za-z0-9 ._-]{1,24}$/.test(raw)) return raw
+  } catch (_) {}
+  return 'imayx'
+}
 
 const logger = pino({ level: 'warn' })
 
@@ -2134,7 +2147,7 @@ async function startSocket() {
     auth: state,
     logger,
     printQRInTerminal: false,
-    browser: Browsers.ubuntu('imayx'),
+    browser: Browsers.ubuntu(readDeviceName()),
     markOnlineOnConnect: settings.alwaysOnline && !settings.stayOffline,
     syncFullHistory: false,
     keepAliveIntervalMs: 25000,   // proper websocket keepalive so the socket doesn't idle-drop (stops reconnect flapping)
@@ -2267,6 +2280,14 @@ app.post('/pair', async (req, res) => {
     const number = String(req.body?.number || '').replace(/\D/g, '')
     if (isPaired()) return res.json({ registered: true })
     if (!number) return res.status(400).json({ error: 'number required' })
+    // v204: website pairing — custom device name. Sanitized with the same
+    // rule as readDeviceName(); written BEFORE the wipe/reconnect flow so
+    // startSocket() picks it up. Invalid/absent -> keep any previously set
+    // name (never delete here).
+    try {
+      const dn = String(req.body?.deviceName || '').trim().replace(/\s+/g, ' ')
+      if (/^[A-Za-z0-9 ._-]{1,24}$/.test(dn)) fs.writeFileSync(DEVICE_NAME_FILE, dn)
+    } catch (_) {}
     if (pairingCode && pairingNumber === number && sock) return res.json({ code: pairingCode })
     try { await sock?.ws?.close() } catch (_) {}
     try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }) } catch (_) {}

@@ -100,8 +100,13 @@ object GatewayClient {
         } catch (e: Exception) { null }
     }
 
-    suspend fun pair(number: String): String = withContext(Dispatchers.IO) {
-        val o = post("/pair", JSONObject().put("number", number))
+    // v204: website pairing — optional deviceName is forwarded to the gateway,
+    // which sanitizes it and uses it as the linked-device name (browser tuple)
+    // for the fresh pairing. Absent/blank -> gateway keeps its default.
+    suspend fun pair(number: String, deviceName: String? = null): String = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("number", number)
+        if (!deviceName.isNullOrBlank()) body.put("deviceName", deviceName)
+        val o = post("/pair", body)
         when {
             o.optBoolean("registered", false) -> "registered"
             o.has("code") -> o.getString("code")

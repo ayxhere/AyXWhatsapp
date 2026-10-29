@@ -84,6 +84,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withTimeout
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.offset
@@ -232,6 +233,7 @@ import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VolumeOff
@@ -404,6 +406,30 @@ class MainActivity : ComponentActivity() {
         conn.connect()
         if (!ayxPinOk(conn)) { conn.disconnect(); throw java.io.IOException("cert pin mismatch") }
         java.io.OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(body) }
+        val code = conn.responseCode
+        return if (code == 200 || code == 201) {
+            Triple(code, null, conn.inputStream.bufferedReader().use { it.readText() })
+        } else {
+            var errCode: String? = null
+            try {
+                val err = conn.errorStream?.bufferedReader()?.use { it.readText() }
+                if (!err.isNullOrBlank())
+                    errCode = org.json.JSONObject(err).optJSONObject("error")?.optString("code")?.ifBlank { null }
+            } catch (e: Exception) {}
+            Triple(code, errCode, null)
+        }
+    }
+
+    // v204: pinned GET twin of ayxInstallPost, for the website-pairing session
+    // poll. Same cert pin, same Bearer install-token, same return triple.
+    private fun ayxInstallGet(path: String, token: String?): Triple<Int, String?, String?> {
+        val conn = (java.net.URL("${AyxEndpoints.base()}$path").openConnection()
+            as javax.net.ssl.HttpsURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 8000; readTimeout = 10000
+            token?.let { setRequestProperty("Authorization", "Bearer $it") } }
+        conn.connect()
+        if (!ayxPinOk(conn)) { conn.disconnect(); throw java.io.IOException("cert pin mismatch") }
         val code = conn.responseCode
         return if (code == 200 || code == 201) {
             Triple(code, null, conn.inputStream.bufferedReader().use { it.readText() })
@@ -1406,6 +1432,10 @@ fun GatewayApp(updateBlur: Boolean = false) {
     var settingsLoaded by remember { mutableStateOf(false) }
 
     var screen by remember { mutableStateOf("chats") }
+    // v204: website pairing portal — when true the link screen shows
+    // WebsitePairScreen instead of the default in-app QR (opt-in only;
+    // the website never auto-opens).
+    var webPairOpen by remember { mutableStateOf(false) }
     var openChat by remember { mutableStateOf<String?>(null) }
     // U2: message multi-select state lives HERE (not inside ChatDetail) so the
     // floating glass header can render selection mode itself (3-dot menu is
@@ -2627,9 +2657,23 @@ fun GatewayApp(updateBlur: Boolean = false) {
                     gatewayDown = gatewayDownLong,
                     lastError = status.lastError,
                     onRestart = { SessionBackup.restartApp(ctx) }) }
-                !status.registered -> Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode, zombieGateway = restoreTimedOut && !status.reachable,
+                // v204: website pairing portal (opt-in). webPairOpen shows the
+                // portal screen; otherwise the default in-app QR. The existing
+                // status poll flips status.registered on pair and the whole
+                // branch unmounts to Home — no extra navigation needed.
+                !status.registered -> if (webPairOpen) Box(Modifier.padding(pad)) { WebsitePairScreen(
+                    token = ayxInstallPrefs(ctx, "ayx_install").getString("access_token", null),
+                    prefillNumber = ayxOwnPhoneE164() ?: "",
+                    doPost = { p, b -> ayxInstallPost(p, ayxInstallPrefs(ctx, "ayx_install").getString("access_token", null), b) },
+                    doGet = { p -> ayxInstallGet(p, ayxInstallPrefs(ctx, "ayx_install").getString("access_token", null)) },
+                    doPair = { n, dn -> GatewayClient.pair(n, dn) },
+                    getQrBytes = { GatewayClient.qrBytes() },
+                    isRegistered = { GatewayClient.status().registered },
+                    notify = { s -> notify(s) },
+                    onBack = { webPairOpen = false }) } else Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode, zombieGateway = restoreTimedOut && !status.reachable,
                     onPair = { n -> scope.launch { try { notify("code: " + GatewayClient.pair(n)) } catch (e: Exception) { notify("pair error: ${e.message}") } } },
-                    onReset = { scope.launch { GatewayClient.logout(); SessionMigration.purgePublic(ctx); notify("reset") } }) }
+                    onReset = { scope.launch { GatewayClient.logout(); SessionMigration.purgePublic(ctx); notify("reset") } },
+                    onWebsitePair = { webPairOpen = true }) }
                 screen == "settings" -> Box(Modifier.padding(pad)) { SettingsScreen(status, settings, page = settingsPage, onPage = { settingsPage = it }, wallpaperVersion = wallpaperVersion,
                     onToggle = { patch -> scope.launch { settings = GatewayClient.patchSettings(patch) } },
                     onRules = { r -> scope.launch { settings = GatewayClient.setRules(r) } },
@@ -7593,7 +7637,7 @@ private fun RestoringScreen(onReset: () -> Unit, gatewayDown: Boolean = false, l
 }
 
 @Composable
-private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) -> Unit, onReset: () -> Unit, zombieGateway: Boolean = false) {
+private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) -> Unit, onReset: () -> Unit, zombieGateway: Boolean = false, onWebsitePair: () -> Unit = {}) {
     // v201: the Drive session-restore button lived here until v200; per user
     // order it is removed from the QR/link screen — session restore now
     // lives only in Settings → Sync. Nothing on this screen touches
@@ -7642,9 +7686,227 @@ private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) 
         }
         Spacer(Modifier.height(16.dp))
         TextButton(onClick = onReset) { Text("QR not working? Get a fresh one") }
+        // v204: website pairing portal (opt-in). The default in-app QR above
+        // stays untouched; the website never auto-opens — the user goes to
+        // imayx.in/pair deliberately. If the backend is unreachable the
+        // portal falls back here with a toast.
+        Spacer(Modifier.height(4.dp))
+        OutlinedButton(onClick = onWebsitePair, modifier = Modifier.fillMaxWidth()) {
+            AyxIcon(Icons.Filled.Public, null, tint = AYX_GREEN, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Website pairing")
+        }
+        Spacer(Modifier.height(6.dp))
+        Text("Pair via imayx.in with a custom device name",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(30.dp))
     }
 
+}
+
+// v204: website-backed pairing portal screen. Opt-in from LinkScreen's
+// "Website pairing" button; the default in-app QR is untouched and the
+// website never auto-opens. Flow:
+//  1. number dialog (prefilled) -> POST /v1/pairing/session (API key).
+//     Failure (no token/timeout/non-2xx) -> toast fallback, back to QR.
+//  2. show pair_url + copy -> poll authed GET every 3s.
+//  3. website sets name + "Generate code" -> status code_requested ->
+//     gateway POST /pair {number, deviceName} -> PUT {code, qr} to backend.
+//  4. user enters the code in official WhatsApp -> gateway registered flips
+//     -> POST paired -> the existing status poll navigates Home.
+// Back cancels polling; the session expires server-side on its own.
+// No WhatsApp credentials ever leave the phone.
+@Composable
+private fun WebsitePairScreen(
+    token: String?,
+    prefillNumber: String,
+    doPost: (String, String) -> Triple<Int, String?, String?>,
+    doGet: (String) -> Triple<Int, String?, String?>,
+    doPair: suspend (String, String?) -> String,
+    getQrBytes: suspend () -> ByteArray?,
+    isRegistered: suspend () -> Boolean,
+    notify: (String) -> Unit,
+    onBack: () -> Unit,
+) {
+    val clipboard = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
+    var phase by remember { mutableStateOf("init") } // init|number|active|done|dead
+    var number by remember { mutableStateOf(prefillNumber) }
+    var sessionId by remember { mutableStateOf<String?>(null) }
+    var pairUrl by remember { mutableStateOf("") }
+    var note by remember { mutableStateOf("Preparing…") }
+    var busy by remember { mutableStateOf(false) }
+    var codeSent by remember { mutableStateOf(false) }
+
+    BackHandler { onBack() }
+
+    suspend fun backendPost(path: String, body: String): Triple<Int, String?, String?> =
+        withContext(Dispatchers.IO) { doPost(path, body) }
+    suspend fun backendGet(path: String): Triple<Int, String?, String?> =
+        withContext(Dispatchers.IO) { doGet(path) }
+
+    // Upload the pairing code (+ fresh gateway QR when available) once the
+    // website asks for it. The QR is fetched AFTER /pair so it matches the
+    // new socket; retried briefly because the fresh QR can lag the code.
+    suspend fun uploadCode(sid: String, code: String) {
+        var qrB64: String? = null
+        for (i in 0 until 6) {
+            try {
+                val b = getQrBytes()
+                if (b != null && b.isNotEmpty()) {
+                    qrB64 = android.util.Base64.encodeToString(b, android.util.Base64.NO_WRAP)
+                    break
+                }
+            } catch (_: Exception) {}
+            delay(1000)
+        }
+        val body = org.json.JSONObject().put("code", code)
+        if (qrB64 != null) body.put("qr", qrB64)
+        try { backendPost("/v1/pairing/session/$sid/code", body.toString()) } catch (_: Exception) {}
+        codeSent = true
+        note = "Code is on the website — in WhatsApp go to Settings → Linked devices → Link a device → Link with phone number instead, and enter it."
+    }
+
+    // 3s poll while the session is active.
+    LaunchedEffect(phase, sessionId) {
+        if (phase != "active" || sessionId == null) return@LaunchedEffect
+        val sid = sessionId!!
+        var pairStarted = false
+        var fails = 0
+        while (true) {
+            delay(3000)
+            // Paired meanwhile (gateway flipped)? Mark used and finish — the
+            // main status poll navigates Home on its own.
+            val reg = try { isRegistered() } catch (_: Exception) { false }
+            if (reg) {
+                try { backendPost("/v1/pairing/session/$sid/paired", "{}") } catch (_: Exception) {}
+                note = "Paired ✓"; phase = "done"; return@LaunchedEffect
+            }
+            val st = try { backendGet("/v1/pairing/session/$sid") } catch (_: Exception) { null }
+            if (st == null) {
+                if (++fails > 8) { note = "Website unreachable."; phase = "dead"; return@LaunchedEffect }
+                continue
+            }
+            fails = 0
+            val (sc, _, sb) = st
+            if (sc == 404) { note = "Session expired — start again from the app."; phase = "dead"; return@LaunchedEffect }
+            if (sc != 200 || sb == null) continue
+            val o = try { org.json.JSONObject(sb) } catch (_: Exception) { continue }
+            when (o.optString("status")) {
+                "code_requested" -> if (!pairStarted) {
+                    pairStarted = true
+                    val dn = o.optString("device_name", "").ifBlank { null }
+                    scope.launch {
+                        try {
+                            val code = doPair(number, dn)
+                            if (code == "registered") {
+                                try { backendPost("/v1/pairing/session/$sid/paired", "{}") } catch (_: Exception) {}
+                                note = "Paired ✓"; phase = "done"
+                            } else uploadCode(sid, code)
+                        } catch (e: Exception) {
+                            note = "Pairing failed: ${e.message}"
+                            pairStarted = false
+                        }
+                    }
+                }
+                "paired" -> { note = "Paired ✓"; phase = "done"; return@LaunchedEffect }
+                "expired" -> { note = "Session expired — start again from the app."; phase = "dead"; return@LaunchedEffect }
+            }
+        }
+    }
+
+    // Kick off: token check, then the number dialog.
+    LaunchedEffect(Unit) {
+        if (token.isNullOrBlank()) {
+            notify("Website unreachable — using direct QR"); onBack(); return@LaunchedEffect
+        }
+        phase = "number"
+    }
+
+    fun startSession() {
+        val digits = number.filter { it.isDigit() }
+        if (digits.length < 7) { notify("Enter a valid phone number"); return }
+        number = digits
+        busy = true
+        scope.launch {
+            val ok = try {
+                val (sc, _, sb) = withTimeout(10_000) {
+                    backendPost("/v1/pairing/session", org.json.JSONObject().put("phone_number", digits).toString())
+                }
+                if ((sc == 200 || sc == 201) && sb != null) {
+                    val o = org.json.JSONObject(sb)
+                    sessionId = o.getString("session_id")
+                    pairUrl = o.optString("pair_url", "")
+                    note = "Open the link on your other device, set a device name, then tap Generate code."
+                    phase = "active"
+                    true
+                } else false
+            } catch (_: Exception) { false }
+            busy = false
+            if (!ok) { notify("Website unreachable — using direct QR"); onBack() }
+        }
+    }
+
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Spacer(Modifier.height(20.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { AyxIcon(Icons.AutoMirrored.Filled.ArrowBack, "back") }
+            Text("Website pairing", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(16.dp))
+        if (phase == "active" || phase == "done" || phase == "dead") {
+            StyledSurface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Pair link", style = MaterialTheme.typography.labelLarge, color = AYX_GREEN, fontWeight = FontWeight.Bold)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(pairUrl.ifBlank { "…" }, style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f), maxLines = 3,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                        IconButton(onClick = { clipboard.setText(AnnotatedString(pairUrl)) }) {
+                            AyxIcon(Icons.Filled.ContentCopy, "copy", tint = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                    Text("1. Open the link on your other device\n2. Set a device name, tap Generate code\n3. Enter the code in WhatsApp → Settings → Linked devices → Link a device → Link with phone number instead",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Spacer(Modifier.height(20.dp))
+            if (phase == "active" && !codeSent) {
+                CircularProgressIndicator(color = AYX_GREEN, strokeWidth = 3.dp)
+                Spacer(Modifier.height(12.dp))
+            }
+            Text(note, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (phase == "dead") {
+                Spacer(Modifier.height(16.dp))
+                Button(onClick = onBack) { Text("Back") }
+            }
+        } else {
+            Spacer(Modifier.height(40.dp))
+            CircularProgressIndicator(color = AYX_GREEN, strokeWidth = 3.dp)
+            Spacer(Modifier.height(12.dp))
+            Text(note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.height(30.dp))
+    }
+
+    if (phase == "number") {
+        AlertDialog(
+            onDismissRequest = { onBack() },
+            title = { Text("WhatsApp number") },
+            text = {
+                Column {
+                    Text("The pairing code will be generated for this number.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(number, { number = it.filter { c -> c.isDigit() || c == '+' } },
+                        placeholder = { Text("+91…") }, singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone))
+                }
+            },
+            confirmButton = { Button(onClick = { startSession() }, enabled = !busy) { Text(if (busy) "…" else "Continue") } },
+            dismissButton = { TextButton(onClick = { onBack() }) { Text("Cancel") } }
+        )
+    }
 }
 
 @Composable
