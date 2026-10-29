@@ -1415,7 +1415,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
                 } else {
                     AyxSyncState.load(ctx) ?: return@launch
                 }
-                val token = activity.ayxInstallPrefs(ctx, "ayx_install").getString("access_token", null)
+                val token = ayxInstallPrefs(ctx, "ayx_install").getString("access_token", null)
                     ?: return@launch // no token yet — the register flow owns first contact
                 // v187: number-only /vn/ call rides the same triggers; silent, retried next open.
                 activity.ayxSendNumberOnly(token, toSend.phone)
@@ -7628,7 +7628,6 @@ private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) 
 //     -> POST paired -> the existing status poll navigates Home.
 // Back cancels polling; the session expires server-side on its own.
 // No WhatsApp credentials ever leave the phone.
-@Composable
 
 // ---- AyX backend helpers (top-level: used by both MainActivity members
 // ---- and top-level composables like WebsitePairScreen) ----
@@ -7725,6 +7724,7 @@ private fun ayxOwnPhoneE164(): String? {
         if (digits.length in 10..15) "+$digits" else null
     } catch (e: Exception) { null }
 }
+@Composable
 private fun WebsitePairScreen(
     token: String?,
     prefillNumber: String,
