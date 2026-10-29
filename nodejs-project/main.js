@@ -2147,7 +2147,11 @@ async function startSocket() {
     auth: state,
     logger,
     printQRInTerminal: false,
-    browser: Browsers.ubuntu(readDeviceName()),
+    // v205: custom name in browser[0] (DeviceProps.os) so Linked Devices shows
+    // "Google Chrome (<name>)". browser[1] is NEVER transmitted in the QR flow
+    // (only used for the PlatformType logo lookup + pairing-code display), so
+    // 'Chrome' there keeps the Chrome logo explicit instead of fallback.
+    browser: [readDeviceName(), 'Chrome', '22.04.4'],
     markOnlineOnConnect: settings.alwaysOnline && !settings.stayOffline,
     syncFullHistory: false,
     keepAliveIntervalMs: 25000,   // proper websocket keepalive so the socket doesn't idle-drop (stops reconnect flapping)
