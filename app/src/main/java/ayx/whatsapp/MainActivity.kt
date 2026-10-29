@@ -1522,44 +1522,12 @@ fun GatewayApp(updateBlur: Boolean = false) {
     // pendingStatus, the exact same entry point the gallery picker uses, so
     // photo -> photo editor and video -> video editor are unchanged.
     var statusCameraChoice by remember { mutableStateOf(false) }
-    var statusCameraPhotoFile by remember { mutableStateOf<File?>(null) }
-    var statusCameraPhotoUri by remember { mutableStateOf<Uri?>(null) }
-    val statusCameraPhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
-        val f = statusCameraPhotoFile; val u = statusCameraPhotoUri
-        statusCameraPhotoFile = null; statusCameraPhotoUri = null
-        if (ok && u != null) pendingStatus = u to "image"
-        else f?.delete() // cancelled / failed: drop the empty temp file, back to Home
-    }
-    val statusCameraVideo = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            val u = result.data?.data
-            if (u != null) {
-                runCatching { ctx.contentResolver.takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-                pendingStatus = u to "video"
-            }
-        }
-        // cancelled: nothing — back to Home, no crash
-    }
-    fun launchStatusCameraPhoto() {
-        try {
-            val probe = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
-            val camPkg = ctx.packageManager.resolveActivity(probe, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName
-            if (camPkg == null) { notify("No camera app found"); return }
-            val dir = File(ctx.cacheDir, "shared").apply { mkdirs() }
-            val f = File(dir, "status_" + System.currentTimeMillis() + ".jpg")
-            val u = FileProvider.getUriForFile(ctx, ctx.packageName + ".fileprovider", f)
-            ctx.grantUriPermission(camPkg, u, Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            statusCameraPhotoFile = f; statusCameraPhotoUri = u
-            statusCameraPhoto.launch(u)
-        } catch (e: Exception) { notify("Camera failed: ${e.message}") }
-    }
-    fun launchStatusCameraVideo() {
-        try {
-            val intent = Intent(MediaStore.ACTION_VIDEO_CAPTURE)
-            if (ctx.packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY) == null) { notify("No camera app found"); return }
-            statusCameraVideo.launch(intent)
-        } catch (e: Exception) { notify("Camera failed: ${e.message}") }
-    }
+    // v207: in-app CameraX camera target — null = closed, "status" = status flow, "chat" = chat flow.
+    var ayxCameraTarget by remember { mutableStateOf<String?>(null) }
+    // v207: old system-intent camera launchers removed — in-app CameraX camera is used now.
+    // v207: in-app CameraX camera — replaces system intents (Permission Denial crash).
+    // The camera screen has its own Photo/Video toggle, so one entry point covers both.
+    fun launchStatusCamera() { ayxCameraTarget = "status" }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null && openChat != null) {
             val mime = ctx.contentResolver.getType(uri) ?: "application/octet-stream"
@@ -1591,27 +1559,9 @@ fun GatewayApp(updateBlur: Boolean = false) {
         wallpaper = if (f.exists()) runCatching { decodeScaled(f.absolutePath, 1440)?.asImageBitmap() }.getOrNull() else null
     }
     LaunchedEffect(Unit) { loadWallpaper() }
-    var cameraUri by remember { mutableStateOf<Uri?>(null) }
-    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
-        val jid = openChat; val u = cameraUri
-        if (ok && u != null && jid != null) scope.launch {
-            try {
-                val bytes = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(u)?.use { it.readBytes() } }
-                if (bytes != null) { notify("sending photo…"); GatewayClient.sendMedia(jid, Base64.encodeToString(bytes, Base64.NO_WRAP), "image", "camera.jpg", "") }
-            } catch (e: Exception) { notify("send failed: ${e.message}") }
-        }
-    }
-    val cameraPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) cameraUri?.let { cameraLauncher.launch(it) } else notify("camera permission needed")
-    }
-    fun openCamera() {
-        val dir = File(ctx.cacheDir, "shared").apply { mkdirs() }
-        val f = File(dir, "cam_" + System.currentTimeMillis() + ".jpg")
-        val u = FileProvider.getUriForFile(ctx, ctx.packageName + ".fileprovider", f)
-        cameraUri = u
-        if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) cameraLauncher.launch(u)
-        else cameraPerm.launch(Manifest.permission.CAMERA)
-    }
+    // v207: old chat TakePicture launcher removed — in-app CameraX camera is used now.
+    // v207: in-app CameraX camera for chat — replaces TakePicture system intent.
+    fun openCamera() { ayxCameraTarget = "chat" }
 
     var deviceContacts by remember { mutableStateOf<List<DeviceContact>>(emptyList()) }
     var contactsLoading by remember { mutableStateOf(false) }
@@ -2188,22 +2138,18 @@ fun GatewayApp(updateBlur: Boolean = false) {
         }
     }
 
-    // v194: camera chooser — camera first, gallery path intact.
+    // v207: camera chooser — in-app CameraX camera (photo/video toggle inside) + gallery.
+    // User spec: camera tap -> direct camera, user picks photo/video from below inside the camera.
     if (statusCameraChoice) {
         Dialog(onDismissRequest = { statusCameraChoice = false }) {
             StyledSurface(shape = uiShapeFor(16), color = dialogBg()) {
                 Column(Modifier.padding(16.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("Photo / Video", style = MaterialTheme.typography.titleLarge)
                     Spacer(Modifier.height(8.dp))
-                    Row(Modifier.fillMaxWidth().clip(uiShapeFor(12)).clickable { statusCameraChoice = false; launchStatusCameraPhoto() }.padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth().clip(uiShapeFor(12)).clickable { statusCameraChoice = false; launchStatusCamera() }.padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                         AyxIcon(Icons.Filled.PhotoCamera, null)
                         Spacer(Modifier.width(14.dp))
-                        Text("Take photo", style = MaterialTheme.typography.bodyLarge)
-                    }
-                    Row(Modifier.fillMaxWidth().clip(uiShapeFor(12)).clickable { statusCameraChoice = false; launchStatusCameraVideo() }.padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        AyxIcon(Icons.Filled.Videocam, null)
-                        Spacer(Modifier.width(14.dp))
-                        Text("Record video", style = MaterialTheme.typography.bodyLarge)
+                        Text("Camera", style = MaterialTheme.typography.bodyLarge)
                     }
                     Row(Modifier.fillMaxWidth().clip(uiShapeFor(12)).clickable { statusCameraChoice = false; statusPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) }.padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                         AyxIcon(Icons.Filled.Image, null)
@@ -2214,6 +2160,31 @@ fun GatewayApp(updateBlur: Boolean = false) {
                 }
             }
         }
+    }
+    // v207: in-app CameraX camera screen (WhatsApp-style UI).
+    ayxCameraTarget?.let { target ->
+        AyxCameraScreen(
+            onCaptured = { uri, type ->
+                ayxCameraTarget = null
+                if (target == "status") {
+                    pendingStatus = uri to type
+                } else if (target == "chat") {
+                    val jid = openChat
+                    if (jid != null) scope.launch {
+                        try {
+                            val bytes = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() } }
+                            if (bytes != null) {
+                                val mime = if (type == "video") "video" else "image"
+                                val name = if (type == "video") "camera.mp4" else "camera.jpg"
+                                notify("sending ${if (type == "video") "video" else "photo"}…")
+                                GatewayClient.sendMedia(jid, Base64.encodeToString(bytes, Base64.NO_WRAP), mime, name, "")
+                            }
+                        } catch (e: Exception) { notify("send failed: ${e.message}") }
+                    }
+                }
+            },
+            onClose = { ayxCameraTarget = null }
+        )
     }
 
     Scaffold(
