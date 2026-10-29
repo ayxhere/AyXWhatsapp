@@ -3666,7 +3666,13 @@ private fun ChatDetail(
                                 onToggleSelect = { mm -> mm.id?.let { if (it in selIds) selIds.remove(it) else selIds.add(it); if (selIds.isEmpty()) onExitSel() } },
                                 onTranslate = { onTranslateMsg(it) },
                                 onLongClick = { reactAnchor = itemBounds; reactMsg = it },
-                                onPhoneClick = { number -> AppNav.pendingOpenChat.value = "$number@s.whatsapp.net" })
+                                onPhoneClick = { number ->
+                                    try {
+                                        AppNav.pendingOpenChat.value = number + "@s.whatsapp.net"
+                                    } catch (e: Exception) {
+                                        // Silently fail — AppNav not available
+                                    }
+                                })
                         } else {
                             AlbumBubble(msgs = g, previewCache = previewCache, dpCache = dpCache,
                                 onMedia = onMedia,
@@ -7787,23 +7793,12 @@ private fun UiDivider() {
 }
 
 private fun openUrl(ctx: Context, url: String) {
-    // v225: wa.me links open in AyX (not browser/original WhatsApp)
+    // v230: wa.me links — show toast with number (deep link not implemented yet)
     val waMeRegex = Regex("""wa\.me/(\d+)""")
     val waMatch = waMeRegex.find(url)
     if (waMatch != null) {
         val number = waMatch.groupValues[1]
-        // Open new chat in AyX — via deep link or callback
-        // For now, try to open via intent with AyX package
-        runCatching {
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("ayxwhatsapp://chat/$number")).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                `package` = ctx.packageName
-            }
-            ctx.startActivity(intent)
-        }.onFailure {
-            // Fallback: show toast with number
-            android.widget.Toast.makeText(ctx, "Chat: $number", android.widget.Toast.LENGTH_SHORT).show()
-        }
+        android.widget.Toast.makeText(ctx, "Chat: " + number, android.widget.Toast.LENGTH_SHORT).show()
         return
     }
     runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
