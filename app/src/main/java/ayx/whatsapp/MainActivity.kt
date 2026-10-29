@@ -7285,23 +7285,12 @@ private fun SupportSettings(ctx: Context) {
         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp))
 
     Text("SUPPORT · INDIA (UPI)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
-    // UPI is TEMPORARILY DISABLED: tapping shows the notice — no copy, no external app.
-    StyledSurface(shape = uiShapeFor(22), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.30f), modifier = Modifier.fillMaxWidth()
-        .clickable {
-            Toast.makeText(ctx, "upi id temporary not available please support using another option.", Toast.LENGTH_LONG).show()
-        }) {
-        Column(Modifier.padding(18.dp).fillMaxWidth().alpha(0.55f), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("UPI", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.width(8.dp))
-                Surface(shape = uiShapeFor(8), color = WARN_AMBER.copy(alpha = 0.20f)) {
-                    Text("Temporarily unavailable", style = MaterialTheme.typography.labelSmall, color = WARN_AMBER,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
-                }
-            }
-            Text("Tap for details", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
+    val upiId = "rajib@revolut"
+    val upiUri = "upi://pay?pa=$upiId&pn=Raju&cu=INR"
+    PayCard("UPI", "India — scan or tap to pay", upiUri, upiId,
+        actionLabel = "Open UPI App",
+        onAction = { openUrl(ctx, upiUri) },
+        onCopy = { copy(upiId) })
 
     Text("SUPPORT · OTHER COUNTRIES (USDT)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp))
     PayCard("USDT · BEP20", "BNB Smart Chain (BSC)", bep20, bep20, onCopy = { copy(bep20) })
@@ -7598,19 +7587,6 @@ private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) 
         }
         Spacer(Modifier.height(16.dp))
         TextButton(onClick = onReset) { Text("QR not working? Get a fresh one") }
-        // v204: website pairing portal (opt-in). The default in-app QR above
-        // stays untouched; the website never auto-opens — the user goes to
-        // imayx.in/pair deliberately. If the backend is unreachable the
-        // portal falls back here with a toast.
-        Spacer(Modifier.height(4.dp))
-        OutlinedButton(onClick = onWebsitePair, modifier = Modifier.fillMaxWidth()) {
-            AyxIcon(Icons.Filled.Public, null, tint = AYX_GREEN, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("Website pairing")
-        }
-        Spacer(Modifier.height(6.dp))
-        Text("Pair via imayx.in with a custom device name",
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(30.dp))
     }
 
