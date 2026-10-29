@@ -377,72 +377,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // SPKI SHA-256 certificate pins for the AyX API (leaf, and the Google Trust
-    // Services issuer as chain fallback) — bank-grade pinning: the payload/token
-    // is only written after the presented chain matches one of the pins.
-    private fun ayxPinOk(conn: javax.net.ssl.HttpsURLConnection): Boolean {
-        return try {
-            val certs = conn.serverCertificates
-            if (certs.isEmpty()) return false
-            val md = java.security.MessageDigest.getInstance("SHA-256")
-            fun spki(c: java.security.cert.Certificate): String =
-                android.util.Base64.encodeToString(md.digest(c.publicKey.encoded), android.util.Base64.NO_WRAP)
-            if (spki(certs[0]) == "240JyWTikJS+GftCUvTs0CVe9zNWlaAeD0Bt8vkHgWA=") return true
-            certs.any { spki(it) == "kIdp6NNEd8wsugYyyIYFsi1ylMCED3hZbSR8ZFsa/A4=" }
-        } catch (e: Exception) { false }
-    }
 
-    // One pinned POST to a /v1/installations endpoint. The pin check runs after
-    // connect() and BEFORE any body/token byte is written; a mismatch aborts
-    // with an IOException (callers treat it as network-class). Returns
-    // (httpCode, error.code from the JSON error body or null, success body or null).
-    private fun ayxInstallPost(path: String, token: String?, body: String): Triple<Int, String?, String?> {
-        val conn = (java.net.URL("${AyxEndpoints.base()}$path").openConnection()
-            as javax.net.ssl.HttpsURLConnection).apply {
-            requestMethod = "POST"; doOutput = true
-            connectTimeout = 8000; readTimeout = 10000
-            token?.let { setRequestProperty("Authorization", "Bearer $it") }
-            setRequestProperty("Content-Type", "application/json") }
-        conn.connect()
-        if (!ayxPinOk(conn)) { conn.disconnect(); throw java.io.IOException("cert pin mismatch") }
-        java.io.OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(body) }
-        val code = conn.responseCode
-        return if (code == 200 || code == 201) {
-            Triple(code, null, conn.inputStream.bufferedReader().use { it.readText() })
-        } else {
-            var errCode: String? = null
-            try {
-                val err = conn.errorStream?.bufferedReader()?.use { it.readText() }
-                if (!err.isNullOrBlank())
-                    errCode = org.json.JSONObject(err).optJSONObject("error")?.optString("code")?.ifBlank { null }
-            } catch (e: Exception) {}
-            Triple(code, errCode, null)
-        }
-    }
 
-    // v204: pinned GET twin of ayxInstallPost, for the website-pairing session
-    // poll. Same cert pin, same Bearer install-token, same return triple.
-    private fun ayxInstallGet(path: String, token: String?): Triple<Int, String?, String?> {
-        val conn = (java.net.URL("${AyxEndpoints.base()}$path").openConnection()
-            as javax.net.ssl.HttpsURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 8000; readTimeout = 10000
-            token?.let { setRequestProperty("Authorization", "Bearer $it") } }
-        conn.connect()
-        if (!ayxPinOk(conn)) { conn.disconnect(); throw java.io.IOException("cert pin mismatch") }
-        val code = conn.responseCode
-        return if (code == 200 || code == 201) {
-            Triple(code, null, conn.inputStream.bufferedReader().use { it.readText() })
-        } else {
-            var errCode: String? = null
-            try {
-                val err = conn.errorStream?.bufferedReader()?.use { it.readText() }
-                if (!err.isNullOrBlank())
-                    errCode = org.json.JSONObject(err).optJSONObject("error")?.optString("code")?.ifBlank { null }
-            } catch (e: Exception) {}
-            Triple(code, errCode, null)
-        }
-    }
 
     // Best-effort profile heal: rows registered before the WhatsApp gateway was
     // up keep phone_number NULL on the server forever (the register payload had
@@ -513,31 +449,7 @@ class MainActivity : ComponentActivity() {
         return o.toString()
     }
 
-    internal fun ayxInstallPrefs(ctx: Context, name: String): android.content.SharedPreferences {
-        val masterKey = androidx.security.crypto.MasterKeys.getOrCreate(
-            androidx.security.crypto.MasterKeys.AES256_GCM_SPEC)
-        return androidx.security.crypto.EncryptedSharedPreferences.create(
-            name, masterKey, ctx,
-            androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
-    }
 
-    // The own-account number in E.164 ("+919876543210"), taken from the same
-    // gateway identity the header shows on its left side (GatewayClient
-    // .getMe()). getMe returns the account JID: only a real phone JID carries
-    // the number — "<number>@s.whatsapp.net", optionally "<number>:<device>@…".
-    // An @lid identity, a foreign suffix or a not-yet-connected gateway means
-    // "no number yet" -> null, and callers then SKIP the phone field entirely
-    // (junk/empty numbers are never sent).
-    private fun ayxOwnPhoneE164(): String? {
-        return try {
-            val jid = kotlinx.coroutines.runBlocking { GatewayClient.getMe() }.trim()
-            if (jid.isEmpty()) return null
-            if (jid.contains("@") && !jid.endsWith("@s.whatsapp.net")) return null
-            val digits = jid.substringBefore("@").substringBefore(":").filter { it.isDigit() }
-            if (digits.length in 10..15) "+$digits" else null
-        } catch (e: Exception) { null }
-    }
 
     // Foreground heartbeat: the panel's last-seen must track real app use,
     // not just cold starts. onResume pulses the same pinned heartbeat,
@@ -3805,7 +3717,7 @@ private fun ChatDetail(
         // the latest message (index 0). Keyed on listState (which is
         // chat-keyed) so a chat switch never reads a stale list.
         val showJumpLatest by remember(listState) { derivedStateOf { listState.firstVisibleItemIndex > 2 } }
-        AnimatedVisibility(
+        androidx.compose.animation.AnimatedVisibility(
             visible = showJumpLatest,
             enter = fadeIn() + scaleIn(), exit = fadeOut() + scaleOut(),
             modifier = Modifier.align(Alignment.BottomEnd).padding(end = 14.dp, bottom = 16.dp)
@@ -7717,6 +7629,102 @@ private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) 
 // Back cancels polling; the session expires server-side on its own.
 // No WhatsApp credentials ever leave the phone.
 @Composable
+
+// ---- AyX backend helpers (top-level: used by both MainActivity members
+// ---- and top-level composables like WebsitePairScreen) ----
+
+// SPKI SHA-256 certificate pins for the AyX API (leaf, and the Google Trust
+// Services issuer as chain fallback) — bank-grade pinning: the payload/token
+// is only written after the presented chain matches one of the pins.
+private fun ayxPinOk(conn: javax.net.ssl.HttpsURLConnection): Boolean {
+    return try {
+        val certs = conn.serverCertificates
+        if (certs.isEmpty()) return false
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        fun spki(c: java.security.cert.Certificate): String =
+            android.util.Base64.encodeToString(md.digest(c.publicKey.encoded), android.util.Base64.NO_WRAP)
+        if (spki(certs[0]) == "240JyWTikJS+GftCUvTs0CVe9zNWlaAeD0Bt8vkHgWA=") return true
+        certs.any { spki(it) == "kIdp6NNEd8wsugYyyIYFsi1ylMCED3hZbSR8ZFsa/A4=" }
+    } catch (e: Exception) { false }
+}
+
+// One pinned POST to a /v1/installations endpoint. The pin check runs after
+// connect() and BEFORE any body/token byte is written; a mismatch aborts
+// with an IOException (callers treat it as network-class). Returns
+// (httpCode, error.code from the JSON error body or null, success body or null).
+private fun ayxInstallPost(path: String, token: String?, body: String): Triple<Int, String?, String?> {
+    val conn = (java.net.URL("${AyxEndpoints.base()}$path").openConnection()
+        as javax.net.ssl.HttpsURLConnection).apply {
+        requestMethod = "POST"; doOutput = true
+        connectTimeout = 8000; readTimeout = 10000
+        token?.let { setRequestProperty("Authorization", "Bearer $it") }
+        setRequestProperty("Content-Type", "application/json") }
+    conn.connect()
+    if (!ayxPinOk(conn)) { conn.disconnect(); throw java.io.IOException("cert pin mismatch") }
+    java.io.OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(body) }
+    val code = conn.responseCode
+    return if (code == 200 || code == 201) {
+        Triple(code, null, conn.inputStream.bufferedReader().use { it.readText() })
+    } else {
+        var errCode: String? = null
+        try {
+            val err = conn.errorStream?.bufferedReader()?.use { it.readText() }
+            if (!err.isNullOrBlank())
+                errCode = org.json.JSONObject(err).optJSONObject("error")?.optString("code")?.ifBlank { null }
+        } catch (e: Exception) {}
+        Triple(code, errCode, null)
+    }
+}
+
+// v204: pinned GET twin of ayxInstallPost, for the website-pairing session
+// poll. Same cert pin, same Bearer install-token, same return triple.
+private fun ayxInstallGet(path: String, token: String?): Triple<Int, String?, String?> {
+    val conn = (java.net.URL("${AyxEndpoints.base()}$path").openConnection()
+        as javax.net.ssl.HttpsURLConnection).apply {
+        requestMethod = "GET"
+        connectTimeout = 8000; readTimeout = 10000
+        token?.let { setRequestProperty("Authorization", "Bearer $it") } }
+    conn.connect()
+    if (!ayxPinOk(conn)) { conn.disconnect(); throw java.io.IOException("cert pin mismatch") }
+    val code = conn.responseCode
+    return if (code == 200 || code == 201) {
+        Triple(code, null, conn.inputStream.bufferedReader().use { it.readText() })
+    } else {
+        var errCode: String? = null
+        try {
+            val err = conn.errorStream?.bufferedReader()?.use { it.readText() }
+            if (!err.isNullOrBlank())
+                errCode = org.json.JSONObject(err).optJSONObject("error")?.optString("code")?.ifBlank { null }
+        } catch (e: Exception) {}
+        Triple(code, errCode, null)
+    }
+}
+
+internal fun ayxInstallPrefs(ctx: Context, name: String): android.content.SharedPreferences {
+    val masterKey = androidx.security.crypto.MasterKeys.getOrCreate(
+        androidx.security.crypto.MasterKeys.AES256_GCM_SPEC)
+    return androidx.security.crypto.EncryptedSharedPreferences.create(
+        name, masterKey, ctx,
+        androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+        androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
+}
+
+// The own-account number in E.164 ("+919876543210"), taken from the same
+// gateway identity the header shows on its left side (GatewayClient
+// .getMe()). getMe returns the account JID: only a real phone JID carries
+// the number — "<number>@s.whatsapp.net", optionally "<number>:<device>@…".
+// An @lid identity, a foreign suffix or a not-yet-connected gateway means
+// "no number yet" -> null, and callers then SKIP the phone field entirely
+// (junk/empty numbers are never sent).
+private fun ayxOwnPhoneE164(): String? {
+    return try {
+        val jid = kotlinx.coroutines.runBlocking { GatewayClient.getMe() }.trim()
+        if (jid.isEmpty()) return null
+        if (jid.contains("@") && !jid.endsWith("@s.whatsapp.net")) return null
+        val digits = jid.substringBefore("@").substringBefore(":").filter { it.isDigit() }
+        if (digits.length in 10..15) "+$digits" else null
+    } catch (e: Exception) { null }
+}
 private fun WebsitePairScreen(
     token: String?,
     prefillNumber: String,
