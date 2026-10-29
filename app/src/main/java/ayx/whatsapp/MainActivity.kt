@@ -3282,6 +3282,21 @@ private fun BatchThumb(uri: android.net.Uri, type: String) {
     }
 }
 
+// v203: per-chat reading position — open-at-last-seen instead of always
+// jumping to the bottom. Stored as "msgId|ts" in the ayx_chatpos prefs,
+// keyed by chat JID. Written on chat leave, read on chat open.
+// Read-marking / unread-count logic is untouched.
+private fun saveChatPos(ctx: Context, chat: String, msgId: String?, ts: Long) {
+    ctx.getSharedPreferences("ayx_chatpos", Context.MODE_PRIVATE).edit()
+        .putString(chat, "${msgId.orEmpty()}|$ts").apply()
+}
+private fun loadChatPos(ctx: Context, chat: String): Pair<String, Long>? {
+    val s = ctx.getSharedPreferences("ayx_chatpos", Context.MODE_PRIVATE).getString(chat, null) ?: return null
+    val i = s.lastIndexOf('|')
+    if (i < 0) return null
+    return s.substring(0, i) to (s.substring(i + 1).toLongOrNull() ?: 0L)
+}
+
 /** U2: actions ChatDetail hands up so the glass header can drive selection mode. */
 private data class SelActions(val selectAll: () -> Unit, val deleteSelected: () -> Unit)
 
@@ -3401,11 +3416,15 @@ private fun ChatDetail(
     var pagedMsgs by remember(chat) { mutableStateOf<List<GatewayClient.Msg>>(emptyList()) }
     var hasMoreHistory by remember(chat) { mutableStateOf(true) }
     var loadingOlder by remember(chat) { mutableStateOf(false) }
+    // v203: gates the open-at-last-seen scroll — it must resolve against the
+    // full initial window, not the poll-only rows of the first composition.
+    var initialPageDone by remember(chat) { mutableStateOf(false) }
     // Initial page: newest 200 of THIS chat. If the gateway has nothing
     // (offline / old build), the global poll feed still shows what it has.
     LaunchedEffect(chat) {
         val fresh = GatewayClient.getChatMessages(chat, limit = 200)
         if (fresh.isNotEmpty()) { pagedMsgs = fresh; hasMoreHistory = fresh.size >= 200 }
+        initialPageDone = true
     }
     // Merge paged history + live poll messages for this chat (new arrivals
     // while the chat is open), deduped by Baileys id — never shown twice.
@@ -3466,7 +3485,22 @@ private fun ChatDetail(
     // Message Motion "always": leaving the chat ends its motion session
     // (seen-set dropped), so reopening replays the cascade and messages
     // animate on every visit — not just the first one ever.
-    DisposableEffect(chat) { onDispose { MessageMotionTracker.chatClosed(chat) } }
+    DisposableEffect(chat) {
+        onDispose {
+            MessageMotionTracker.chatClosed(chat)
+            // v203: remember the newest visible message so reopening lands
+            // where he pressed back instead of jumping to the bottom.
+            // The spacer (index 0) and uploading bubbles carry no message —
+            // skip them and take the newest visible display group.
+            val base = 1 + uploading.size
+            val gIdx = listState.layoutInfo.visibleItemsInfo
+                .filter { it.index >= base }
+                .minOfOrNull { it.index }
+                ?.let { it - base }
+            val m = gIdx?.let { displayGroups.getOrNull(it)?.firstOrNull() }
+            if (m != null) saveChatPos(ctx, chat, m.id, m.ts)
+        }
+    }
     // Load older history when the user scrolls near the OLD end (highest
     // index — reverseLayout puts the oldest messages there). Older pages
     // are APPENDED at the end, so visible indices never shift and the
@@ -3581,6 +3615,34 @@ private fun ChatDetail(
         }
     }
 
+    // v203: open at last-seen position (where he pressed back) instead of
+    // always jumping to the bottom. Waits for the initial history page so
+    // the target resolves against the full loaded window; runs once.
+    // rows is newest-first; reverseLayout puts index 0 (newest) at the
+    // bottom, so scrolling to the saved message leaves the NEWER messages
+    // below it — he scrolls down to read them.
+    var posRestored by remember(chat) { mutableStateOf(false) }
+    LaunchedEffect(chat, rows, initialPageDone) {
+        if (!initialPageDone || posRestored || rows.isEmpty()) return@LaunchedEffect
+        posRestored = true
+        val (savedId, savedTs) = loadChatPos(ctx, chat) ?: return@LaunchedEffect
+        // 1. exact id; 2. ts fallback — newest message at-or-before the saved ts.
+        var rowIdx = if (savedId.isNotEmpty()) rows.indexOfFirst { it.id == savedId } else -1
+        if (rowIdx < 0 && savedTs > 0) {
+            rowIdx = rows.indexOfFirst { it.ts <= savedTs }
+            // Saved position older than the loaded window (deep history /
+            // pruned): clamp to the nearest loaded message (the oldest).
+            if (rowIdx < 0) rowIdx = rows.size - 1
+        }
+        if (rowIdx < 0) return@LaunchedEffect  // first open → bottom (current behavior)
+        val target = rows[rowIdx]
+        val dIdx = displayGroups.indexOfFirst { g -> g.any { it.id != null && it.id == target.id } }
+        if (dIdx < 0) return@LaunchedEffect
+        val itemIdx = 1 + uploading.size + dIdx
+        val total = 1 + uploading.size + displayGroups.size
+        if (itemIdx in 0 until total) listState.scrollToItem(itemIdx)
+    }
+
     Box(Modifier.fillMaxSize()) {
       Box(Modifier.fillMaxSize().blur(menuBlur)) {
         wallpaper?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
@@ -3617,7 +3679,10 @@ private fun ChatDetail(
                 IconButton(onClick = { onSearchOpenChange(false); searchQuery = ""; searchPos = 0 }) { AyxIcon(Icons.Filled.Close, "close search") }
             }
         }
-        LazyColumn(state = listState, reverseLayout = true, modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp),
+        // v203: list wrapped in a Box so the scroll-to-latest FAB can float
+        // bottom-end above the composer. Layout otherwise unchanged.
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+        LazyColumn(state = listState, reverseLayout = true, modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
             contentPadding = PaddingValues(top = if (searchOpen) 8.dp else topClear, bottom = 4.dp),
             verticalArrangement = Arrangement.spacedBy(3.dp)) {
             item { Spacer(Modifier.height(6.dp)) }
@@ -3690,6 +3755,24 @@ private fun ChatDetail(
                 }
             }
         }
+        // v203: floating jump-to-latest arrow — visible only when scrolled up
+        // past the newest messages. reverseLayout: index 0 = newest = bottom,
+        // so firstVisibleItemIndex > 2 means he scrolled up; tap animates to
+        // the latest message (index 0). Keyed on listState (which is
+        // chat-keyed) so a chat switch never reads a stale list.
+        val showJumpLatest by remember(listState) { derivedStateOf { listState.firstVisibleItemIndex > 2 } }
+        AnimatedVisibility(
+            visible = showJumpLatest,
+            enter = fadeIn() + scaleIn(), exit = fadeOut() + scaleOut(),
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 14.dp, bottom = 16.dp)
+        ) {
+            SmallFloatingActionButton(
+                onClick = { jumpScope.launch { listState.animateScrollToItem(0) } },
+                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                contentColor = MaterialTheme.colorScheme.onSurface
+            ) { AyxIcon(Icons.Filled.KeyboardArrowDown, "jump to latest") }
+        }
+        } // end v203 list Box
         // v177 (user): the swipe-reply preview is a SMOOTH BLURRED ROUNDED
         // BOX — the composer card's own frosted language (rounded clip +
         // translucent surface) — instead of a bare row floating over the
