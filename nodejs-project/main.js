@@ -97,6 +97,8 @@ let pairingNumber = null
 let presenceTimer = null
 
 let status = { connection: 'close', registered: false, me: null, lastError: null, needRelogin: false }
+// v223: Track chats that received the template (to avoid resending)
+const templateSentChats = new Set()
 
 // v149: the paired identity in modern Baileys is creds.me — creds.registered
 // stays false even for a fully paired, working login (proven against a real
@@ -109,6 +111,8 @@ let settings = {
   alwaysOnline: false,
   autoRead: false,
   autoReplyEnabled: false,
+  templatesEnabled: false,
+  templateMain: '',
   autoReplyRules: [],
   aiReplyEnabled: false,
   aiApiUrl: 'https://api.groq.com/openai/v1/chat/completions',
@@ -722,7 +726,12 @@ function extractText(m) {
 function resolveName(msg, jid) {
   if (typeof msg === 'string') { jid = msg; msg = {} }   // (callers sometimes pass only the jid)
   msg = msg || {}
-  const n = msg.pushName || msg.verifiedBizName || nameOf(jid) || ''
+  // v223: Better business name capture — check multiple locations
+  const n = msg.pushName
+    || msg.verifiedBizName
+    || msg.key?.verifiedBizName
+    || msg.message?.verifiedBizName
+    || nameOf(jid) || ''
   if (n && !(msg.key && msg.key.fromMe)) rememberName(baseJid(jid), n)
   return n
 }
@@ -2043,6 +2052,15 @@ async function handleMessagesBatch({ messages, type }) {
           } else if (text) {
             // TEXT → keyword rule, then AI (master toggle)
             pushHistory(from, 'user', text)
+            // v223: Template auto-send (first message from user, if enabled)
+            if (settings.templatesEnabled && settings.templateMain && !templateSentChats.has(from) && !from.endsWith('@g.us')) {
+              try {
+                let tpl = settings.templateMain.replace(/\{name\}/g, nameOf(from) || 'there')
+                await sock.sendMessage(from, { text: tpl }, q)
+                templateSentChats.add(from)
+                log('template sent to', from)
+              } catch (e) { log('template send err', e?.message) }
+            }
             let reply = null
             if (settings.autoReplyEnabled) reply = matchReply(text)
             if (!reply && settings.aiReplyEnabled) reply = await aiReply(from)
@@ -2305,6 +2323,26 @@ app.get('/status', (req, res) => res.json({
   pairingCode: pairingCode,
   needRelogin: !!status.needRelogin,
 }))
+
+// v223: Force reconnection (for "Reconnecting..." stuck state)
+app.post('/reconnect', async (req, res) => {
+  try {
+    log('manual reconnect requested')
+    if (_reconnTimer) { clearTimeout(_reconnTimer); _reconnTimer = null }
+    // Close existing socket if any
+    try { if (sock) await sock.logout().catch(() => {}); } catch (_) {}
+    try { if (sock?.ws) sock.ws.close(); } catch (_) {}
+    sock = null
+    status.connection = 'close'
+    // Start fresh connection
+    setTimeout(async () => {
+      try { await startSocket() } catch (e) { log('manual reconnect err', e?.message) }
+    }, 1000)
+    res.json({ ok: true, message: 'reconnecting' })
+  } catch (e) {
+    res.json({ ok: false, error: e?.message })
+  }
+})
 
 app.get('/qr.png', async (req, res) => {
   if (!currentQr) return res.status(204).end()
@@ -3431,6 +3469,8 @@ app.post('/settings', (req, res) => {
   if (typeof b.autoRead === 'boolean') settings.autoRead = b.autoRead
   if (typeof b.hideStatusRead === 'boolean') settings.hideStatusRead = b.hideStatusRead
   if (typeof b.autoReplyEnabled === 'boolean') settings.autoReplyEnabled = b.autoReplyEnabled
+  if (typeof b.templatesEnabled === 'boolean') settings.templatesEnabled = b.templatesEnabled
+  if (typeof b.templateMain === 'string') settings.templateMain = b.templateMain
   if (Array.isArray(b.autoReplyRules)) settings.autoReplyRules = b.autoReplyRules
   if (typeof b.aiReplyEnabled === 'boolean') settings.aiReplyEnabled = b.aiReplyEnabled
   if (typeof b.aiApiUrl === 'string') settings.aiApiUrl = b.aiApiUrl

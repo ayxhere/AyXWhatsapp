@@ -161,6 +161,7 @@ import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.Vibration
@@ -5124,10 +5125,10 @@ private fun AlbumBubble(
 private fun settingsTitle(page: String): String = when (page) {
     "general" -> "General"; "autoreply" -> "Auto-reply"; "ai" -> "AI Assistant"; "chat" -> "Chat Settings"
     "imageai" -> "Image AI"; "aimemory" -> "AI Memory"; "voice" -> "AI Voice"; "font" -> "App font"; "emoji" -> "Emoji"
-    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "accent" -> "Accent Color"; "bluranim" -> "Blur & Animation"; "textanim" -> "Text Animation"; "msgmotion" -> "Message Motion"; "iconstyle" -> "Icon Style"; "about" -> "About"; "sync" -> "Sync"; "support" -> "Support Development"; else -> "Settings"
+    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "accent" -> "Accent Color"; "bluranim" -> "Blur & Animation"; "textanim" -> "Text Animation"; "msgmotion" -> "Message Motion"; "iconstyle" -> "Icon Style"; "about" -> "About"; "sync" -> "Sync"; "support" -> "Support Development"; "templates" -> "Message Templates"; else -> "Settings"
 }
 // parent page for nested back (Wallpaper under Chat Settings; Image AI / AI Memory / Voice under AI Assistant; Font / Emoji / Text Animation / Message Motion / Icon Style / Accent / Blur & Animation under Appearance)
-private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "appearance"; "emoji" -> "appearance"; "textanim" -> "appearance"; "msgmotion" -> "appearance"; "iconstyle" -> "appearance"; "accent" -> "appearance"; "bluranim" -> "appearance"; else -> "home" }
+private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "templates" -> "home"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "appearance"; "emoji" -> "appearance"; "textanim" -> "appearance"; "msgmotion" -> "appearance"; "iconstyle" -> "appearance"; "accent" -> "appearance"; "bluranim" -> "appearance"; else -> "home" }
 
 @Composable
 private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient.Settings, page: String, onPage: (String) -> Unit, wallpaperVersion: Int,
@@ -5144,6 +5145,7 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
             "font" -> SettingsSubPage { FontSettings(ctx) }
             "emoji" -> SettingsSubPage { EmojiSettings(ctx) }
             "autoreply" -> SettingsSubPage { AutoReplySection(settings, onToggle, onRules) }
+            "templates" -> SettingsSubPage { TemplatesSettings(settings, onToggle, ctx) }
             "ai" -> SettingsSubPage { AiSettings(settings, onToggle, messages, dpCache, onOpenImageAi = { onPage("imageai") }, onOpenMemory = { onPage("aimemory") }) }
             "imageai" -> SettingsSubPage { ImageAiSettings(settings, onToggle, ctx) }
             "aimemory" -> AiMemoryScreen()   // has its OWN scroll — must NOT be wrapped in SettingsSubPage
@@ -5183,6 +5185,7 @@ private fun SettingsHome(status: GatewayClient.Status, onOpen: (String) -> Unit)
         Spacer(Modifier.height(2.dp))
         CategoryCard(Icons.Filled.Tune, CAT_GENERAL, "General", "Online, privacy and messages") { onOpen("general") }
         CategoryCard(Icons.Filled.QuestionAnswer, CAT_AUTOREPLY, "Auto-reply", "Keyword rules and automatic replies") { onOpen("autoreply") }
+        CategoryCard(Icons.Filled.Description, CAT_AUTOREPLY, "Message Templates", "Custom templates, auto-send on new messages") { onOpen("templates") }
         CategoryCard(Icons.Filled.AutoAwesome, CAT_AI, "AI Assistant", "AI replies, groups and language") { onOpen("ai") }
         CategoryCard(Icons.Filled.GraphicEq, Color(0xFF4DD0C4), "AI Voice", "Voice reply, voice notes & voice artists") { onOpen("voice") }
         CategoryCard(Icons.Filled.Chat, CAT_WALLPAPER, "Chat", "Wallpaper, bubble style and header") { onOpen("chat") }
@@ -5198,6 +5201,9 @@ private fun SettingsHome(status: GatewayClient.Status, onOpen: (String) -> Unit)
 private fun StatusCard(status: GatewayClient.Status) {
     val connected = status.registered && status.connection == "open"
     val dot = when { connected -> OK_GREEN; status.connection == "connecting" -> WARN_AMBER; else -> ERR_RED }
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var reconnecting by remember { mutableStateOf(false) }
     StyledSurface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f), modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             PulseDot(dot)
@@ -5206,6 +5212,25 @@ private fun StatusCard(status: GatewayClient.Status) {
                 Text(if (connected) "Connected" else if (status.registered) "Reconnecting…" else "Not linked", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
                 Text("Engine " + (if (status.reachable) "up" else "down") + " · " + status.connection + " · linked " + (if (status.registered) "yes" else "no"),
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            // v223: Manual reconnect button when stuck in "Reconnecting..."
+            if (!connected && status.registered && status.reachable) {
+                Spacer(Modifier.width(8.dp))
+                Button(
+                    onClick = {
+                        reconnecting = true
+                        scope.launch {
+                            try {
+                                GatewayClient.reconnect()
+                            } catch (_: Exception) {}
+                            reconnecting = false
+                        }
+                    },
+                    enabled = !reconnecting,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Text(if (reconnecting) "..." else "Reconnect", style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
     }
@@ -5498,6 +5523,86 @@ private fun EmptyState(icon: androidx.compose.ui.graphics.vector.ImageVector, ti
         }
         Text(title, style = MaterialTheme.typography.titleSmall)
         Text(desc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+    }
+}
+
+// v223: Message Templates — user-editable templates with on/off toggle.
+// When enabled, the template auto-sends when someone messages (first message).
+@Composable
+private fun TemplatesSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit, ctx: Context) {
+    val prefs = remember { ctx.getSharedPreferences("ayx_templates", Context.MODE_PRIVATE) }
+    var enabled by remember { mutableStateOf(prefs.getBoolean("templates_enabled", false)) }
+    var templateText by remember { mutableStateOf(prefs.getString("template_main", "") ?: "") }
+    var saved by remember { mutableStateOf(false) }
+
+    SettingsGroup("Message Templates") {
+        SettingRow(
+            Icons.Filled.Description, CAT_AUTOREPLY,
+            "Templates enabled",
+            "Auto-send template on new messages",
+            enabled
+        ) {
+            enabled = it
+            prefs.edit().putBoolean("templates_enabled", it).apply()
+            // Also sync to gateway settings
+            onToggle(JSONObject().put("templatesEnabled", it))
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        Text(
+            "Main Template",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 16.dp)
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "This message will be sent automatically when someone messages you (if enabled).",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp)
+        )
+        Spacer(Modifier.height(8.dp))
+
+        OutlinedTextField(
+            value = templateText,
+            onValueChange = {
+                templateText = it
+                saved = false
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .heightIn(min = 120.dp),
+            placeholder = { Text("Type your template message here...\n\nExample:\nHi! Thanks for messaging. I'll reply soon.") },
+            maxLines = 10
+        )
+
+        Spacer(Modifier.height(12.dp))
+
+        Button(
+            onClick = {
+                prefs.edit().putString("template_main", templateText).apply()
+                // Sync to gateway
+                onToggle(JSONObject().put("templateMain", templateText))
+                saved = true
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+        ) {
+            Text(if (saved) "Saved ✓" else "Save Template")
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        Text(
+            "Tip: Use {name} to insert the sender's name automatically.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp)
+        )
     }
 }
 

@@ -74,6 +74,19 @@ object GatewayClient {
                    val chatName: String? = null,
                    val buttons: List<MsgButton> = emptyList())
 
+    // v223: Force gateway reconnection
+    suspend fun reconnect(): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val c = (java.net.URL(base + "/reconnect").openConnection() as java.net.HttpURLConnection).apply {
+                requestMethod = "POST"; connectTimeout = 5000; readTimeout = 10000
+                GatewayAuth.token()?.let { setRequestProperty("X-Api-Token", it) }
+            }
+            val code = c.responseCode
+            c.disconnect()
+            code in 200..299
+        } catch (_: Exception) { false }
+    }
+
     suspend fun status(): Status = withContext(Dispatchers.IO) {
         try {
             val o = get("/status")
