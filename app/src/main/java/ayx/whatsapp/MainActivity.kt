@@ -1521,13 +1521,11 @@ fun GatewayApp(updateBlur: Boolean = false) {
     // video comes back as the camera app's own content Uri. Both land in
     // pendingStatus, the exact same entry point the gallery picker uses, so
     // photo -> photo editor and video -> video editor are unchanged.
-    var statusCameraChoice by remember { mutableStateOf(false) }
     // v207: in-app CameraX camera target — null = closed, "status" = status flow, "chat" = chat flow.
+    // v208: statusCameraChoice dialog removed — FAB opens camera directly.
     var ayxCameraTarget by remember { mutableStateOf<String?>(null) }
     // v207: old system-intent camera launchers removed — in-app CameraX camera is used now.
-    // v207: in-app CameraX camera — replaces system intents (Permission Denial crash).
-    // The camera screen has its own Photo/Video toggle, so one entry point covers both.
-    fun launchStatusCamera() { ayxCameraTarget = "status" }
+    // v208: launchStatusCamera() removed — FAB sets ayxCameraTarget="status" directly.
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null && openChat != null) {
             val mime = ctx.contentResolver.getType(uri) ?: "application/octet-stream"
@@ -2138,32 +2136,18 @@ fun GatewayApp(updateBlur: Boolean = false) {
         }
     }
 
-    // v207: camera chooser — in-app CameraX camera (photo/video toggle inside) + gallery.
-    // User spec: camera tap -> direct camera, user picks photo/video from below inside the camera.
-    if (statusCameraChoice) {
-        Dialog(onDismissRequest = { statusCameraChoice = false }) {
-            StyledSurface(shape = uiShapeFor(16), color = dialogBg()) {
-                Column(Modifier.padding(16.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Photo / Video", style = MaterialTheme.typography.titleLarge)
-                    Spacer(Modifier.height(8.dp))
-                    Row(Modifier.fillMaxWidth().clip(uiShapeFor(12)).clickable { statusCameraChoice = false; launchStatusCamera() }.padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        AyxIcon(Icons.Filled.PhotoCamera, null)
-                        Spacer(Modifier.width(14.dp))
-                        Text("Camera", style = MaterialTheme.typography.bodyLarge)
-                    }
-                    Row(Modifier.fillMaxWidth().clip(uiShapeFor(12)).clickable { statusCameraChoice = false; statusPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) }.padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        AyxIcon(Icons.Filled.Image, null)
-                        Spacer(Modifier.width(14.dp))
-                        Text("Choose from gallery", style = MaterialTheme.typography.bodyLarge)
-                    }
-                    TextButton(onClick = { statusCameraChoice = false }, modifier = Modifier.align(Alignment.End)) { Text("Cancel") }
-                }
-            }
-        }
-    }
+    // v208: Photo/Video dialog REMOVED per user — FAB "Photo / Video" opens the in-app camera directly.
     // v207: in-app CameraX camera screen (WhatsApp-style UI).
+    // v208: dialog removed — FAB opens camera directly; gallery via camera UI button.
     ayxCameraTarget?.let { target ->
         AyxCameraScreen(
+            onGallery = {
+                ayxCameraTarget = null
+                if (target == "status") {
+                    statusPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
+                }
+                // chat gallery uses the existing picker flow (unchanged)
+            },
             onCaptured = { uri, type ->
                 ayxCameraTarget = null
                 if (target == "status") {
@@ -2196,7 +2180,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
                     DropdownMenu(expanded = statusFabMenu, onDismissRequest = { statusFabMenu = false },
                         shape = uiShapeFor(16), containerColor = MaterialTheme.colorScheme.surface.copy(alpha = ayxMenuAlpha()), shadowElevation = 8.dp, tonalElevation = 0.dp) {
                         DropdownMenuItem(text = { Text("Photo / Video", style = MaterialTheme.typography.bodyLarge) }, leadingIcon = { AyxIcon(Icons.Filled.PhotoCamera, null) },
-                            onClick = { statusFabMenu = false; ensureContacts(); statusCameraChoice = true })
+                            onClick = { statusFabMenu = false; ensureContacts(); ayxCameraTarget = "status" })
                         DropdownMenuItem(text = { Text("Text status", style = MaterialTheme.typography.bodyLarge) }, leadingIcon = { AyxIcon(Icons.Filled.TextFields, null) },
                             onClick = { statusFabMenu = false; ensureContacts(); textStatusDlg = true })
                     }

@@ -55,6 +55,7 @@ import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -87,6 +88,7 @@ import kotlin.math.roundToInt
 fun AyxCameraScreen(
     onCaptured: (Uri, String) -> Unit, // (uri, "image"|"video")
     onClose: () -> Unit,
+    onGallery: (() -> Unit)? = null, // v208: gallery picker from camera UI
 ) {
     val ctx = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current
@@ -246,19 +248,8 @@ fun AyxCameraScreen(
                 detectTapGestures { /* tap = focus (reserved) */ }
             }
         )
-        // Attach the scale detector via an overlay.
-        Box(
-            Modifier.fillMaxSize().pointerInput(scaleDetector) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        // Forward to ScaleGestureDetector via the view system is complex;
-                        // pinch is handled by the slider + buttons below as fallback.
-                        event.changes.forEach { it.consume() }
-                    }
-                }
-            }
-        )
+        // v208: pinch-zoom overlay REMOVED — it was consuming all touch events
+        // and blocking the shutter/buttons. Zoom via the slider below.
 
         // Top bar: close + flash.
         Row(
@@ -335,7 +326,18 @@ fun AyxCameraScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Spacer(Modifier.size(48.dp)) // gallery shortcut reserved
+                // v208: gallery button (bottom-left) — opens gallery picker.
+                if (onGallery != null) {
+                    IconButton(
+                        onClick = onGallery,
+                        modifier = Modifier.size(48.dp).clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.15f))
+                    ) {
+                        Icon(Icons.Filled.Image, "gallery", tint = Color.White)
+                    }
+                } else {
+                    Spacer(Modifier.size(48.dp))
+                }
                 // Shutter button: tap = photo, long-press = video (WhatsApp style).
                 val shutterColor = if (isRecording) Color.Red else Color.White
                 Box(
