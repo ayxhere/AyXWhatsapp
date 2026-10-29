@@ -8730,16 +8730,21 @@ private fun LinkText(text: String, color: Color, onPhoneClick: ((String) -> Unit
                         append(raw)
                     }
                 } else {
-                    // v232: Intercept wa.me links — handle in-app instead of system (prevents crash loop)
+                    // v233: wa.me links — open chat via onPhoneClick (like number tap)
                     val waMeCheck = Regex(""".*wa\.me/(\d+).*""").find(raw)
                     if (waMeCheck != null) {
-                        val number = waMeCheck.groupValues[1]
+                        val rawNum = waMeCheck.groupValues[1]
+                        val fullNumber = if (rawNum.length == 10) "91" + rawNum else rawNum
                         withLink(LinkAnnotation.Clickable(
-                            tag = "wame:$number",
+                            tag = "wame:$fullNumber",
                             styles = TextLinkStyles(SpanStyle(color = Color(0xFF4EA1FF), textDecoration = TextDecoration.Underline))
                         ) {
-                            // v232: Just show toast — don't let system handle (causes restart loop)
-                            android.widget.Toast.makeText(ctx, "Chat: " + number, android.widget.Toast.LENGTH_SHORT).show()
+                            // v233: Open chat via callback (same as number tap)
+                            if (onPhoneClick != null) {
+                                onPhoneClick(fullNumber)
+                            } else {
+                                android.widget.Toast.makeText(ctx, "Chat: " + fullNumber, android.widget.Toast.LENGTH_SHORT).show()
+                            }
                         }) {
                             append(raw)
                         }
