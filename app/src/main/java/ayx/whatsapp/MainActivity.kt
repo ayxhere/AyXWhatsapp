@@ -3665,7 +3665,8 @@ private fun ChatDetail(
                                 selMode = selMode, selected = m.id != null && m.id in selIds,
                                 onToggleSelect = { mm -> mm.id?.let { if (it in selIds) selIds.remove(it) else selIds.add(it); if (selIds.isEmpty()) onExitSel() } },
                                 onTranslate = { onTranslateMsg(it) },
-                                onLongClick = { reactAnchor = itemBounds; reactMsg = it })
+                                onLongClick = { reactAnchor = itemBounds; reactMsg = it },
+                                onPhoneClick = { number -> openChat = "$number@s.whatsapp.net" })
                         } else {
                             AlbumBubble(msgs = g, previewCache = previewCache, dpCache = dpCache,
                                 onMedia = onMedia,
@@ -4773,7 +4774,7 @@ private fun BubbleTimeTicks(m: GatewayClient.Msg, textColor: Color, modifier: Mo
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String, ImageBitmap?>, dpCache: MutableMap<String, ImageBitmap?>, onMedia: (GatewayClient.Msg) -> Unit, onShare: (GatewayClient.Msg) -> Unit, onDownload: (GatewayClient.Msg) -> Unit, onReply: (GatewayClient.Msg) -> Unit, onAvatarClick: (String) -> Unit, selMode: Boolean = false, selected: Boolean = false, onToggleSelect: (GatewayClient.Msg) -> Unit = {}, onTranslate: (GatewayClient.Msg) -> Unit = {}, onLongClick: (GatewayClient.Msg) -> Unit, highlighted: Boolean = false, onQuoteTap: (GatewayClient.Msg) -> Unit = {}) {
+private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String, ImageBitmap?>, dpCache: MutableMap<String, ImageBitmap?>, onMedia: (GatewayClient.Msg) -> Unit, onShare: (GatewayClient.Msg) -> Unit, onDownload: (GatewayClient.Msg) -> Unit, onReply: (GatewayClient.Msg) -> Unit, onAvatarClick: (String) -> Unit, selMode: Boolean = false, selected: Boolean = false, onToggleSelect: (GatewayClient.Msg) -> Unit = {}, onTranslate: (GatewayClient.Msg) -> Unit = {}, onLongClick: (GatewayClient.Msg) -> Unit, highlighted: Boolean = false, onQuoteTap: (GatewayClient.Msg) -> Unit = {}, onPhoneClick: ((String) -> Unit)? = null) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val dark = isSystemInDarkTheme()
@@ -4884,7 +4885,7 @@ private fun MessageBubble(m: GatewayClient.Msg, previewCache: MutableMap<String,
                     // WhatsApp style: time + ticks inline at the bottom-right of the message text.
                     if (m.text.isNotBlank()) {
                         Row(verticalAlignment = Alignment.Bottom) {
-                            Box(Modifier.weight(1f, fill = false)) { LinkText(m.text, textColor) }
+                            Box(Modifier.weight(1f, fill = false)) { LinkText(m.text, textColor, onPhoneClick = onPhoneClick) }
                             BubbleTimeTicks(m, textColor, Modifier.padding(start = 6.dp, top = 2.dp))
                         }
                     } else {
@@ -8440,7 +8441,7 @@ private fun StatusRow(sender: String, list: List<GatewayClient.StatusItem>, seen
 
 
 @Composable
-private fun LinkText(text: String, color: Color) {
+private fun LinkText(text: String, color: Color, onPhoneClick: ((String) -> Unit)? = null) {
     val ctx = LocalContext.current
     val annotated = remember(text) {
         buildAnnotatedString {
@@ -8451,15 +8452,24 @@ private fun LinkText(text: String, color: Color) {
                 if (mt.range.first > last) append(text.substring(last, mt.range.first))
                 val raw = mt.value
                 if (raw.matches(Regex("""\+?91\d{10}|\b\d{10}\b"""))) {
-                    // Phone number — tappable, opens chat in AyX
-                    val number = raw.replace("+", "").replace(" ", "")
+                    // v227: Phone number — tappable, OPENS CHAT (not just toast)
+                    val number = raw.replace("+", "").replace(" ", "").replace("-", "")
+                    // Normalize to full international format
+                    val fullNumber = when {
+                        number.length == 10 -> "91$number"
+                        number.startsWith("91") && number.length == 12 -> number
+                        else -> number
+                    }
                     withLink(LinkAnnotation.Clickable(
-                        tag = "phone:$number",
+                        tag = "phone:$fullNumber",
                         styles = TextLinkStyles(SpanStyle(color = Color(0xFF4EA1FF), textDecoration = TextDecoration.Underline))
                     ) {
-                        // Open new chat with this number (handled by parent via callback)
-                        // For now, show toast — parent should override
-                        android.widget.Toast.makeText(ctx, "Chat: $number", android.widget.Toast.LENGTH_SHORT).show()
+                        // v227: Actually open the chat via callback, fallback to toast
+                        if (onPhoneClick != null) {
+                            onPhoneClick(fullNumber)
+                        } else {
+                            android.widget.Toast.makeText(ctx, "Chat: $fullNumber", android.widget.Toast.LENGTH_SHORT).show()
+                        }
                     }) {
                         append(raw)
                     }
