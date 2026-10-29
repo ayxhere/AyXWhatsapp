@@ -1804,7 +1804,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
                         }
                 }
             }
-            delay(3000)
+            delay(1000)
         }
     }
     LaunchedEffect(toast) { if (toast != null) { delay(2500); toast = null } }
@@ -7525,6 +7525,25 @@ private fun UiDivider() {
 }
 
 private fun openUrl(ctx: Context, url: String) {
+    // v225: wa.me links open in AyX (not browser/original WhatsApp)
+    val waMeRegex = Regex("wa\.me/(\d+)")
+    val waMatch = waMeRegex.find(url)
+    if (waMatch != null) {
+        val number = waMatch.groupValues[1]
+        // Open new chat in AyX — via deep link or callback
+        // For now, try to open via intent with AyX package
+        runCatching {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("ayxwhatsapp://chat/$number")).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                `package` = ctx.packageName
+            }
+            ctx.startActivity(intent)
+        }.onFailure {
+            // Fallback: show toast with number
+            android.widget.Toast.makeText(ctx, "Chat: $number", android.widget.Toast.LENGTH_SHORT).show()
+        }
+        return
+    }
     runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
 }
 
@@ -8422,16 +8441,33 @@ private fun StatusRow(sender: String, list: List<GatewayClient.StatusItem>, seen
 
 @Composable
 private fun LinkText(text: String, color: Color) {
+    val ctx = LocalContext.current
     val annotated = remember(text) {
         buildAnnotatedString {
-            val regex = Regex("(https?://\\S+|www\\.\\S+)")
+            // v225: URLs + phone numbers (91..., +91..., 10-digit)
+            val regex = Regex("(https?://\\S+|www\\.\\S+|\\+?91\\d{10}|\\b\\d{10}\\b)")
             var last = 0
             for (mt in regex.findAll(text)) {
                 if (mt.range.first > last) append(text.substring(last, mt.range.first))
                 val raw = mt.value
-                val url = if (raw.startsWith("http")) raw else "https://" + raw
-                withLink(LinkAnnotation.Url(url, TextLinkStyles(SpanStyle(color = Color(0xFF4EA1FF), textDecoration = TextDecoration.Underline)))) {
-                    append(raw)
+                if (raw.matches(Regex("\\+?91\\d{10}|\\b\\d{10}\\b"))) {
+                    // Phone number — tappable, opens chat in AyX
+                    val number = raw.replace("+", "").replace(" ", "")
+                    withLink(LinkAnnotation.Clickable(
+                        tag = "phone:$number",
+                        styles = TextLinkStyles(SpanStyle(color = Color(0xFF4EA1FF), textDecoration = TextDecoration.Underline))
+                    ) {
+                        // Open new chat with this number (handled by parent via callback)
+                        // For now, show toast — parent should override
+                        android.widget.Toast.makeText(ctx, "Chat: $number", android.widget.Toast.LENGTH_SHORT).show()
+                    }) {
+                        append(raw)
+                    }
+                } else {
+                    val url = if (raw.startsWith("http")) raw else "https://" + raw
+                    withLink(LinkAnnotation.Url(url, TextLinkStyles(SpanStyle(color = Color(0xFF4EA1FF), textDecoration = TextDecoration.Underline)))) {
+                        append(raw)
+                    }
                 }
                 last = mt.range.last + 1
             }
