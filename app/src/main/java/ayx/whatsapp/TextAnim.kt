@@ -88,7 +88,7 @@ object TextAnimSettings {
 
     // deletion
     val deleteFade = mutableStateOf(true)
-    val deleteScatter = mutableStateOf(true)
+    val deleteScatter = mutableStateOf(false) // v213: disabled per user — plain text only
     val burstStyle = mutableStateOf(0)     // index into STYLE_LABELS
     val burstAmount = mutableStateOf(1)    // index into AMOUNTS
     val sendBurst = mutableStateOf(true)
@@ -136,7 +136,7 @@ object TextAnimSettings {
         scale.value = p.getBoolean("scale", false)
         rotate.value = p.getBoolean("rotate", false)
         deleteFade.value = p.getBoolean("delete_fade", true)
-        deleteScatter.value = p.getBoolean("delete_scatter", true)
+        deleteScatter.value = p.getBoolean("delete_scatter", false)
         burstStyle.value = p.getInt("burst_style", 0)
         burstAmount.value = p.getInt("burst_amount", 1)
         sendBurst.value = p.getBoolean("send_burst", true)

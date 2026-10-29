@@ -5521,6 +5521,61 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
                 FilledTonalButton(onClick = { onToggle(JSONObject().put("aiReplyLang", lang.trim())); Toast.makeText(ctx, "Language saved", Toast.LENGTH_SHORT).show() }) { Text("Save") }
             }
         }
+        // v213: First-time AI language welcome selector (user order).
+        // Shows once: English, Bangla, Hindi + "More languages" dialog.
+        // After selection, never shows again; AI uses the chosen language.
+        var showLangWelcome by remember { mutableStateOf(!prefs.getBoolean("ayx_ai_lang_done", false)) }
+        var showMoreLangs by remember { mutableStateOf(false) }
+        if (showLangWelcome) {
+            Dialog(onDismissRequest = { }) {
+                StyledSurface(shape = uiShapeFor(20), color = dialogBg()) {
+                    Column(Modifier.padding(20.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Welcome to AI Reply", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(8.dp))
+                        Text("Select your language for AI replies:",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(16.dp))
+                        // 3 main languages
+                        listOf("English" to "English", "Bangla" to "Bangla", "Hindi" to "Hindi").forEach { (label, value) ->
+                            FilledTonalButton(
+                                onClick = {
+                                    onToggle(JSONObject().put("aiReplyLang", value))
+                                    prefs.edit().putBoolean("ayx_ai_lang_done", true).apply()
+                                    showLangWelcome = false
+                                    Toast.makeText(ctx, "AI will reply in $label", Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                            ) { Text(label) }
+                        }
+                        TextButton(onClick = { showMoreLangs = true }) { Text("More languages") }
+                    }
+                }
+            }
+        }
+        if (showMoreLangs) {
+            Dialog(onDismissRequest = { showMoreLangs = false }) {
+                StyledSurface(shape = uiShapeFor(20), color = dialogBg()) {
+                    Column(Modifier.padding(20.dp).fillMaxWidth()) {
+                        Text("Select Language", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(12.dp))
+                        listOf("Spanish", "French", "German", "Arabic", "Portuguese", "Russian", "Japanese", "Korean", "Chinese", "Turkish", "Urdu", "Tamil", "Telugu").forEach { lang ->
+                            TextButton(
+                                onClick = {
+                                    onToggle(JSONObject().put("aiReplyLang", lang))
+                                    prefs.edit().putBoolean("ayx_ai_lang_done", true).apply()
+                                    showMoreLangs = false
+                                    showLangWelcome = false
+                                    Toast.makeText(ctx, "AI will reply in $lang", Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text(lang, modifier = Modifier.fillMaxWidth()) }
+                        }
+                        TextButton(onClick = { showMoreLangs = false }, modifier = Modifier.align(Alignment.End)) { Text("Cancel") }
+                    }
+                }
+            }
+        }
     }
 
     // Exclude list — chats where NO auto-reply / AI reply is sent ("reply nothing to this person")
@@ -6818,7 +6873,7 @@ private fun TextAnimationSettings() {
     val scaleA by cfg.scale
     val rotateA by cfg.rotate
     val delFade by cfg.deleteFade
-    val delScatter by cfg.deleteScatter
+    // v213: delScatter removed — scatter effect deleted.
     val style by cfg.burstStyle
     val amount by cfg.burstAmount
     val sendBurst by cfg.sendBurst
@@ -6890,24 +6945,7 @@ private fun TextAnimationSettings() {
             checked = delFade, onChange = { cfg.setDeleteFade(it) },
         )
         UiDivider()
-        UiToggleRow(
-            icon = Icons.Filled.Grain, tint = Color(0xFFE88BD0),
-            title = "Scatter", desc = "Deleted letters burst into particles",
-            checked = delScatter, onChange = { cfg.setDeleteScatter(it) },
-        )
-        UiDivider()
-        UiNavRow(
-            icon = Icons.Filled.Category, tint = Color(0xFFF48FB1),
-            title = "Scatter into", desc = "What deleted letters turn into",
-            value = cfg.STYLE_LABELS[style], onClick = { openSel = "style" },
-        )
-        UiDivider()
-        UiNavRow(
-            icon = Icons.Filled.Tune, tint = Color(0xFF6EA8FF),
-            title = "Particle amount", desc = "Particles per deleted letter",
-            value = cfg.AMOUNT_LABELS[amount], onClick = { openSel = "amount" },
-        )
-        UiDivider()
+        // v213: Scatter effect REMOVED per user order — too big/obtrusive, plain text only.
         UiToggleRow(
             icon = Icons.AutoMirrored.Filled.Send, tint = Color(0xFF4DD0C4),
             title = "Burst into send button", desc = "On send, the text flies into the send button",
