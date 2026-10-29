@@ -5521,59 +5521,70 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
                 FilledTonalButton(onClick = { onToggle(JSONObject().put("aiReplyLang", lang.trim())); Toast.makeText(ctx, "Language saved", Toast.LENGTH_SHORT).show() }) { Text("Save") }
             }
         }
-        // v213: First-time AI language welcome selector (user order).
-        // Shows once: English, Bangla, Hindi + "More languages" dialog.
-        // After selection, never shows again; AI uses the chosen language.
+        // v215: First-time AI language selector as WhatsApp Business-style message template (user order).
+        // NOT a dialog — looks like the business template messages (e.g. Airtel bank).
+        // Shows once: English, Bangla, Hindi + "More languages". After selection, never shows again.
         val langCtx = LocalContext.current
         val langPrefs = remember { langCtx.getSharedPreferences("ayx_ai_lang", Context.MODE_PRIVATE) }
         var showLangWelcome by remember { mutableStateOf(!langPrefs.getBoolean("done", false)) }
         var showMoreLangs by remember { mutableStateOf(false) }
-        if (showLangWelcome) {
-            Dialog(onDismissRequest = { }) {
-                StyledSurface(shape = uiShapeFor(20), color = dialogBg()) {
-                    Column(Modifier.padding(20.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("Welcome to AI Reply", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.height(8.dp))
+        fun pickLang(label: String, value: String) {
+            onToggle(JSONObject().put("aiReplyLang", value))
+            langPrefs.edit().putBoolean("done", true).apply()
+            showLangWelcome = false
+            showMoreLangs = false
+            Toast.makeText(langCtx, "AI will reply in $label", Toast.LENGTH_SHORT).show()
+        }
+        if (showLangWelcome && !showMoreLangs) {
+            // WhatsApp Business template style: dark card, body text, button rows with dividers.
+            StyledSurface(shape = uiShapeFor(16), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                Column(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text("Welcome to AI Reply", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(4.dp))
                         Text("Select your language for AI replies:",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.height(16.dp))
-                        // 3 main languages
-                        listOf("English" to "English", "Bangla" to "Bangla", "Hindi" to "Hindi").forEach { (label, value) ->
-                            FilledTonalButton(
-                                onClick = {
-                                    onToggle(JSONObject().put("aiReplyLang", value))
-                                    langPrefs.edit().putBoolean("done", true).apply()
-                                    showLangWelcome = false
-                                    Toast.makeText(ctx, "AI will reply in $label", Toast.LENGTH_SHORT).show()
-                                },
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                            ) { Text(label) }
+                    }
+                    // Template buttons — like "Complete Now" in bank messages.
+                    listOf("English", "Bangla", "Hindi").forEachIndexed { i, label ->
+                        if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
+                        Row(Modifier.fillMaxWidth().clickable { pickLang(label, label) }.padding(vertical = 12.dp),
+                            horizontalArrangement = Arrangement.Center) {
+                            Text(label, color = AYX_GREEN, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
                         }
-                        TextButton(onClick = { showMoreLangs = true }) { Text("More languages") }
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
+                    Row(Modifier.fillMaxWidth().clickable { showMoreLangs = true }.padding(vertical = 12.dp),
+                        horizontalArrangement = Arrangement.Center) {
+                        Text("More languages", color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }
         }
         if (showMoreLangs) {
-            Dialog(onDismissRequest = { showMoreLangs = false }) {
-                StyledSurface(shape = uiShapeFor(20), color = dialogBg()) {
-                    Column(Modifier.padding(20.dp).fillMaxWidth()) {
-                        Text("Select Language", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.height(12.dp))
-                        listOf("Spanish", "French", "German", "Arabic", "Portuguese", "Russian", "Japanese", "Korean", "Chinese", "Turkish", "Urdu", "Tamil", "Telugu").forEach { lang ->
-                            TextButton(
-                                onClick = {
-                                    onToggle(JSONObject().put("aiReplyLang", lang))
-                                    langPrefs.edit().putBoolean("done", true).apply()
-                                    showMoreLangs = false
-                                    showLangWelcome = false
-                                    Toast.makeText(ctx, "AI will reply in $lang", Toast.LENGTH_SHORT).show()
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            ) { Text(lang, modifier = Modifier.fillMaxWidth()) }
+            // More languages — template style list.
+            StyledSurface(shape = uiShapeFor(16), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                Column(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text("Select Language", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    }
+                    listOf("Spanish", "French", "German", "Arabic", "Portuguese", "Russian",
+                        "Japanese", "Korean", "Chinese", "Turkish", "Urdu", "Tamil", "Telugu").forEachIndexed { i, lang ->
+                        if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
+                        Row(Modifier.fillMaxWidth().clickable { pickLang(lang, lang) }.padding(vertical = 12.dp),
+                            horizontalArrangement = Arrangement.Center) {
+                            Text(lang, color = AYX_GREEN, style = MaterialTheme.typography.bodyLarge)
                         }
-                        TextButton(onClick = { showMoreLangs = false }, modifier = Modifier.align(Alignment.End)) { Text("Cancel") }
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
+                    Row(Modifier.fillMaxWidth().clickable { showMoreLangs = false }.padding(vertical = 12.dp),
+                        horizontalArrangement = Arrangement.Center) {
+                        Text("Back", color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }
