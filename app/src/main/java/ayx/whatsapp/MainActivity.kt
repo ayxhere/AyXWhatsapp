@@ -257,7 +257,6 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.lifecycleScope
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontStyle
@@ -2648,7 +2647,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
                     gatewayDown = gatewayDownLong,
                     lastError = status.lastError,
                     onRestart = { SessionBackup.restartApp(ctx) }) }
-                !status.registered -> Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode, showRestore = !localPaired, zombieGateway = restoreTimedOut && !status.reachable, gatewayReachable = status.reachable,
+                !status.registered -> Box(Modifier.padding(pad)) { LinkScreen(qr, status.pairingCode, zombieGateway = restoreTimedOut && !status.reachable,
                     onPair = { n -> scope.launch { try { notify("code: " + GatewayClient.pair(n)) } catch (e: Exception) { notify("pair error: ${e.message}") } } },
                     onReset = { scope.launch { GatewayClient.logout(); SessionMigration.purgePublic(ctx); notify("reset") } }) }
                 screen == "settings" -> Box(Modifier.padding(pad)) { SettingsScreen(status, settings, page = settingsPage, onPage = { settingsPage = it }, wallpaperVersion = wallpaperVersion,
@@ -7531,50 +7530,12 @@ private fun RestoringScreen(onReset: () -> Unit, gatewayDown: Boolean = false, l
 }
 
 @Composable
-private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) -> Unit, onReset: () -> Unit, showRestore: Boolean = false, zombieGateway: Boolean = false, gatewayReachable: Boolean = true) {
-    // v191c: tap-gated session restore. The button below is the ONLY entry
-    // point — nothing here auto-shows, auto-signs-in, or auto-restores.
-    // It renders only when no local session exists (caller passes
-    // showRestore = !localPaired), so after a restore it never reappears
-    // on its own: a restored login either connects (LinkScreen goes away)
-    // or the user is back to the QR flow.
+private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) -> Unit, onReset: () -> Unit, zombieGateway: Boolean = false) {
+    // v201: the Drive session-restore button lived here until v200; per user
+    // order it is removed from the QR/link screen — session restore now
+    // lives only in Settings → Sync. Nothing on this screen touches
+    // Google/Drive anymore.
     val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var restoreBusy by remember { mutableStateOf(false) }
-    var restoreNote by remember { mutableStateOf<String?>(null) }
-    var restorePeek by remember { mutableStateOf<SessionBackup.Peek?>(null) }
-
-    fun doPeek() {
-        if (restoreBusy) return
-        restoreBusy = true
-        scope.launch {
-            val peek = runCatching { withContext(Dispatchers.IO) { SessionBackup.peekSession(ctx) } }
-            peek.onSuccess { restorePeek = it }
-                .onFailure { restoreNote = it.message ?: "Restore failed" }
-            restoreBusy = false
-        }
-    }
-
-    val restoreSignInLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        runCatching { GoogleDriveAuth.accountFromResult(result.data) }
-            .onSuccess { email ->
-                DriveBackup.setAccount(ctx, email)
-                doPeek()
-            }
-            .onFailure { restoreNote = it.message ?: "Sign-in failed — please try again." }
-    }
-
-    fun launchRestoreSignIn() {
-        val problem = GoogleDriveAuth.playServicesProblem(ctx)
-        if (problem != null) {
-            restoreNote = problem
-            return
-        }
-        runCatching { restoreSignInLauncher.launch(GoogleDriveAuth.client(ctx).signInIntent) }
-            .onFailure { restoreNote = GoogleDriveAuth.MSG_SETUP_PENDING }
-    }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Spacer(Modifier.height(44.dp))
@@ -7618,82 +7579,7 @@ private fun LinkScreen(qr: ImageBitmap?, pairingCode: String?, onPair: (String) 
         }
         Spacer(Modifier.height(16.dp))
         TextButton(onClick = onReset) { Text("QR not working? Get a fresh one") }
-        if (showRestore) {
-            Spacer(Modifier.height(8.dp))
-            TextButton(onClick = {
-                if (!restoreBusy) {
-                    if (GoogleDriveAuth.signedInAccount(ctx) == null) launchRestoreSignIn() else doPeek()
-                }
-            }) { Text("Restore session from Drive instead") }
-            Text(
-                if (restoreBusy) "Working…"
-                else restoreNote ?: "Only if you backed up this login to Drive on another phone. Nothing happens until you tap.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
         Spacer(Modifier.height(30.dp))
-    }
-
-    if (restorePeek != null) {
-        val peek = restorePeek!!
-        val whenText = if (peek.createdAt > 0L)
-            SimpleDateFormat("d MMM yyyy, h:mm a", Locale.US).format(Date(peek.createdAt))
-        else "an unknown date"
-        AlertDialog(
-            onDismissRequest = { restorePeek = null },
-            containerColor = dialogBg(),
-            shape = uiShapeFor(24),
-            title = { Text("Restore session?") },
-            text = {
-                Text(
-                    "This will replace this phone's WhatsApp login with the session backup from $whenText " +
-                        "(AyX v${peek.appVersion}) — tapping Restore writes it and connects with no QR scan " +
-                        "(the app restarts once only if the gateway needs it). " +
-                        "Restoring this login here may disconnect WhatsApp on the old phone: " +
-                        "the same login cannot run in two places at once."
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    restorePeek = null
-                    if (!restoreBusy) {
-                        restoreBusy = true
-                        // v196: restore+restart must NOT run in LinkScreen's
-                        // rememberCoroutineScope. The poll recomputes localPaired
-                        // the moment the restore writes creds, which disposes
-                        // LinkScreen and cancels its scope — the restart then
-                        // never runs, and the old process (dead node, v195 gate
-                        // blocking any in-process restart) stays stuck on
-                        // Restoring forever. The activity scope survives the
-                        // composable leaving; on success the process dies anyway.
-                        val actScope = (ctx as? ComponentActivity)?.lifecycleScope
-                        (actScope ?: scope).launch {
-                            val result = runCatching { withContext(Dispatchers.IO) { SessionBackup.restoreSession(ctx) } }
-                            // No success dialog: the poll recomputes localPaired
-                            // on the next cycle and would dispose LinkScreen
-                            // (and any dialog in it) before the user taps.
-                            // v198: reload-first direct login. The running
-                            // gateway never re-reads the auth dir, so after
-                            // the write we ask it to reload auth + restart
-                            // its socket in-node (POST /reload-auth). If it
-                            // answers ok, NO process restart happens — the
-                            // poll drives Restoring → chats directly. Only
-                            // gateways without that endpoint (today: all of
-                            // them, 404) fall back to restartApp. The
-                            // Restore tap IS the consent for either path.
-                            result.onSuccess {
-                                val reloaded = if (gatewayReachable) runCatching { withContext(Dispatchers.IO) { GatewayClient.reloadAuth() } }.getOrDefault(false) else false
-                                if (!reloaded) SessionBackup.restartApp(ctx)
-                            }
-                                .onFailure { restoreNote = it.message ?: "Restore failed" }
-                            restoreBusy = false
-                        }
-                    }
-                }) { Text("Restore & connect") }
-            },
-            dismissButton = { TextButton(onClick = { restorePeek = null }) { Text("Cancel") } },
-        )
     }
 
 }

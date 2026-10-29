@@ -2134,7 +2134,7 @@ async function startSocket() {
     auth: state,
     logger,
     printQRInTerminal: false,
-    browser: Browsers.ubuntu('imayx.in'),
+    browser: Browsers.ubuntu('imayx'),
     markOnlineOnConnect: settings.alwaysOnline && !settings.stayOffline,
     syncFullHistory: false,
     keepAliveIntervalMs: 25000,   // proper websocket keepalive so the socket doesn't idle-drop (stops reconnect flapping)
