@@ -3666,7 +3666,7 @@ private fun ChatDetail(
                                 onToggleSelect = { mm -> mm.id?.let { if (it in selIds) selIds.remove(it) else selIds.add(it); if (selIds.isEmpty()) onExitSel() } },
                                 onTranslate = { onTranslateMsg(it) },
                                 onLongClick = { reactAnchor = itemBounds; reactMsg = it },
-                                onPhoneClick = { number -> openChat = "$number@s.whatsapp.net" })
+                                onPhoneClick = { number -> AppNav.pendingOpenChat.value = "$number@s.whatsapp.net" })
                         } else {
                             AlbumBubble(msgs = g, previewCache = previewCache, dpCache = dpCache,
                                 onMedia = onMedia,
