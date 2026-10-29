@@ -1560,36 +1560,6 @@ fun GatewayApp(updateBlur: Boolean = false) {
     // The Permission Denial crash happened because we launched the intent without
     // the CAMERA permission granted. Now we request it first, then launch.
     var pendingCameraFor by remember { mutableStateOf<String?>(null) } // "status" or "chat"
-    val cameraPermLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) {
-            pendingCameraFor?.let { target ->
-                if (target == "status") launchSystemCameraPhoto()
-                else launchSystemCameraChat()
-            }
-        } else {
-            notify("Camera permission needed")
-        }
-        pendingCameraFor = null
-    }
-    fun ensureCameraPermission(target: String) {
-        pendingCameraFor = target
-        if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            if (target == "status") launchSystemCameraPhoto()
-            else launchSystemCameraChat()
-            pendingCameraFor = null
-        } else {
-            cameraPermLauncher.launch(Manifest.permission.CAMERA)
-        }
-    }
-    // System camera for STATUS (photo; user switches to video inside the camera app)
-    var statusCameraFile by remember { mutableStateOf<File?>(null) }
-    var statusCameraUri by remember { mutableStateOf<Uri?>(null) }
-    val statusCameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
-        val f = statusCameraFile; val u = statusCameraUri
-        statusCameraFile = null; statusCameraUri = null
-        if (ok && u != null) pendingStatus = u to "image"
-        else f?.delete()
-    }
     fun launchSystemCameraPhoto() {
         try {
             val dir = File(ctx.cacheDir, "shared").apply { mkdirs() }
@@ -1622,6 +1592,36 @@ fun GatewayApp(updateBlur: Boolean = false) {
             chatCameraFile = f; chatCameraUri = u
             chatCameraLauncher.launch(u)
         } catch (e: Exception) { notify("Camera failed: ${e.message}") }
+    }
+    val cameraPermLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            pendingCameraFor?.let { target ->
+                if (target == "status") launchSystemCameraPhoto()
+                else launchSystemCameraChat()
+            }
+        } else {
+            notify("Camera permission needed")
+        }
+        pendingCameraFor = null
+    }
+    fun ensureCameraPermission(target: String) {
+        pendingCameraFor = target
+        if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            if (target == "status") launchSystemCameraPhoto()
+            else launchSystemCameraChat()
+            pendingCameraFor = null
+        } else {
+            cameraPermLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+    // System camera for STATUS (photo; user switches to video inside the camera app)
+    var statusCameraFile by remember { mutableStateOf<File?>(null) }
+    var statusCameraUri by remember { mutableStateOf<Uri?>(null) }
+    val statusCameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        val f = statusCameraFile; val u = statusCameraUri
+        statusCameraFile = null; statusCameraUri = null
+        if (ok && u != null) pendingStatus = u to "image"
+        else f?.delete()
     }
     fun openCamera() { ensureCameraPermission("chat") }
 
