@@ -11925,153 +11925,64 @@ object AyxServiceConfigLoader {
         }
     }
 
-// v217: Template Image setting — Facebook cover size (820x312), URL + preview + add/edit.
-// User can set a custom banner image via URL, previewed at FB cover dimensions.
+// v217: Template Image setting — Facebook cover size (820x312), URL + preview.
 @Composable
 private fun TemplateImageSetting() {
     val ctx = LocalContext.current
     val prefs = remember { ctx.getSharedPreferences("ayx_template", Context.MODE_PRIVATE) }
     var imageUrl by remember { mutableStateOf(prefs.getString("template_image_url", "") ?: "") }
-    var editUrl by remember { mutableStateOf(imageUrl) }
     var showEdit by remember { mutableStateOf(false) }
-    var imageBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
-    var loading by remember { mutableStateOf(false) }
+    var editUrl by remember { mutableStateOf("") }
 
-    // Load image from URL when URL changes
-    LaunchedEffect(imageUrl) {
-        if (imageUrl.isNotBlank()) {
-            loading = true
-            imageBitmap = withContext(Dispatchers.IO) {
-                try {
-                    val url = java.net.URL(imageUrl)
-                    val conn = url.openConnection() as java.net.HttpURLConnection
-                    conn.connectTimeout = 10000
-                    conn.readTimeout = 15000
-                    conn.doInput = true
-                    conn.connect()
-                    val bytes = conn.inputStream.use { it.readBytes() }
-                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
-                } catch (e: Exception) { null }
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Template Image", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            TextButton(onClick = { editUrl = imageUrl; showEdit = true }) {
+                Text(if (imageUrl.isBlank()) "Add" else "Edit")
             }
-            loading = false
-        } else {
-            imageBitmap = null
         }
-    }
-
-    StyledSurface(
-        shape = uiShapeFor(16),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
-    ) {
-        Column(Modifier.padding(14.dp)) {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "Template Image",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                TextButton(onClick = {
-                    editUrl = imageUrl
-                    showEdit = true
-                }) {
-                    Text(if (imageUrl.isBlank()) "Add" else "Edit")
-                }
-            }
+        Text(
+            "Facebook cover size (820 x 312) - URL from settings",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        if (imageUrl.isNotBlank()) {
             Text(
-                "Facebook cover size (820 × 312)",
+                imageUrl.take(50),
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                maxLines = 1
             )
-            Spacer(Modifier.height(8.dp))
-            // Preview at FB cover aspect ratio (820:312)
-            Box(
-                Modifier.fillMaxWidth()
-                    .aspectRatio(820f / 312f)
-                    .clip(uiShapeFor(12))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                contentAlignment = Alignment.Center
-            ) {
-                when {
-                    loading -> CircularProgressIndicator()
-                    imageBitmap != null -> Image(
-                        imageBitmap!!,
-                        "template preview",
-                        Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
-                    )
-                    else -> Text(
-                        "No image set",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-            if (imageUrl.isNotBlank()) {
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    imageUrl.take(60) + if (imageUrl.length > 60) "..." else "",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1
-                )
-            }
         }
     }
 
     if (showEdit) {
-        Dialog(onDismissRequest = { showEdit = false }) {
-            StyledSurface(shape = uiShapeFor(20), color = dialogBg()) {
-                Column(Modifier.padding(20.dp).fillMaxWidth()) {
-                    Text(
-                        if (imageUrl.isBlank()) "Add Template Image" else "Edit Template Image",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "Paste image URL (will be shown at 820 × 312):",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    OutlinedTextField(
-                        value = editUrl,
-                        onValueChange = { editUrl = it },
-                        label = { Text("Image URL") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(Modifier.height(16.dp))
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End
-                    ) {
-                        TextButton(onClick = { showEdit = false }) { Text("Cancel") }
-                        Spacer(Modifier.width(8.dp))
-                        Button(onClick = {
-                            imageUrl = editUrl.trim()
-                            prefs.edit().putString("template_image_url", imageUrl).apply()
-                            showEdit = false
-                            Toast.makeText(ctx, "Template image saved", Toast.LENGTH_SHORT).show()
-                        }) { Text("Save") }
-                        if (imageUrl.isNotBlank()) {
-                            Spacer(Modifier.width(8.dp))
-                            TextButton(onClick = {
-                                imageUrl = ""
-                                editUrl = ""
-                                prefs.edit().remove("template_image_url").apply()
-                                showEdit = false
-                                Toast.makeText(ctx, "Template image removed", Toast.LENGTH_SHORT).show()
-                            }) { Text("Remove", color = MaterialTheme.colorScheme.error) }
-                        }
-                    }
-                }
+        AlertDialog(
+            onDismissRequest = { showEdit = false },
+            title = { Text("Template Image URL") },
+            text = {
+                OutlinedTextField(
+                    value = editUrl,
+                    onValueChange = { editUrl = it },
+                    label = { Text("Image URL") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    imageUrl = editUrl.trim()
+                    prefs.edit().putString("template_image_url", imageUrl).apply()
+                    showEdit = false
+                }) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEdit = false }) { Text("Cancel") }
             }
-        }
+        )
     }
 }
 
