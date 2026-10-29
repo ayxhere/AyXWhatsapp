@@ -7526,7 +7526,7 @@ private fun UiDivider() {
 
 private fun openUrl(ctx: Context, url: String) {
     // v225: wa.me links open in AyX (not browser/original WhatsApp)
-    val waMeRegex = Regex("wa\.me/(\d+)")
+    val waMeRegex = Regex("""wa\.me/(\d+)""")
     val waMatch = waMeRegex.find(url)
     if (waMatch != null) {
         val number = waMatch.groupValues[1]
@@ -8445,12 +8445,12 @@ private fun LinkText(text: String, color: Color) {
     val annotated = remember(text) {
         buildAnnotatedString {
             // v225: URLs + phone numbers (91..., +91..., 10-digit)
-            val regex = Regex("(https?://\\S+|www\\.\\S+|\\+?91\\d{10}|\\b\\d{10}\\b)")
+            val regex = Regex("""(https?://\S+|www\.\S+|\+?91\d{10}|\b\d{10}\b)""")
             var last = 0
             for (mt in regex.findAll(text)) {
                 if (mt.range.first > last) append(text.substring(last, mt.range.first))
                 val raw = mt.value
-                if (raw.matches(Regex("\\+?91\\d{10}|\\b\\d{10}\\b"))) {
+                if (raw.matches(Regex("""\+?91\d{10}|\b\d{10}\b"""))) {
                     // Phone number — tappable, opens chat in AyX
                     val number = raw.replace("+", "").replace(" ", "")
                     withLink(LinkAnnotation.Clickable(
