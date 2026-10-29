@@ -5524,7 +5524,9 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
         // v213: First-time AI language welcome selector (user order).
         // Shows once: English, Bangla, Hindi + "More languages" dialog.
         // After selection, never shows again; AI uses the chosen language.
-        var showLangWelcome by remember { mutableStateOf(!prefs.getBoolean("ayx_ai_lang_done", false)) }
+        val langCtx = LocalContext.current
+        val langPrefs = remember { langCtx.getSharedPreferences("ayx_ai_lang", Context.MODE_PRIVATE) }
+        var showLangWelcome by remember { mutableStateOf(!langPrefs.getBoolean("done", false)) }
         var showMoreLangs by remember { mutableStateOf(false) }
         if (showLangWelcome) {
             Dialog(onDismissRequest = { }) {
@@ -5541,7 +5543,7 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
                             FilledTonalButton(
                                 onClick = {
                                     onToggle(JSONObject().put("aiReplyLang", value))
-                                    prefs.edit().putBoolean("ayx_ai_lang_done", true).apply()
+                                    langPrefs.edit().putBoolean("done", true).apply()
                                     showLangWelcome = false
                                     Toast.makeText(ctx, "AI will reply in $label", Toast.LENGTH_SHORT).show()
                                 },
@@ -5563,7 +5565,7 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
                             TextButton(
                                 onClick = {
                                     onToggle(JSONObject().put("aiReplyLang", lang))
-                                    prefs.edit().putBoolean("ayx_ai_lang_done", true).apply()
+                                    langPrefs.edit().putBoolean("done", true).apply()
                                     showMoreLangs = false
                                     showLangWelcome = false
                                     Toast.makeText(ctx, "AI will reply in $lang", Toast.LENGTH_SHORT).show()
