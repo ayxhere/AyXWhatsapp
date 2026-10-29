@@ -1521,9 +1521,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
     // video comes back as the camera app's own content Uri. Both land in
     // pendingStatus, the exact same entry point the gallery picker uses, so
     // photo -> photo editor and video -> video editor are unchanged.
-    // v207: in-app CameraX camera target — null = closed, "status" = status flow, "chat" = chat flow.
-    // v208: statusCameraChoice dialog removed — FAB opens camera directly.
-    var ayxCameraTarget by remember { mutableStateOf<String?>(null) }
+    // v209: ayxCameraTarget removed — system default camera is used now.
     // v207: old system-intent camera launchers removed — in-app CameraX camera is used now.
     // v208: launchStatusCamera() removed — FAB sets ayxCameraTarget="status" directly.
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
@@ -1558,8 +1556,74 @@ fun GatewayApp(updateBlur: Boolean = false) {
     }
     LaunchedEffect(Unit) { loadWallpaper() }
     // v207: old chat TakePicture launcher removed — in-app CameraX camera is used now.
-    // v207: in-app CameraX camera for chat — replaces TakePicture system intent.
-    fun openCamera() { ayxCameraTarget = "chat" }
+    // v209: System DEFAULT camera (user order) — with runtime CAMERA permission fix.
+    // The Permission Denial crash happened because we launched the intent without
+    // the CAMERA permission granted. Now we request it first, then launch.
+    var pendingCameraFor by remember { mutableStateOf<String?>(null) } // "status" or "chat"
+    val cameraPermLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            pendingCameraFor?.let { target ->
+                if (target == "status") launchSystemCameraPhoto()
+                else launchSystemCameraChat()
+            }
+        } else {
+            notify("Camera permission needed")
+        }
+        pendingCameraFor = null
+    }
+    fun ensureCameraPermission(target: String) {
+        pendingCameraFor = target
+        if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            if (target == "status") launchSystemCameraPhoto()
+            else launchSystemCameraChat()
+            pendingCameraFor = null
+        } else {
+            cameraPermLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+    // System camera for STATUS (photo; user switches to video inside the camera app)
+    var statusCameraFile by remember { mutableStateOf<File?>(null) }
+    var statusCameraUri by remember { mutableStateOf<Uri?>(null) }
+    val statusCameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        val f = statusCameraFile; val u = statusCameraUri
+        statusCameraFile = null; statusCameraUri = null
+        if (ok && u != null) pendingStatus = u to "image"
+        else f?.delete()
+    }
+    fun launchSystemCameraPhoto() {
+        try {
+            val dir = File(ctx.cacheDir, "shared").apply { mkdirs() }
+            val f = File(dir, "status_" + System.currentTimeMillis() + ".jpg")
+            val u = FileProvider.getUriForFile(ctx, ctx.packageName + ".fileprovider", f)
+            statusCameraFile = f; statusCameraUri = u
+            statusCameraLauncher.launch(u)
+        } catch (e: Exception) { notify("Camera failed: ${e.message}") }
+    }
+    // System camera for CHAT (photo; user switches to video inside the camera app)
+    var chatCameraFile by remember { mutableStateOf<File?>(null) }
+    var chatCameraUri by remember { mutableStateOf<Uri?>(null) }
+    val chatCameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        val jid = openChat; val u = chatCameraUri
+        chatCameraFile = null; chatCameraUri = null
+        if (ok && u != null && jid != null) scope.launch {
+            try {
+                val bytes = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(u)?.use { it.readBytes() } }
+                if (bytes != null) { notify("sending photo…"); GatewayClient.sendMedia(jid, Base64.encodeToString(bytes, Base64.NO_WRAP), "image", "camera.jpg", "") }
+            } catch (e: Exception) { notify("send failed: ${e.message}") }
+        } else {
+            chatCameraFile?.delete()
+        }
+    }
+    fun launchSystemCameraChat() {
+        try {
+            val dir = File(ctx.cacheDir, "shared").apply { mkdirs() }
+            val f = File(dir, "cam_" + System.currentTimeMillis() + ".jpg")
+            val u = FileProvider.getUriForFile(ctx, ctx.packageName + ".fileprovider", f)
+            chatCameraFile = f; chatCameraUri = u
+            chatCameraLauncher.launch(u)
+        } catch (e: Exception) { notify("Camera failed: ${e.message}") }
+    }
+    fun openCamera() { ensureCameraPermission("chat") }
 
     var deviceContacts by remember { mutableStateOf<List<DeviceContact>>(emptyList()) }
     var contactsLoading by remember { mutableStateOf(false) }
@@ -2136,40 +2200,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
         }
     }
 
-    // v208: Photo/Video dialog REMOVED per user — FAB "Photo / Video" opens the in-app camera directly.
-    // v207: in-app CameraX camera screen (WhatsApp-style UI).
-    // v208: dialog removed — FAB opens camera directly; gallery via camera UI button.
-    ayxCameraTarget?.let { target ->
-        AyxCameraScreen(
-            onGallery = {
-                ayxCameraTarget = null
-                if (target == "status") {
-                    statusPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
-                }
-                // chat gallery uses the existing picker flow (unchanged)
-            },
-            onCaptured = { uri, type ->
-                ayxCameraTarget = null
-                if (target == "status") {
-                    pendingStatus = uri to type
-                } else if (target == "chat") {
-                    val jid = openChat
-                    if (jid != null) scope.launch {
-                        try {
-                            val bytes = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() } }
-                            if (bytes != null) {
-                                val mime = if (type == "video") "video" else "image"
-                                val name = if (type == "video") "camera.mp4" else "camera.jpg"
-                                notify("sending ${if (type == "video") "video" else "photo"}…")
-                                GatewayClient.sendMedia(jid, Base64.encodeToString(bytes, Base64.NO_WRAP), mime, name, "")
-                            }
-                        } catch (e: Exception) { notify("send failed: ${e.message}") }
-                    }
-                }
-            },
-            onClose = { ayxCameraTarget = null }
-        )
-    }
+    // v209: In-app CameraX camera REMOVED per user — back to system default camera.
 
     Scaffold(
         floatingActionButton = {
@@ -2180,7 +2211,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
                     DropdownMenu(expanded = statusFabMenu, onDismissRequest = { statusFabMenu = false },
                         shape = uiShapeFor(16), containerColor = MaterialTheme.colorScheme.surface.copy(alpha = ayxMenuAlpha()), shadowElevation = 8.dp, tonalElevation = 0.dp) {
                         DropdownMenuItem(text = { Text("Photo / Video", style = MaterialTheme.typography.bodyLarge) }, leadingIcon = { AyxIcon(Icons.Filled.PhotoCamera, null) },
-                            onClick = { statusFabMenu = false; ensureContacts(); ayxCameraTarget = "status" })
+                            onClick = { statusFabMenu = false; ensureContacts(); ensureCameraPermission("status") })
                         DropdownMenuItem(text = { Text("Text status", style = MaterialTheme.typography.bodyLarge) }, leadingIcon = { AyxIcon(Icons.Filled.TextFields, null) },
                             onClick = { statusFabMenu = false; ensureContacts(); textStatusDlg = true })
                     }
