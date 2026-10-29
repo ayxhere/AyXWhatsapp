@@ -5540,7 +5540,45 @@ private fun TemplatesSettings(settings: GatewayClient.Settings, onToggle: (JSONO
     val prefs = remember { ctx.getSharedPreferences("ayx_templates", Context.MODE_PRIVATE) }
     var enabled by remember { mutableStateOf(prefs.getBoolean("templates_enabled", false)) }
     var templateText by remember { mutableStateOf(prefs.getString("template_main", "") ?: "") }
+    var templateImage by remember { mutableStateOf(prefs.getString("template_image", "") ?: "") }
+    var templateLang by remember { mutableStateOf(prefs.getString("template_lang", "en") ?: "en") }
+    var buttonsJson by remember { mutableStateOf(prefs.getString("template_buttons", "[]") ?: "[]") }
     var saved by remember { mutableStateOf(false) }
+    var showImagePicker by remember { mutableStateOf(false) }
+    var showButtonEditor by remember { mutableStateOf(false) }
+
+    // Parse buttons
+    val buttons = remember(buttonsJson) {
+        try {
+            val arr = org.json.JSONArray(buttonsJson)
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                Triple(o.optString("text", ""), o.optString("type", "quick_reply"), o.optString("value", ""))
+            }.toMutableList()
+        } catch (e: Exception) { mutableListOf<Triple<String, String, String>>() }
+    }
+
+    // Image picker launcher
+    val imagePickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let {
+            try {
+                val inputStream = ctx.contentResolver.openInputStream(it)
+                val bytes = inputStream?.readBytes()
+                inputStream?.close()
+                if (bytes != null && bytes.size < 500000) { // 500KB limit
+                    val base64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                    templateImage = base64
+                    prefs.edit().putString("template_image", base64).apply()
+                } else {
+                    android.widget.Toast.makeText(ctx, "Image too large (max 500KB)", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                android.widget.Toast.makeText(ctx, "Failed to load image", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     SettingsGroup("Message Templates") {
         SettingRow(
@@ -5551,27 +5589,60 @@ private fun TemplatesSettings(settings: GatewayClient.Settings, onToggle: (JSONO
         ) {
             enabled = it
             prefs.edit().putBoolean("templates_enabled", it).apply()
-            // Also sync to gateway settings
             onToggle(JSONObject().put("templatesEnabled", it))
         }
 
         Spacer(Modifier.height(12.dp))
 
+        // v228: Template image
         Text(
-            "Main Template",
+            "Header Image (optional)",
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.padding(horizontal = 16.dp)
         )
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Button(
+                onClick = { imagePickerLauncher.launch("image/*") },
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(if (templateImage.isEmpty()) "Add Image" else "Change Image")
+            }
+            if (templateImage.isNotEmpty()) {
+                OutlinedButton(
+                    onClick = {
+                        templateImage = ""
+                        prefs.edit().remove("template_image").apply()
+                    }
+                ) {
+                    Text("Remove")
+                }
+            }
+        }
+        if (templateImage.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "✓ Image added",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF4CAF50),
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        // Template text
         Text(
-            "This message will be sent automatically when someone messages you (if enabled).",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            "Message Text",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
             modifier = Modifier.padding(horizontal = 16.dp)
         )
         Spacer(Modifier.height(8.dp))
-
         OutlinedTextField(
             value = templateText,
             onValueChange = {
@@ -5586,14 +5657,126 @@ private fun TemplatesSettings(settings: GatewayClient.Settings, onToggle: (JSONO
             maxLines = 10
         )
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(16.dp))
+
+        // v228: Language selector
+        Text(
+            "Language",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 16.dp)
+        )
+        Spacer(Modifier.height(8.dp))
+        val languages = listOf("en" to "English", "hi" to "Hindi", "bn" to "Bangla", "es" to "Spanish", "fr" to "French", "de" to "German", "ar" to "Arabic", "pt" to "Portuguese")
+        var langExpanded by remember { mutableStateOf(false) }
+        Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+            OutlinedButton(
+                onClick = { langExpanded = true },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(languages.find { it.first == templateLang }?.second ?: "English")
+            }
+            androidx.compose.material3.DropdownMenu(
+                expanded = langExpanded,
+                onDismissRequest = { langExpanded = false }
+            ) {
+                languages.forEach { (code, name) ->
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text(name) },
+                        onClick = {
+                            templateLang = code
+                            prefs.edit().putString("template_lang", code).apply()
+                            langExpanded = false
+                            saved = false
+                        }
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        // v228: Buttons section
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "Buttons (${buttons.size}/3)",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold
+            )
+            if (buttons.size < 3) {
+                TextButton(onClick = { showButtonEditor = true }) {
+                    Text("+ Add Button")
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+
+        // List existing buttons
+        buttons.forEachIndexed { index, (text, type, value) ->
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text, fontWeight = FontWeight.Medium)
+                        Text(
+                            when (type) {
+                                "url" -> "🔗 $value"
+                                "call" -> "📞 $value"
+                                else -> "💬 Quick reply"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    IconButton(onClick = {
+                        val newList = buttons.toMutableList().apply { removeAt(index) }
+                        val arr = org.json.JSONArray()
+                        newList.forEach { (t, ty, v) ->
+                            arr.put(JSONObject().put("text", t).put("type", ty).put("value", v))
+                        }
+                        buttonsJson = arr.toString()
+                        prefs.edit().putString("template_buttons", arr.toString()).apply()
+                        saved = false
+                    }) {
+                        Icon(Icons.Filled.Delete, contentDescription = "Delete")
+                    }
+                }
+            }
+        }
+
+        if (buttons.isEmpty()) {
+            Text(
+                "No buttons yet. Add up to 3 buttons.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+        }
+
+        Spacer(Modifier.height(16.dp))
 
         Button(
             onClick = {
                 prefs.edit().putString("template_main", templateText).apply()
-                // Sync to gateway
-                onToggle(JSONObject().put("templateMain", templateText))
+                // Sync all to gateway
+                val patch = JSONObject()
+                    .put("templateMain", templateText)
+                    .put("templateImage", templateImage)
+                    .put("templateLang", templateLang)
+                    .put("templateButtons", buttonsJson)
+                onToggle(patch)
                 saved = true
+                android.widget.Toast.makeText(ctx, "Template saved!", android.widget.Toast.LENGTH_SHORT).show()
             },
             modifier = Modifier
                 .fillMaxWidth()
@@ -5609,6 +5792,84 @@ private fun TemplatesSettings(settings: GatewayClient.Settings, onToggle: (JSONO
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 16.dp)
+        )
+    }
+
+    // v228: Button editor dialog
+    if (showButtonEditor) {
+        var btnText by remember { mutableStateOf("") }
+        var btnType by remember { mutableStateOf("quick_reply") }
+        var btnValue by remember { mutableStateOf("") }
+
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showButtonEditor = false },
+            title = { Text("Add Button") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(
+                        value = btnText,
+                        onValueChange = { btnText = it },
+                        label = { Text("Button text") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+
+                    Text("Button type:", style = MaterialTheme.typography.bodySmall)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("quick_reply" to "Reply", "url" to "Link", "call" to "Call").forEach { (type, label) ->
+                            FilterChip(
+                                selected = btnType == type,
+                                onClick = { btnType = type },
+                                label = { Text(label) }
+                            )
+                        }
+                    }
+
+                    if (btnType == "url") {
+                        OutlinedTextField(
+                            value = btnValue,
+                            onValueChange = { btnValue = it },
+                            label = { Text("URL (https://...)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                    } else if (btnType == "call") {
+                        OutlinedTextField(
+                            value = btnValue,
+                            onValueChange = { btnValue = it },
+                            label = { Text("Phone number") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (btnText.isNotBlank()) {
+                            val newList = buttons.toMutableList().apply {
+                                add(Triple(btnText, btnType, btnValue))
+                            }
+                            val arr = org.json.JSONArray()
+                            newList.forEach { (t, ty, v) ->
+                                arr.put(JSONObject().put("text", t).put("type", ty).put("value", v))
+                            }
+                            buttonsJson = arr.toString()
+                            prefs.edit().putString("template_buttons", arr.toString()).apply()
+                            saved = false
+                            showButtonEditor = false
+                        }
+                    }
+                ) {
+                    Text("Add")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showButtonEditor = false }) {
+                    Text("Cancel")
+                }
+            }
         )
     }
 }

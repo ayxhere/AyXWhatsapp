@@ -113,6 +113,9 @@ let settings = {
   autoReplyEnabled: false,
   templatesEnabled: false,
   templateMain: '',
+  templateImage: '',
+  templateLang: 'en',
+  templateButtons: '[]',
   autoReplyRules: [],
   aiReplyEnabled: false,
   aiApiUrl: 'https://api.groq.com/openai/v1/chat/completions',
@@ -2053,13 +2056,49 @@ async function handleMessagesBatch({ messages, type }) {
             // TEXT → keyword rule, then AI (master toggle)
             pushHistory(from, 'user', text)
             // v223: Template auto-send (first message from user, if enabled)
-            if (settings.templatesEnabled && settings.templateMain && !templateSentChats.has(from) && !from.endsWith('@g.us')) {
+if (settings.templatesEnabled && settings.templateMain && !templateSentChats.has(from) && !from.endsWith('@g.us')) {
               try {
                 let tpl = settings.templateMain.replace(/\{name\}/g, nameOf(from) || 'there')
-                await sock.sendMessage(from, { text: tpl }, q)
+                // v228: Send template with image and buttons if configured
+                let buttons = []
+                try {
+                  const btnArr = JSON.parse(settings.templateButtons || '[]')
+                  buttons = btnArr.slice(0, 3)
+                } catch (e) {}
+
+                if (buttons.length > 0) {
+                  const btnMessages = buttons.map((b, i) => {
+                    if (b.type === 'url') {
+                      return { name: 'cta_url', buttonParamsJson: JSON.stringify({ display_text: b.text, url: b.value }) }
+                    } else if (b.type === 'call') {
+                      return { name: 'cta_call', buttonParamsJson: JSON.stringify({ display_text: b.text, phone_number: b.value }) }
+                    } else {
+                      return { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: b.text, id: 'tpl_btn_' + i }) }
+                    }
+                  })
+                  let msgContent = { text: tpl, footer: 'AyX Business', templateButtons: btnMessages }
+                  if (settings.templateImage) {
+                    try {
+                      const imgBuffer = Buffer.from(settings.templateImage, 'base64')
+                      msgContent = { image: imgBuffer, caption: tpl, footer: 'AyX Business', templateButtons: btnMessages }
+                    } catch (e) { log('template image err', e && e.message) }
+                  }
+                  await sock.sendMessage(from, msgContent, q)
+                } else {
+                  if (settings.templateImage) {
+                    try {
+                      const imgBuffer = Buffer.from(settings.templateImage, 'base64')
+                      await sock.sendMessage(from, { image: imgBuffer, caption: tpl }, q)
+                    } catch (e) {
+                      await sock.sendMessage(from, { text: tpl }, q)
+                    }
+                  } else {
+                    await sock.sendMessage(from, { text: tpl }, q)
+                  }
+                }
                 templateSentChats.add(from)
                 log('template sent to', from)
-              } catch (e) { log('template send err', e?.message) }
+              } catch (e) { log('template send err', e && e.message) }
             }
             let reply = null
             if (settings.autoReplyEnabled) reply = matchReply(text)
@@ -3471,6 +3510,9 @@ app.post('/settings', (req, res) => {
   if (typeof b.autoReplyEnabled === 'boolean') settings.autoReplyEnabled = b.autoReplyEnabled
   if (typeof b.templatesEnabled === 'boolean') settings.templatesEnabled = b.templatesEnabled
   if (typeof b.templateMain === 'string') settings.templateMain = b.templateMain
+  if (typeof b.templateImage === 'string') settings.templateImage = b.templateImage
+  if (typeof b.templateLang === 'string') settings.templateLang = b.templateLang
+  if (typeof b.templateButtons === 'string') settings.templateButtons = b.templateButtons
   if (Array.isArray(b.autoReplyRules)) settings.autoReplyRules = b.autoReplyRules
   if (typeof b.aiReplyEnabled === 'boolean') settings.aiReplyEnabled = b.aiReplyEnabled
   if (typeof b.aiApiUrl === 'string') settings.aiApiUrl = b.aiApiUrl
