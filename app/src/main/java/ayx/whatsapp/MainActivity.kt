@@ -2797,7 +2797,10 @@ internal fun Avatar(jid: String, name: String, cache: MutableMap<String, ImageBi
         if (atIdx > 0 && jid.contains(":")) base + jid.substring(atIdx) else jid
     }
     LaunchedEffect(normJid) {
-        if (!cache.containsKey(normJid)) {
+        // v216: Don't permanently cache failed loads — if DP fetch failed (rate limit,
+        // network), retry on next composition instead of showing initial forever.
+        // Only cache successful decodes; null means "not yet loaded".
+        if (cache[normJid] == null) {
             val b = GatewayClient.dpBytes(normJid)
                 ?: jid.takeIf { it != normJid }?.let { GatewayClient.dpBytes(it) }
             // v180: the decode used to run on Main (LaunchedEffect resumes
@@ -2808,7 +2811,8 @@ internal fun Avatar(jid: String, name: String, cache: MutableMap<String, ImageBi
             // rows share this cache at different display sizes, so a
             // 50dp-baked bitmap could blur larger uses.
             val decoded = b?.let { bytes -> withContext(Dispatchers.Default) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() } }
-            cache[normJid] = decoded
+            if (decoded != null) cache[normJid] = decoded
+            // v216: if decoded is null, leave cache empty so next composition retries
         }
     }
     val dp = cache[normJid]

@@ -821,14 +821,24 @@ object GatewayClient {
     }
 
     suspend fun dpBytes(jid: String): ByteArray? = withContext(Dispatchers.IO) {
-        try {
-            val enc = java.net.URLEncoder.encode(jid, "UTF-8")
-            val c = (URL("$base/dp?jid=$enc").openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"; connectTimeout = 4000; readTimeout = 15000
-                GatewayAuth.token()?.let { setRequestProperty("X-Api-Token", it) }
-            }
-            if (c.responseCode == 200) c.inputStream.use { it.readBytes() } else null
-        } catch (e: Exception) { null }
+        // v216: Retry with exponential backoff — WhatsApp rate-limits profile picture
+        // requests when many are fired at once (e.g. scrolling chat/status lists).
+        // 3 attempts: immediate, +1s, +3s. Longer timeouts for slow networks.
+        var lastError: Exception? = null
+        repeat(3) { attempt ->
+            try {
+                if (attempt > 0) delay(if (attempt == 1) 1000L else 3000L)
+                val enc = java.net.URLEncoder.encode(jid, "UTF-8")
+                val c = (URL("$base/dp?jid=$enc").openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"; connectTimeout = 8000; readTimeout = 20000
+                    GatewayAuth.token()?.let { setRequestProperty("X-Api-Token", it) }
+                }
+                // 429 = rate limited — retry; 404 = no DP — don't retry
+                if (c.responseCode == 200) return@withContext c.inputStream.use { it.readBytes() }
+                if (c.responseCode == 404) return@withContext null
+            } catch (e: Exception) { lastError = e }
+        }
+        null
     }
 
     suspend fun mediaBytes(name: String): ByteArray? = withContext(Dispatchers.IO) {
