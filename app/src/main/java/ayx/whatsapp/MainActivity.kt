@@ -159,6 +159,8 @@ import androidx.compose.material.icons.filled.Gesture
 import androidx.compose.material.icons.filled.Grain
 import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.Vibration
