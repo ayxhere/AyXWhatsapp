@@ -2584,7 +2584,7 @@ app.get('/dp', async (req, res) => {
 function httpGet(url, headers) {
   return new Promise((resolve, reject) => {
     try {
-      const req = https.get(url, { headers: headers || { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' }, rejectUnauthorized: false, timeout: 15000 }, (res) => {
+      const req = https.get(url, { headers: headers || { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' }, timeout: 15000 }, (res) => {
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           res.resume(); return httpGet(res.headers.location, headers).then(resolve).catch(reject)
         }

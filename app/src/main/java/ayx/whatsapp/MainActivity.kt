@@ -312,6 +312,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -2782,6 +2784,8 @@ private fun ForwardPicker(messages: List<GatewayClient.Msg>, dpCache: MutableMap
     }
 }
 
+private val dpSemaphore = Semaphore(3)
+
 // resolve a chat's display title from its message log
 private fun chatTitleOf(messages: List<GatewayClient.Msg>, jid: String): String {
     val msgs = messages.filter { it.chat == jid }
@@ -2800,9 +2804,13 @@ internal fun Avatar(jid: String, name: String, cache: MutableMap<String, ImageBi
         // v216: Don't permanently cache failed loads — if DP fetch failed (rate limit,
         // network), retry on next composition instead of showing initial forever.
         // Only cache successful decodes; null means "not yet loaded".
+        // v217: Semaphore limits concurrent DP fetches to 3 — prevents WhatsApp rate-limiting
+        // when many DPs are requested at once (e.g. scrolling lists).
         if (cache[normJid] == null) {
-            val b = GatewayClient.dpBytes(normJid)
-                ?: jid.takeIf { it != normJid }?.let { GatewayClient.dpBytes(it) }
+            val b = dpSemaphore.withPermit {
+                GatewayClient.dpBytes(normJid)
+                    ?: jid.takeIf { it != normJid }?.let { GatewayClient.dpBytes(it) }
+            }
             // v180: the decode used to run on Main (LaunchedEffect resumes
             // on Main after the IO await), so a fast fling queued a
             // full-size decode per newly visible row on the UI thread and
@@ -5594,6 +5602,9 @@ private fun AiSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) 
             }
         }
     }
+
+    // v217: Template image (FB cover size)
+    TemplateImageSetting()
 
     // Exclude list — chats where NO auto-reply / AI reply is sent ("reply nothing to this person")
     SettingsGroup("Don't reply to these chats") {
@@ -11913,4 +11924,155 @@ object AyxServiceConfigLoader {
             AyxServiceConfig().also { cached = it }
         }
     }
+
+// v217: Template Image setting — Facebook cover size (820x312), URL + preview + add/edit.
+// User can set a custom banner image via URL, previewed at FB cover dimensions.
+@Composable
+private fun TemplateImageSetting() {
+    val ctx = LocalContext.current
+    val prefs = remember { ctx.getSharedPreferences("ayx_template", Context.MODE_PRIVATE) }
+    var imageUrl by remember { mutableStateOf(prefs.getString("template_image_url", "") ?: "") }
+    var editUrl by remember { mutableStateOf(imageUrl) }
+    var showEdit by remember { mutableStateOf(false) }
+    var imageBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
+    var loading by remember { mutableStateOf(false) }
+
+    // Load image from URL when URL changes
+    LaunchedEffect(imageUrl) {
+        if (imageUrl.isNotBlank()) {
+            loading = true
+            imageBitmap = withContext(Dispatchers.IO) {
+                try {
+                    val url = java.net.URL(imageUrl)
+                    val conn = url.openConnection() as java.net.HttpURLConnection
+                    conn.connectTimeout = 10000
+                    conn.readTimeout = 15000
+                    conn.doInput = true
+                    conn.connect()
+                    val bytes = conn.inputStream.use { it.readBytes() }
+                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+                } catch (e: Exception) { null }
+            }
+            loading = false
+        } else {
+            imageBitmap = null
+        }
+    }
+
+    StyledSurface(
+        shape = uiShapeFor(16),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Template Image",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                TextButton(onClick = {
+                    editUrl = imageUrl
+                    showEdit = true
+                }) {
+                    Text(if (imageUrl.isBlank()) "Add" else "Edit")
+                }
+            }
+            Text(
+                "Facebook cover size (820 × 312)",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+            // Preview at FB cover aspect ratio (820:312)
+            Box(
+                Modifier.fillMaxWidth()
+                    .aspectRatio(820f / 312f)
+                    .clip(uiShapeFor(12))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center
+            ) {
+                when {
+                    loading -> CircularProgressIndicator()
+                    imageBitmap != null -> Image(
+                        imageBitmap!!,
+                        "template preview",
+                        Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                    else -> Text(
+                        "No image set",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            if (imageUrl.isNotBlank()) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    imageUrl.take(60) + if (imageUrl.length > 60) "..." else "",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
+                )
+            }
+        }
+    }
+
+    if (showEdit) {
+        Dialog(onDismissRequest = { showEdit = false }) {
+            StyledSurface(shape = uiShapeFor(20), color = dialogBg()) {
+                Column(Modifier.padding(20.dp).fillMaxWidth()) {
+                    Text(
+                        if (imageUrl.isBlank()) "Add Template Image" else "Edit Template Image",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Paste image URL (will be shown at 820 × 312):",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = editUrl,
+                        onValueChange = { editUrl = it },
+                        label = { Text("Image URL") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = { showEdit = false }) { Text("Cancel") }
+                        Spacer(Modifier.width(8.dp))
+                        Button(onClick = {
+                            imageUrl = editUrl.trim()
+                            prefs.edit().putString("template_image_url", imageUrl).apply()
+                            showEdit = false
+                            Toast.makeText(ctx, "Template image saved", Toast.LENGTH_SHORT).show()
+                        }) { Text("Save") }
+                        if (imageUrl.isNotBlank()) {
+                            Spacer(Modifier.width(8.dp))
+                            TextButton(onClick = {
+                                imageUrl = ""
+                                editUrl = ""
+                                prefs.edit().remove("template_image_url").apply()
+                                showEdit = false
+                                Toast.makeText(ctx, "Template image removed", Toast.LENGTH_SHORT).show()
+                            }) { Text("Remove", color = MaterialTheme.colorScheme.error) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 }
