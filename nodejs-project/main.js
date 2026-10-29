@@ -2067,23 +2067,50 @@ if (settings.templatesEnabled && settings.templateMain && !templateSentChats.has
                 } catch (e) {}
 
                 if (buttons.length > 0) {
-                  const btnMessages = buttons.map((b, i) => {
+                  // v231: Use Baileys interactive buttons format (not templateButtons)
+                  const baileysButtons = buttons.map((b, i) => {
                     if (b.type === 'url') {
-                      return { name: 'cta_url', buttonParamsJson: JSON.stringify({ display_text: b.text, url: b.value }) }
+                      return {
+                        buttonId: 'tpl_url_' + i,
+                        buttonText: { displayText: b.text },
+                        type: 1,
+                        url: b.value
+                      }
                     } else if (b.type === 'call') {
-                      return { name: 'cta_call', buttonParamsJson: JSON.stringify({ display_text: b.text, phone_number: b.value }) }
+                      return {
+                        buttonId: 'tpl_call_' + i,
+                        buttonText: { displayText: b.text },
+                        type: 2,
+                        phoneNumber: b.value
+                      }
                     } else {
-                      return { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: b.text, id: 'tpl_btn_' + i }) }
+                      return {
+                        buttonId: 'tpl_qr_' + i,
+                        buttonText: { displayText: b.text },
+                        type: 1
+                      }
                     }
                   })
-                  let msgContent = { text: tpl, footer: 'AyX Business', templateButtons: btnMessages }
+                  let msgContent = {
+                    text: tpl,
+                    footer: 'AyX Business',
+                    buttons: baileysButtons,
+                    headerType: 1
+                  }
                   if (settings.templateImage) {
                     try {
                       const imgBuffer = Buffer.from(settings.templateImage, 'base64')
-                      msgContent = { image: imgBuffer, caption: tpl, footer: 'AyX Business', templateButtons: btnMessages }
+                      msgContent = {
+                        image: imgBuffer,
+                        caption: tpl,
+                        footer: 'AyX Business',
+                        buttons: baileysButtons,
+                        headerType: 4
+                      }
                     } catch (e) { log('template image err', e && e.message) }
                   }
                   await sock.sendMessage(from, msgContent, q)
+                  log('template with buttons sent to', from)
                 } else {
                   if (settings.templateImage) {
                     try {
