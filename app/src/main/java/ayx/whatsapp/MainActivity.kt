@@ -8730,9 +8730,24 @@ private fun LinkText(text: String, color: Color, onPhoneClick: ((String) -> Unit
                         append(raw)
                     }
                 } else {
-                    val url = if (raw.startsWith("http")) raw else "https://" + raw
-                    withLink(LinkAnnotation.Url(url, TextLinkStyles(SpanStyle(color = Color(0xFF4EA1FF), textDecoration = TextDecoration.Underline)))) {
-                        append(raw)
+                    // v232: Intercept wa.me links — handle in-app instead of system (prevents crash loop)
+                    val waMeCheck = Regex(""".*wa\.me/(\d+).*""").find(raw)
+                    if (waMeCheck != null) {
+                        val number = waMeCheck.groupValues[1]
+                        withLink(LinkAnnotation.Clickable(
+                            tag = "wame:$number",
+                            styles = TextLinkStyles(SpanStyle(color = Color(0xFF4EA1FF), textDecoration = TextDecoration.Underline))
+                        ) {
+                            // v232: Just show toast — don't let system handle (causes restart loop)
+                            android.widget.Toast.makeText(ctx, "Chat: " + number, android.widget.Toast.LENGTH_SHORT).show()
+                        }) {
+                            append(raw)
+                        }
+                    } else {
+                        val url = if (raw.startsWith("http")) raw else "https://" + raw
+                        withLink(LinkAnnotation.Url(url, TextLinkStyles(SpanStyle(color = Color(0xFF4EA1FF), textDecoration = TextDecoration.Underline)))) {
+                            append(raw)
+                        }
                     }
                 }
                 last = mt.range.last + 1
