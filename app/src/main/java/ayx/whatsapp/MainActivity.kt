@@ -1560,6 +1560,15 @@ fun GatewayApp(updateBlur: Boolean = false) {
     // The Permission Denial crash happened because we launched the intent without
     // the CAMERA permission granted. Now we request it first, then launch.
     var pendingCameraFor by remember { mutableStateOf<String?>(null) } // "status" or "chat"
+    // System camera state for STATUS
+    var statusCameraFile by remember { mutableStateOf<File?>(null) }
+    var statusCameraUri by remember { mutableStateOf<Uri?>(null) }
+    val statusCameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        val f = statusCameraFile; val u = statusCameraUri
+        statusCameraFile = null; statusCameraUri = null
+        if (ok && u != null) pendingStatus = u to "image"
+        else f?.delete()
+    }
     fun launchSystemCameraPhoto() {
         try {
             val dir = File(ctx.cacheDir, "shared").apply { mkdirs() }
