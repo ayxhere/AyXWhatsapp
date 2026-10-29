@@ -89,6 +89,11 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.ui.unit.IntSize
+import androidx.media3.exoplayer.ExoPlayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -1487,8 +1492,9 @@ fun GatewayApp(updateBlur: Boolean = false) {
     var showSetName by remember { mutableStateOf(false) }
     var forwardMsg by remember { mutableStateOf<GatewayClient.Msg?>(null) }
     var forwardStatusId by remember { mutableStateOf<String?>(null) }   // V1: status ID being forwarded via the viewer menu
-    var viewImg by remember { mutableStateOf<Pair<ImageBitmap, GatewayClient.Msg>?>(null) }
-    var viewVideoUrl by remember { mutableStateOf<Pair<String, GatewayClient.Msg>?>(null) }
+    // v202: unified swipeable chat media viewer (replaces viewImg/viewVideoUrl):
+    // the chat's full photo+video list, oldest-first, + the tapped index.
+    var mediaViewer by remember { mutableStateOf<Pair<List<GatewayClient.Msg>, Int>?>(null) }
     var dpView by remember { mutableStateOf<String?>(null) }   // jid whose profile photo is previewed full-screen
     var infoChat by remember { mutableStateOf<String?>(null) }   // v163: jid whose chat/group info page is open
     var infoTitle by remember { mutableStateOf("") }             // v163: display title captured when the info page opens
@@ -1501,16 +1507,18 @@ fun GatewayApp(updateBlur: Boolean = false) {
     val previewCache = remember { mutableStateMapOf<String, ImageBitmap?>() }
 
     fun notify(s: String) { toast = s }
+    // v202: open the swipeable media viewer on message m — the list is EVERY
+    // photo+video message of this chat (sent + received, oldest first); the
+    // pager starts on the tapped message. Per-page loading (full-res with
+    // thumb fallback) happens inside the viewer; undownloaded items show
+    // their thumbnail/loading UI instead of a toast.
     fun openMedia(m: GatewayClient.Msg) {
-        if (m.mediaType == "video") {
-            if (m.mediaName != null) viewVideoUrl = GatewayClient.mediaUrl(m.mediaName!!) to m else notify("turn on Save media to play video")
-            return
-        }
-        scope.launch {
-            val full = m.mediaName?.let { GatewayClient.mediaBytes(it) }
-            val bmp = if (full != null) BitmapFactory.decodeByteArray(full, 0, full.size)?.asImageBitmap() else decodeThumb(m.thumb)
-            if (bmp != null) viewImg = bmp to m else notify("turn on Save media to view full image")
-        }
+        val list = messages
+            .filter { it.chat == m.chat && (it.mediaType == "image" || it.mediaType == "video") && !it.deleted }
+            .sortedBy { it.ts }
+        if (list.isEmpty()) { notify("no media in this chat"); return }
+        val idx = list.indexOfFirst { it.id != null && it.id == m.id }.takeIf { it >= 0 } ?: 0
+        mediaViewer = list to idx
     }
 
     // file picker for sending media
@@ -1864,10 +1872,9 @@ fun GatewayApp(updateBlur: Boolean = false) {
     }
     LaunchedEffect(toast) { if (toast != null) { delay(2500); toast = null } }
 
-    BackHandler(enabled = viewImg != null || viewVideoUrl != null || infoChat != null || openChat != null || storyView != null || screen == "settings" || screen == "newchat" || screen == "profile") {
+    BackHandler(enabled = mediaViewer != null || infoChat != null || openChat != null || storyView != null || screen == "settings" || screen == "newchat" || screen == "profile") {
         when {
-            viewImg != null -> viewImg = null
-            viewVideoUrl != null -> viewVideoUrl = null
+            mediaViewer != null -> mediaViewer = null
             infoChat != null -> infoChat = null
             openChat != null && chatSelMode -> exitChatSel()
             openChat != null -> openChat = null
@@ -2089,51 +2096,24 @@ fun GatewayApp(updateBlur: Boolean = false) {
         )
     }
 
-    // image viewer (full screen) — B7: proper header (back + title + download/share), not just the bare image.
-    // v144: single-tap on the image no longer closes the viewer (user
-    // request) — closing is Back (system / top-bar arrow) only. The image
-    // is pinch-zoomable + pannable, double-tap toggles zoom.
-    viewImg?.let { (img, msg) ->
-        BackHandler { viewImg = null }
+    // v202: swipeable chat media viewer — left/right swipes through ALL
+    // photo+video messages of the chat (oldest first, sent + received).
+    // Pinch/pan are kept per page; a horizontal drag swipes the pager ONLY
+    // when the current image is at minimum zoom (see pagedViewerGestures) —
+    // zoomed-in drags pan the image, like WhatsApp. Back (system / top-bar
+    // arrow) closes; single-tap still does nothing (v144 behavior kept).
+    mediaViewer?.let { (mediaList, startIdx) ->
+        BackHandler { mediaViewer = null }
         ForceLightSystemBarIcons()
-        run {
-            val zoom = remember(msg.id, img) { ViewerZoom() }
-            Box(Modifier.fullscreenOverlay()) {
-                Image(img, "image", Modifier.fillMaxSize().viewerGestures(zoom, doubleTap = true), contentScale = ContentScale.Fit)
-                ViewerTopBar(
-                    title = chatTitleOf(messages, msg.chat), caption = msg.text,
-                    onBack = { viewImg = null },
-                    onDownload = { downloadMedia(scope, ctx, msg) { s -> notify(s) } },
-                    onShare = { shareMedia(scope, ctx, msg) { s -> notify(s) } },
-                    onForward = { if (msg.id == null) notify("can't forward this") else { viewImg = null; forwardMsg = msg } },
-                    modifier = Modifier.align(Alignment.TopCenter),
-                )
-            }
-        }
-    }
-    // video viewer (full screen, in-app player) — B7: proper header instead of just a "Close" text button.
-    viewVideoUrl?.let { (url, msg) ->
-        BackHandler { viewVideoUrl = null }
-        ForceLightSystemBarIcons()
-        run {
-            Box(Modifier.fullscreenOverlay(), contentAlignment = Alignment.Center) {
-                ExoVideoPlayer(
-                    uri = Uri.parse(url),
-                    headers = buildMap { GatewayAuth.token()?.let { put("X-Api-Token", it) } },
-                    modifier = Modifier.fillMaxWidth(),
-                    autoPlay = true,
-                    showController = true,
-                )
-                ViewerTopBar(
-                    title = chatTitleOf(messages, msg.chat), caption = msg.text,
-                    onBack = { viewVideoUrl = null },
-                    onDownload = { downloadMedia(scope, ctx, msg) { s -> notify(s) } },
-                    onShare = { shareMedia(scope, ctx, msg) { s -> notify(s) } },
-                    onForward = { if (msg.id == null) notify("can't forward this") else { viewVideoUrl = null; forwardMsg = msg } },
-                    modifier = Modifier.align(Alignment.TopCenter),
-                )
-            }
-        }
+        MediaPagerViewer(
+            mediaList = mediaList,
+            startIndex = startIdx,
+            title = chatTitleOf(messages, mediaList.first().chat),
+            onClose = { mediaViewer = null },
+            onDownload = { msg -> downloadMedia(scope, ctx, msg) { s -> notify(s) } },
+            onShare = { msg -> shareMedia(scope, ctx, msg) { s -> notify(s) } },
+            onForward = { msg -> if (msg.id == null) notify("can't forward this") else { mediaViewer = null; forwardMsg = msg } },
+        )
     }
     // Status viewer — wrapped in the chosen page-transition animation so the
     // Animation Style setting visibly applies when opening/closing a status.
@@ -9651,6 +9631,220 @@ private fun Modifier.viewerGestures(zoom: ViewerZoom, doubleTap: Boolean): Modif
         scaleY = zoom.scale
         translationX = zoom.offset.x
         translationY = zoom.offset.y
+    }
+}
+
+/**
+ * v202: pinch-zoom + pan for ONE page of the swipeable media viewer.
+ * Same zoom math as [viewerGestures], but gesture CONSUMPTION is conditional:
+ * a single-finger drag is consumed (pans the image) ONLY while zoomed in;
+ * at minimum zoom it is left unconsumed so the HorizontalPager wins the
+ * drag and swipes to the next/previous media. Pinch (2+ fingers) is always
+ * consumed, so pinch-to-zoom works from minimum zoom too. This is what
+ * makes "swipe = next photo" and "drag = pan" coexist like WhatsApp.
+ */
+private fun Modifier.pagedViewerGestures(zoom: ViewerZoom): Modifier {
+    var m = this.pointerInput(zoom) {
+        detectTapGestures(onDoubleTap = { tap ->
+            zoom.touchedAt = System.currentTimeMillis()
+            if (zoom.zoomed) {
+                zoom.reset()
+            } else {
+                zoom.scale = 2.5f
+                val maxX = size.width * (zoom.scale - 1f) / 2f
+                val maxY = size.height * (zoom.scale - 1f) / 2f
+                zoom.offset = Offset(
+                    ((size.width / 2f - tap.x) * zoom.scale).coerceIn(-maxX, maxX),
+                    ((size.height / 2f - tap.y) * zoom.scale).coerceIn(-maxY, maxY),
+                )
+            }
+        })
+    }
+    m = m.pointerInput(zoom) {
+        awaitEachGesture {
+            awaitFirstDown(requireUnconsumed = false)
+            var pastTouchSlop = false
+            var slopPan = Offset.Zero
+            var slopZoom = 1f
+            val touchSlop = viewConfiguration.touchSlop
+            do {
+                val event = awaitPointerEvent()
+                if (event.changes.any { it.isConsumed }) break
+                val pressed = event.changes.filter { it.pressed }
+                if (pressed.size >= 2) {
+                    val zoomChange = event.calculateZoom()
+                    val panChange = event.calculatePan()
+                    if (!pastTouchSlop) {
+                        slopZoom *= zoomChange
+                        slopPan += panChange
+                        if (slopPan.getDistance() > touchSlop || kotlin.math.abs(slopZoom - 1f) > 0.02f) pastTouchSlop = true
+                    }
+                    if (pastTouchSlop) {
+                        event.changes.forEach { it.consume() }
+                        zoom.touchedAt = System.currentTimeMillis()
+                        applyPagedZoom(zoom, event.calculateCentroid(useCurrent = false), panChange, zoomChange, size)
+                    }
+                } else if (pressed.size == 1) {
+                    val c = pressed[0]
+                    val drag = c.position - c.previousPosition
+                    if (!pastTouchSlop) {
+                        slopPan += drag
+                        if (slopPan.getDistance() > touchSlop) pastTouchSlop = true
+                    }
+                    if (pastTouchSlop && zoom.zoomed) {
+                        c.consume()
+                        zoom.touchedAt = System.currentTimeMillis()
+                        val sc = zoom.scale
+                        val maxX = size.width * (sc - 1f) / 2f
+                        val maxY = size.height * (sc - 1f) / 2f
+                        zoom.offset = Offset(
+                            (zoom.offset.x + drag.x).coerceIn(-maxX, maxX),
+                            (zoom.offset.y + drag.y).coerceIn(-maxY, maxY),
+                        )
+                    }
+                    // NOT zoomed: the drag is deliberately left unconsumed so
+                    // the pager's scrollable wins it and swipes pages.
+                }
+            } while (event.changes.any { it.pressed })
+        }
+    }
+    return m.graphicsLayer {
+        scaleX = zoom.scale
+        scaleY = zoom.scale
+        translationX = zoom.offset.x
+        translationY = zoom.offset.y
+    }
+}
+
+/** Pinch math shared with [viewerGestures]: zoom anchored on the pinch centroid, pan clamped. */
+private fun applyPagedZoom(zoom: ViewerZoom, centroid: Offset, pan: Offset, gestureZoom: Float, size: IntSize) {
+    val old = zoom.scale
+    val new = (old * gestureZoom).coerceIn(1f, 5f)
+    if (new <= 1f) {
+        zoom.scale = 1f
+        zoom.offset = Offset.Zero
+    } else {
+        val cx = size.width / 2f
+        val cy = size.height / 2f
+        val ratio = new / old
+        val maxX = size.width * (new - 1f) / 2f
+        val maxY = size.height * (new - 1f) / 2f
+        zoom.scale = new
+        zoom.offset = Offset(
+            ((centroid.x - cx) * (1f - ratio) + zoom.offset.x * ratio + pan.x).coerceIn(-maxX, maxX),
+            ((centroid.y - cy) * (1f - ratio) + zoom.offset.y * ratio + pan.y).coerceIn(-maxY, maxY),
+        )
+    }
+}
+
+/**
+ * v202: the swipeable chat media viewer. One HorizontalPager over the chat's
+ * photo+video messages (oldest first); the top bar (title/caption/download/
+ * share/forward) always binds to the CURRENT page's message. No wrap-around:
+ * the pager clamps at both ends. Back closes the whole viewer.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun MediaPagerViewer(
+    mediaList: List<GatewayClient.Msg>,
+    startIndex: Int,
+    title: String,
+    onClose: () -> Unit,
+    onDownload: (GatewayClient.Msg) -> Unit,
+    onShare: (GatewayClient.Msg) -> Unit,
+    onForward: (GatewayClient.Msg) -> Unit,
+) {
+    val pager = rememberPagerState(
+        initialPage = startIndex.coerceIn(0, (mediaList.size - 1).coerceAtLeast(0))
+    ) { mediaList.size }
+    // Full-res bitmaps, loaded per page on demand (thumb shows meanwhile).
+    // Capped: a long swipe session must not pile up bitmaps.
+    val imgCache = remember { mutableStateMapOf<String, ImageBitmap?>() }
+    val curMsg = mediaList.getOrNull(pager.currentPage)
+    Box(Modifier.fullscreenOverlay()) {
+        HorizontalPager(state = pager, beyondViewportPageCount = 1, modifier = Modifier.fillMaxSize()) { pg ->
+            val msg = mediaList[pg]
+            if (msg.mediaType == "video") {
+                PagerVideoPage(msg = msg, isCurrent = pg == pager.currentPage)
+            } else {
+                PagerImagePage(msg = msg, imgCache = imgCache)
+            }
+        }
+        ViewerTopBar(
+            title = title,
+            caption = curMsg?.text ?: "",
+            onBack = onClose,
+            onDownload = { curMsg?.let(onDownload) },
+            onShare = { curMsg?.let(onShare) },
+            onForward = { curMsg?.let(onForward) },
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
+    }
+}
+
+/** One image page: thumb (or spinner) immediately, full-res swapped in when loaded. */
+@Composable
+private fun PagerImagePage(msg: GatewayClient.Msg, imgCache: MutableMap<String, ImageBitmap?>) {
+    val key = msg.id ?: "${msg.chat}:${msg.ts}:${msg.mediaName}"
+    val zoom = remember(key) { ViewerZoom() }
+    val thumb = remember(key) { decodeThumb(msg.thumb) }
+    val full = imgCache[key]
+    LaunchedEffect(key) {
+        if (!imgCache.containsKey(key) && msg.mediaName != null) {
+            val bytes = GatewayClient.mediaBytes(msg.mediaName)
+            val bmp = bytes?.let { runCatching { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }.getOrNull() }
+            imgCache[key] = bmp ?: thumb
+            while (imgCache.size > 12) {
+                val eldest = imgCache.keys.firstOrNull() ?: break
+                if (eldest == key) break
+                imgCache.remove(eldest)
+            }
+        }
+    }
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        val show = full ?: thumb
+        if (show != null) {
+            Image(show, "image", Modifier.fillMaxSize().pagedViewerGestures(zoom), contentScale = ContentScale.Fit)
+        } else if (msg.mediaName == null) {
+            Text("turn on Save media to view full image", color = Color.White.copy(alpha = 0.7f))
+        } else {
+            CircularProgressIndicator(color = Color.White)
+        }
+    }
+}
+
+/**
+ * One video page: its own ExoPlayer, released when the page leaves the
+ * composition. Playback follows the pager — the newly current page plays,
+ * a page that stopped being current pauses. (ExoVideoPlayer only reads
+ * autoPlay at load time, so the play/pause is driven here via onPlayer.)
+ */
+@Composable
+private fun PagerVideoPage(msg: GatewayClient.Msg, isCurrent: Boolean) {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val url = remember(msg.id, msg.mediaName) { msg.mediaName?.let { GatewayClient.mediaUrl(it) } }
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        if (url != null) {
+            var player by remember { mutableStateOf<ExoPlayer?>(null) }
+            ExoVideoPlayer(
+                uri = Uri.parse(url),
+                headers = buildMap { GatewayAuth.token()?.let { put("X-Api-Token", it) } },
+                modifier = Modifier.fillMaxWidth(),
+                autoPlay = isCurrent,
+                showController = true,
+                onPlayer = { player = it },
+            )
+            LaunchedEffect(isCurrent, player) {
+                val p = player ?: return@LaunchedEffect
+                if (isCurrent) {
+                    if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) runCatching { p.play() }
+                } else {
+                    runCatching { p.pause() }
+                }
+            }
+        } else {
+            Text("turn on Save media to play video", color = Color.White.copy(alpha = 0.7f))
+        }
     }
 }
 
