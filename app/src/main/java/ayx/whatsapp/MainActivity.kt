@@ -5217,7 +5217,7 @@ private fun SettingsHome(status: GatewayClient.Status, onOpen: (String) -> Unit)
         CategoryCard(Icons.Filled.Chat, CAT_WALLPAPER, "Chat", "Wallpaper, bubble style and header") { onOpen("chat") }
         CategoryCard(Icons.Filled.Palette, CAT_APPEARANCE, "Appearance", "Theme and accent color") { onOpen("appearance") }
         CategoryCard(Icons.Filled.Sync, CAT_AI, "Sync", "Drive backup of API keys & prompts") { onOpen("sync") }
-        CategoryCard(Icons.AutoMirrored.Filled.Send, CAT_AUTOREPLY, "Broadcast", "Send bulk messages via JSON with timer") { onOpen("broadcast") }
+        CategoryCard(Icons.Filled.Send, CAT_AUTOREPLY, "Broadcast", "Send bulk messages via JSON with timer") { onOpen("broadcast") }
         CategoryCard(Icons.Filled.Star, Color(0xFFFFD700), "Premium", "Unlimited Broadcast, AI Image & Voice") { onOpen("premium") }
         CategoryCard(Icons.Filled.Info, CAT_ABOUT, "About", "App information and reset") { onOpen("about") }
         CategoryCard(Icons.Filled.Favorite, CAT_SUPPORT, "Support Development", "Donate via UPI or crypto to support AyX") { onOpen("support") }
@@ -5556,12 +5556,12 @@ private fun EmptyState(icon: androidx.compose.ui.graphics.vector.ImageVector, ti
 
 // v223: Message Templates — user-editable templates with on/off toggle.
 // When enabled, the template auto-sends when someone messages (first message).
+@Composable
 // v234: Broadcast — JSON-based bulk messaging with per-message timer.
 // Free: 20/day. Premium: unlimited. Messages are hidden from chat list
 // (ChatFlags.hidden) — double-tap the WhatsAyX title to reveal.
 private data class BroadcastItem(val phone: String, val message: String)
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun BroadcastScreen(ctx: Context) {
     val prefs = remember { ctx.getSharedPreferences("ayx_broadcast", Context.MODE_PRIVATE) }
@@ -5768,7 +5768,7 @@ Rules:
                                     sent++
                                     // Hide from chat list
                                     ChatFlags.hidden[jid] = true
-                                    ChatFlags.prefs?.edit()?.putStringSet("hidden", ChatFlags.hidden.keys.toSet())?.apply()
+                                    ChatFlags.saveHidden()
                                 } else failed++
                             } catch (e: Exception) { failed++ }
                             sentCount = sent; failedCount = failed
@@ -5835,6 +5835,9 @@ private fun getDailyCount(ctx: android.content.Context, key: String): Int {
 
 // v223: Message Templates — user-editable templates with on/off toggle.
 // When enabled, the template auto-sends when someone messages (first message).
+@Composable
+
+
 // v237: Premium — plan selection (1/3/6 months) with secure URL
 @Composable
 private fun PremiumScreen(ctx: Context) {
@@ -5882,7 +5885,7 @@ private fun PremiumScreen(ctx: Context) {
             }
         }
 
-        // v239: secure code is hardcoded above — no manual entry needed
+        // v239: secure code hardcoded — no input UI needed
 
         if (!isPremium) {
             Button(
