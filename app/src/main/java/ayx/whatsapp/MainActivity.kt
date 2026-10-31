@@ -5653,7 +5653,8 @@ Rules:
                                 .putLong("premium_pending_ts", ts)
                                 .apply()
                             val secureCode = "ZGUQZF0opef7B04Tjt6k1CU06HoeoFAkGODk-wPnzKg"
-                            val url = "https://imayx.in/ayx/premium/buy/?code=$secureCode&note=$note"
+                            val deviceId2 = android.provider.Settings.Secure.getString(ctx.contentResolver, android.provider.Settings.Secure.ANDROID_ID) ?: ""
+                            val url = "https://imayx.in/ayx/premium/buy/?code=$secureCode&note=$note&device_id=$deviceId2"
                             try {
                                 val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
                                 ctx.startActivity(intent)
@@ -5845,7 +5846,24 @@ private fun getDailyCount(ctx: android.content.Context, key: String): Int {
 @Composable
 private fun PremiumScreen(ctx: Context) {
     val prefs = remember { ctx.getSharedPreferences("ayx_broadcast", Context.MODE_PRIVATE) }
-    val isPremium = prefs.getBoolean("broadcast_premium", false)
+    var isPremium by remember { mutableStateOf(prefs.getBoolean("broadcast_premium", false)) }
+    // v249: Check backend for premium status on open
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        try {
+            val deviceId = android.provider.Settings.Secure.getString(ctx.contentResolver, android.provider.Settings.Secure.ANDROID_ID) ?: ""
+            if (deviceId.isNotEmpty()) {
+                val url = java.net.URL("https://imayx.in/v1/premium/check?device_id=$deviceId")
+                val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.connectTimeout = 10000
+                conn.readTimeout = 10000
+                val text = conn.inputStream.bufferedReader().readText()
+                if (text.contains("\"premium\":true")) {
+                    prefs.edit().putBoolean("broadcast_premium", true).apply()
+                    isPremium = true
+                }
+            }
+        } catch (_: Exception) {}
+    }
     var selectedPlan by remember { mutableStateOf("1month") }
     // v239: secure code hardcoded (user order) — no manual entry needed
     val secureCode = "ZGUQZF0opef7B04Tjt6k1CU06HoeoFAkGODk-wPnzKg"
@@ -5904,7 +5922,8 @@ private fun PremiumScreen(ctx: Context) {
                         .putString("premium_pending_plan", selectedPlan)
                         .apply()
                     val plan = plans.find { it.first == selectedPlan }
-                    val url = "https://imayx.in/ayx/premium/buy/?code=$code&note=$note"
+                    val deviceId = android.provider.Settings.Secure.getString(ctx.contentResolver, android.provider.Settings.Secure.ANDROID_ID) ?: ""
+                    val url = "https://imayx.in/ayx/premium/buy/?code=$code&note=$note&device_id=$deviceId"
                     try {
                         val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
                         ctx.startActivity(intent)
