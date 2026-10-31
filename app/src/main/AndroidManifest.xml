@@ -15,6 +15,8 @@
          and OEM battery savers can still block them. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- v234: notification permission re-added per user order (was removed in v199) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- v197: Android 11+ package visibility — without <queries>, intent
          resolution is blind and resolveActivity() returns null even with
@@ -116,3 +118,4 @@
         </provider>
     </application>
 </manifest>
+
