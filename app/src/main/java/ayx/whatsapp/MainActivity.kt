@@ -5804,6 +5804,38 @@ private fun parseBroadcastJson(json: String): List<BroadcastItem> {
         for (i in 0 until arr.length()) {
             val obj = arr.getJSONObject(i)
             val phone = obj.optString("phone", "").trim().replace(Regex("[^0-9]"), "")
+            val message = obj.optString("message", "").trim()
+            if (phone.length >= 10 && message.isNotEmpty()) {
+                result.add(BroadcastItem(phone, message))
+            }
+        }
+    } catch (e: Exception) { /* invalid JSON */ }
+    return result
+}
+
+// v235: Daily limit helper for premium-gated features (AI image, voice, broadcast).
+// Free: `freeLimit`/day. Premium (broadcast_premium pref): unlimited.
+private fun checkDailyLimit(ctx: android.content.Context, key: String, freeLimit: Int): Boolean {
+    val prefs = ctx.getSharedPreferences("ayx_broadcast", android.content.Context.MODE_PRIVATE)
+    if (prefs.getBoolean("broadcast_premium", false)) return true
+    val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+    val dateKey = "${key}_date"
+    val countKey = "${key}_count"
+    val savedDate = prefs.getString(dateKey, "")
+    val count = if (savedDate == today) prefs.getInt(countKey, 0) else 0
+    if (count >= freeLimit) return false
+    prefs.edit().putString(dateKey, today).putInt(countKey, count + 1).apply()
+    return true
+}
+private fun getDailyCount(ctx: android.content.Context, key: String): Int {
+    val prefs = ctx.getSharedPreferences("ayx_broadcast", android.content.Context.MODE_PRIVATE)
+    val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+    return if (prefs.getString("${key}_date", "") == today) prefs.getInt("${key}_count", 0) else 0
+}
+
+// v223: Message Templates — user-editable templates with on/off toggle.
+// When enabled, the template auto-sends when someone messages (first message).
+@Composable
 
 
 // v237: Premium — plan selection (1/3/6 months) with secure URL
@@ -5834,7 +5866,6 @@ private fun PremiumScreen(ctx: Context) {
             Text("Unlock unlimited Broadcast, AI Image & Voice", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
-        // Plan selection
         Text("Choose Plan:", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
         plans.forEach { (id, label, price) ->
             val selected = selectedPlan == id
@@ -5854,7 +5885,6 @@ private fun PremiumScreen(ctx: Context) {
             }
         }
 
-        // Secure code input (one-time setup)
         if (showSecureInput) {
             OutlinedTextField(
                 value = secureCode,
@@ -5875,7 +5905,6 @@ private fun PremiumScreen(ctx: Context) {
             }
         }
 
-        // Buy button
         if (!isPremium) {
             Button(
                 onClick = {
@@ -5885,7 +5914,6 @@ private fun PremiumScreen(ctx: Context) {
                         showSecureInput = true
                         return@Button
                     }
-                    // Generate note
                     val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
                     val noteLen = (4..6).random()
                     val note = (1..noteLen).map { chars.random() }.joinToString("")
@@ -5912,7 +5940,6 @@ private fun PremiumScreen(ctx: Context) {
             }
         }
 
-        // Features list
         StyledSurface(shape = uiShapeFor(12), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Premium includes:", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
@@ -5924,6 +5951,7 @@ private fun PremiumScreen(ctx: Context) {
         }
     }
 }
+
 
 private fun TemplatesSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit, ctx: Context) {
     val prefs = remember { ctx.getSharedPreferences("ayx_templates", Context.MODE_PRIVATE) }
