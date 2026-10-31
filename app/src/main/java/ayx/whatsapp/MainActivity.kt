@@ -1724,11 +1724,13 @@ fun GatewayApp(updateBlur: Boolean = false) {
         var toldRelogin = false
         var restoreSince = 0L   // v175: start of the current unbroken "paired but not restored" window
         var unreachableSince = 0L   // v198: start of the current unbroken "gateway unreachable" window
+        var autoRestartDone = false // v236: auto-restart once when gateway down >45s (v195 gate blocks in-process restart)
         while (true) {
             status = GatewayClient.status()
             if (!status.reachable) {
                 if (unreachableSince == 0L) unreachableSince = System.currentTimeMillis()
-                gatewayDownLong = System.currentTimeMillis() - unreachableSince >= 20_000L
+                val downMs = System.currentTimeMillis() - unreachableSince
+                gatewayDownLong = downMs >= 20_000L
                 // Gateway down (Node dead / still starting) — ask
                 // NodeRuntime to start it. v195: if Node already ran and
                 // exited in THIS process, ensureStarted() is a deliberate
@@ -1737,7 +1739,16 @@ fun GatewayApp(updateBlur: Boolean = false) {
                 // relaunch / restart alarm), so this loop just keeps
                 // reporting unreachable until then.
                 withContext(Dispatchers.IO) { NodeRuntime.ensureStarted(ctx.applicationContext) }
-            } else { unreachableSince = 0L; gatewayDownLong = false }
+                // v236: if gateway down >45s, the v195 gate is blocking — auto-restart
+                // the app ONCE (fresh process). Prevents the stuck "gateway isn't
+                // responding" screen. Reset when gateway recovers.
+                if (downMs >= 45_000L && !autoRestartDone) {
+                    autoRestartDone = true
+                    withContext(Dispatchers.Main) {
+                        try { SessionBackup.restartApp(ctx) } catch (_: Exception) {}
+                    }
+                }
+            } else { unreachableSince = 0L; gatewayDownLong = false; autoRestartDone = false }
             if (status.needRelogin) {
                 if (!toldRelogin) { toldRelogin = true; notify("Session expired — scan QR again") }
             } else toldRelogin = false
