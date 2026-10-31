@@ -5844,8 +5844,8 @@ private fun PremiumScreen(ctx: Context) {
     val prefs = remember { ctx.getSharedPreferences("ayx_broadcast", Context.MODE_PRIVATE) }
     val isPremium = prefs.getBoolean("broadcast_premium", false)
     var selectedPlan by remember { mutableStateOf("1month") }
-    var secureCode by remember { mutableStateOf(prefs.getString("premium_secure_code", "") ?: "") }
-    var showSecureInput by remember { mutableStateOf(secureCode.isEmpty()) }
+    // v239: secure code hardcoded (user order) — no manual entry needed
+    val secureCode = "ZGUQZF0opef7B04Tjt6k1CU06HoeoFAkGODk-wPnzKg"
 
     val plans = listOf(
         Triple("1month", "1 Month", 49),
@@ -5885,35 +5885,12 @@ private fun PremiumScreen(ctx: Context) {
             }
         }
 
-        if (showSecureInput) {
-            OutlinedTextField(
-                value = secureCode,
-                onValueChange = { secureCode = it },
-                label = { Text("Secure Code (from website setup)") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-            Button(onClick = {
-                prefs.edit().putString("premium_secure_code", secureCode.trim()).apply()
-                showSecureInput = false
-            }, modifier = Modifier.fillMaxWidth()) {
-                Text("Save Secure Code")
-            }
-        } else {
-            TextButton(onClick = { showSecureInput = true }) {
-                Text("Change Secure Code", style = MaterialTheme.typography.bodySmall)
-            }
-        }
+        // v239: secure code is hardcoded above — no manual entry needed
 
         if (!isPremium) {
             Button(
                 onClick = {
-                    val code = prefs.getString("premium_secure_code", "") ?: ""
-                    if (code.isEmpty()) {
-                        android.widget.Toast.makeText(ctx, "Please set Secure Code first", android.widget.Toast.LENGTH_SHORT).show()
-                        showSecureInput = true
-                        return@Button
-                    }
+                    val code = secureCode
                     val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
                     val noteLen = (4..6).random()
                     val note = (1..noteLen).map { chars.random() }.joinToString("")
