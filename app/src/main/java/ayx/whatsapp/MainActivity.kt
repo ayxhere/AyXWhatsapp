@@ -5845,12 +5845,12 @@ private fun PremiumScreen(ctx: Context) {
     val secureCode = "ZGUQZF0opef7B04Tjt6k1CU06HoeoFAkGODk-wPnzKg"
 
     val plans = listOf(
-        Triple("1month", "1 Month", 49),
-        Triple("3months", "3 Months", 129),
-        Triple("6months", "6 Months", 229)
+        Triple("1month", "1 Month", 1),
+        Triple("3months", "3 Months", 1),
+        Triple("6months", "6 Months", 1)
     )
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("AyX Premium", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
 
         if (isPremium) {
