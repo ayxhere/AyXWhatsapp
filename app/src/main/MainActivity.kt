@@ -5630,10 +5630,22 @@ Rules:
                     Spacer(Modifier.height(8.dp))
                     OutlinedButton(
                         onClick = {
-                            val url = prefs.getString("premium_url", "https://imayx.in/premium") ?: "https://imayx.in/premium"
+                            // v235: generate 4-6 char alphanumeric note for payment matching
+                            val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+                            val noteLen = (4..6).random()
+                            val note = (1..noteLen).map { chars.random() }.joinToString("")
+                            val ts = System.currentTimeMillis()
+                            // Save for verification app to pick up
+                            prefs.edit()
+                                .putString("premium_pending_note", note)
+                                .putLong("premium_pending_ts", ts)
+                                .apply()
+                            val baseUrl = prefs.getString("premium_url", "https://imayx.in/premium") ?: "https://imayx.in/premium"
+                            val url = "$baseUrl?note=$note&ts=$ts"
                             try {
                                 val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
                                 ctx.startActivity(intent)
+                                android.widget.Toast.makeText(ctx, "Note: $note — UPI payment me ye note likhna", android.widget.Toast.LENGTH_LONG).show()
                             } catch (e: Exception) {
                                 android.widget.Toast.makeText(ctx, "Cannot open browser", android.widget.Toast.LENGTH_SHORT).show()
                             }
@@ -5793,6 +5805,26 @@ private fun parseBroadcastJson(json: String): List<BroadcastItem> {
         }
     } catch (e: Exception) { /* invalid JSON */ }
     return result
+}
+
+// v235: Daily limit helper for premium-gated features (AI image, voice, broadcast).
+// Free: `freeLimit`/day. Premium (broadcast_premium pref): unlimited.
+private fun checkDailyLimit(ctx: android.content.Context, key: String, freeLimit: Int): Boolean {
+    val prefs = ctx.getSharedPreferences("ayx_broadcast", android.content.Context.MODE_PRIVATE)
+    if (prefs.getBoolean("broadcast_premium", false)) return true
+    val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+    val dateKey = "${key}_date"
+    val countKey = "${key}_count"
+    val savedDate = prefs.getString(dateKey, "")
+    val count = if (savedDate == today) prefs.getInt(countKey, 0) else 0
+    if (count >= freeLimit) return false
+    prefs.edit().putString(dateKey, today).putInt(countKey, count + 1).apply()
+    return true
+}
+private fun getDailyCount(ctx: android.content.Context, key: String): Int {
+    val prefs = ctx.getSharedPreferences("ayx_broadcast", android.content.Context.MODE_PRIVATE)
+    val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+    return if (prefs.getString("${key}_date", "") == today) prefs.getInt("${key}_count", 0) else 0
 }
 
 // v223: Message Templates — user-editable templates with on/off toggle.
