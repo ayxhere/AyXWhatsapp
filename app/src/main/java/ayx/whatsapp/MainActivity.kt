@@ -5835,9 +5835,6 @@ private fun getDailyCount(ctx: android.content.Context, key: String): Int {
 
 // v223: Message Templates — user-editable templates with on/off toggle.
 // When enabled, the template auto-sends when someone messages (first message).
-@Composable
-
-
 // v237: Premium — plan selection (1/3/6 months) with secure URL
 @Composable
 private fun PremiumScreen(ctx: Context) {
