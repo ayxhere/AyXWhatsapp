@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+        <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Restart the gateway after reboot (BootReceiver) and after a swipe
+         from recents (exact-alarm restart). Both are best-effort: Force-Stop
+         and OEM battery savers can still block them. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- v234: notification permission re-added per user order (was removed in v199) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- v197: Android 11+ package visibility — without <queries>, intent
+         resolution is blind and resolveActivity() returns null even with
+         mail apps installed (the v196 crash-dialog "No mail app found"
+         toast on a device that HAS Gmail/Proton/Hotmail). These entries
+         let the crash-report mail chooser see every mail app. Not a
+         permission; no new data access. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.SENDTO" />
+            <data android:scheme="mailto" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="message/rfc822" />
+        </intent>
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="WhatsAyX"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.WAGateway"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:usesCleartextTraffic="false">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="wa.me" />
+                <data android:scheme="https" android:host="api.whatsapp.com" />
+                <data android:scheme="https" android:host="www.whatsapp.com" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="whatsapp" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".NodeService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Self-hosted WhatsApp gateway engine kept alive for the user's own account" />
+        </service>
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+        <receiver android:name=".ReplyReceiver" android:exported="false" />
+        <!-- Gateway restart: reboot / app update / swipe-away alarm.
+             exported=true is REQUIRED for the system BOOT_COMPLETED
+             broadcast to reach it. It only starts the service when
+             "Run in background" is ON. -->
+        <!-- v167: the custom ACTION_RESTART_NODE action is deliberately NOT
+             in this filter anymore — with exported=true any app could
+             broadcast it and force a gateway restart. The app's own restart
+             path (NodeRestartReceiver.scheduleRestart) already uses an
+             explicit component Intent via AlarmManager PendingIntent, which
+             does not need a manifest filter entry. exported stays true only
+             for the system BOOT_COMPLETED / MY_PACKAGE_REPLACED broadcasts. -->
+        <receiver android:name=".NodeRestartReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Disable emoji2's auto-init so our picked emoji font controls EmojiCompat (see EmojiStore). -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.emoji2.text.EmojiCompatInitializer"
+                tools:node="remove" />
+        </provider>
+    </application>
+</manifest>
+
