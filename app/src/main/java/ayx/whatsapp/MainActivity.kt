@@ -5149,7 +5149,7 @@ private fun AlbumBubble(
 private fun settingsTitle(page: String): String = when (page) {
     "general" -> "General"; "autoreply" -> "Auto-reply"; "ai" -> "AI Assistant"; "chat" -> "Chat Settings"
     "imageai" -> "Image AI"; "aimemory" -> "AI Memory"; "voice" -> "AI Voice"; "font" -> "App font"; "emoji" -> "Emoji"
-    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "accent" -> "Accent Color"; "bluranim" -> "Blur & Animation"; "textanim" -> "Text Animation"; "msgmotion" -> "Message Motion"; "iconstyle" -> "Icon Style"; "about" -> "About"; "sync" -> "Sync"; "support" -> "Support Development"; "templates" -> "Message Templates"; else -> "Settings"
+    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "accent" -> "Accent Color"; "bluranim" -> "Blur & Animation"; "textanim" -> "Text Animation"; "msgmotion" -> "Message Motion"; "iconstyle" -> "Icon Style"; "about" -> "About"; "sync" -> "Sync"; "support" -> "Support Development"; "templates" -> "Message Templates"; "broadcast" -> "Broadcast"; "premium" -> "Premium"; else -> "Settings"
 }
 // parent page for nested back (Wallpaper under Chat Settings; Image AI / AI Memory / Voice under AI Assistant; Font / Emoji / Text Animation / Message Motion / Icon Style / Accent / Blur & Animation under Appearance)
 private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "templates" -> "home"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "appearance"; "emoji" -> "appearance"; "textanim" -> "appearance"; "msgmotion" -> "appearance"; "iconstyle" -> "appearance"; "accent" -> "appearance"; "bluranim" -> "appearance"; else -> "home" }
@@ -5170,6 +5170,8 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
             "emoji" -> SettingsSubPage { EmojiSettings(ctx) }
             "autoreply" -> SettingsSubPage { AutoReplySection(settings, onToggle, onRules) }
             "templates" -> SettingsSubPage { TemplatesSettings(settings, onToggle, ctx) }
+            "broadcast" -> SettingsSubPage { BroadcastScreen(ctx) }
+            "premium" -> SettingsSubPage { PremiumScreen(ctx) }
             "ai" -> SettingsSubPage { AiSettings(settings, onToggle, messages, dpCache, onOpenImageAi = { onPage("imageai") }, onOpenMemory = { onPage("aimemory") }) }
             "imageai" -> SettingsSubPage { ImageAiSettings(settings, onToggle, ctx) }
             "aimemory" -> AiMemoryScreen()   // has its OWN scroll — must NOT be wrapped in SettingsSubPage
@@ -5215,6 +5217,8 @@ private fun SettingsHome(status: GatewayClient.Status, onOpen: (String) -> Unit)
         CategoryCard(Icons.Filled.Chat, CAT_WALLPAPER, "Chat", "Wallpaper, bubble style and header") { onOpen("chat") }
         CategoryCard(Icons.Filled.Palette, CAT_APPEARANCE, "Appearance", "Theme and accent color") { onOpen("appearance") }
         CategoryCard(Icons.Filled.Sync, CAT_AI, "Sync", "Drive backup of API keys & prompts") { onOpen("sync") }
+        CategoryCard(Icons.Filled.Send, CAT_AUTOREPLY, "Broadcast", "Send bulk messages via JSON with timer") { onOpen("broadcast") }
+        CategoryCard(Icons.Filled.Star, Color(0xFFFFD700), "Premium", "Unlimited Broadcast, AI Image & Voice") { onOpen("premium") }
         CategoryCard(Icons.Filled.Info, CAT_ABOUT, "About", "App information and reset") { onOpen("about") }
         CategoryCard(Icons.Filled.Favorite, CAT_SUPPORT, "Support Development", "Donate via UPI or crypto to support AyX") { onOpen("support") }
         Spacer(Modifier.height(16.dp))
@@ -5553,6 +5557,374 @@ private fun EmptyState(icon: androidx.compose.ui.graphics.vector.ImageVector, ti
 // v223: Message Templates — user-editable templates with on/off toggle.
 // When enabled, the template auto-sends when someone messages (first message).
 @Composable
+// v234: Broadcast — JSON-based bulk messaging with per-message timer.
+// Free: 20/day. Premium: unlimited. Messages are hidden from chat list
+// (ChatFlags.hidden) — double-tap the WhatsAyX title to reveal.
+private data class BroadcastItem(val phone: String, val message: String)
+
+@Composable
+private fun BroadcastScreen(ctx: Context) {
+    val prefs = remember { ctx.getSharedPreferences("ayx_broadcast", Context.MODE_PRIVATE) }
+    var jsonInput by remember { mutableStateOf("") }
+    var timerSecs by remember { mutableStateOf(30) }
+    var customTimer by remember { mutableStateOf("") }
+    var showCustom by remember { mutableStateOf(false) }
+    var sending by remember { mutableStateOf(false) }
+    var sentCount by remember { mutableStateOf(0) }
+    var failedCount by remember { mutableStateOf(0) }
+    var totalCount by remember { mutableStateOf(0) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+    var showPrompt by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    val isPremium = prefs.getBoolean("broadcast_premium", false)
+    val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+    val dailyDate = prefs.getString("broadcast_daily_date", "")
+    var dailyCount by remember { mutableStateOf(if (dailyDate == today) prefs.getInt("broadcast_daily_count", 0) else 0) }
+
+    val dailyLimit = if (isPremium) Int.MAX_VALUE else 20
+    val remaining = if (isPremium) -1 else (dailyLimit - dailyCount).coerceAtLeast(0)
+
+    val aiPrompt = remember {
+        """Mujhe WhatsApp broadcast ke liye JSON banao. Format exactly aisa hona chahiye:
+[
+  {"phone": "919876543210", "message": "Hello! Ye mera message hai."},
+  {"phone": "918765432109", "message": "Hi! Dusra message."}
+]
+Rules:
+- phone me country code hona chahiye (91 for India), bina + ke
+- Har entry me phone aur message dono hone chahiye
+- Sirf JSON output do, koi extra text nahi"""
+    }
+
+    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // AI Prompt section
+        StyledSurface(shape = uiShapeFor(16), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)) {
+            Column(Modifier.padding(14.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("AI Prompt", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+                    TextButton(onClick = {
+                        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        cm.setPrimaryClip(android.content.ClipData.newPlainText("Broadcast Prompt", aiPrompt))
+                        android.widget.Toast.makeText(ctx, "Prompt copied!", android.widget.Toast.LENGTH_SHORT).show()
+                    }) { Text("Copy") }
+                }
+                Text("Is prompt ko copy karke kisi bhi AI ko bhejo, message aur numbers likho, AI JSON banayega. Phir JSON yahan paste karo.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (showPrompt) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(aiPrompt, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f), uiShapeFor(8)).padding(8.dp))
+                }
+                TextButton(onClick = { showPrompt = !showPrompt }) {
+                    Text(if (showPrompt) "Hide prompt" else "Show prompt")
+                }
+            }
+        }
+
+        // Daily limit indicator
+        StyledSurface(shape = uiShapeFor(16), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)) {
+            Column(Modifier.padding(14.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (isPremium) "Premium: Unlimited" else "Today: $dailyCount / $dailyLimit sent",
+                        style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    if (!isPremium && remaining == 0) {
+                        Text("Limit reached", color = ERR_RED, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                    }
+                }
+                if (!isPremium) {
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = {
+                            // v235: generate 4-6 char alphanumeric note for payment matching
+                            val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+                            val noteLen = (4..6).random()
+                            val note = (1..noteLen).map { chars.random() }.joinToString("")
+                            val ts = System.currentTimeMillis()
+                            // Save for verification app to pick up
+                            prefs.edit()
+                                .putString("premium_pending_note", note)
+                                .putLong("premium_pending_ts", ts)
+                                .apply()
+                            val baseUrl = prefs.getString("premium_url", "https://imayx.in/premium") ?: "https://imayx.in/premium"
+                            val url = "$baseUrl?note=$note&ts=$ts"
+                            try {
+                                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                                ctx.startActivity(intent)
+                                android.widget.Toast.makeText(ctx, "Note: $note — UPI payment me ye note likhna", android.widget.Toast.LENGTH_LONG).show()
+                            } catch (e: Exception) {
+                                android.widget.Toast.makeText(ctx, "Cannot open browser", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Buy Premium — Unlimited Broadcast")
+                    }
+                }
+            }
+        }
+
+        // JSON input
+        Text("Paste JSON here:", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+        androidx.compose.foundation.layout.Box(
+            Modifier.fillMaxWidth().height(180.dp)
+                .background(MaterialTheme.colorScheme.surface, uiShapeFor(12))
+                .padding(4.dp)
+        ) {
+            androidx.compose.foundation.text.BasicTextField(
+                value = jsonInput,
+                onValueChange = { jsonInput = it },
+                modifier = Modifier.fillMaxSize().padding(8.dp),
+                textStyle = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurface),
+            )
+            if (jsonInput.isEmpty()) {
+                Text("[\n  {\"phone\": \"919876543210\", \"message\": \"Hello\"},\n  ...\n]",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.padding(12.dp))
+            }
+        }
+
+        // Timer selector
+        Text("Delay between messages:", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+        val timers = listOf(10 to "10s", 30 to "30s", 60 to "1m", 120 to "2m", 300 to "5m", 600 to "10m", 1800 to "30m")
+        androidx.compose.foundation.layout.FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            timers.forEach { (secs, label) ->
+                FilterChip(
+                    selected = timerSecs == secs && !showCustom,
+                    onClick = { timerSecs = secs; showCustom = false },
+                    label = { Text(label) }
+                )
+            }
+            FilterChip(
+                selected = showCustom,
+                onClick = { showCustom = true },
+                label = { Text("Custom") }
+            )
+        }
+        if (showCustom) {
+            OutlinedTextField(
+                value = customTimer,
+                onValueChange = { customTimer = it.filter { c -> c.isDigit() } },
+                label = { Text("Seconds") },
+                singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        errorMsg?.let {
+            Text(it, color = ERR_RED, style = MaterialTheme.typography.bodySmall)
+        }
+
+        // Progress
+        if (sending || totalCount > 0) {
+            StyledSurface(shape = uiShapeFor(16), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)) {
+                Column(Modifier.padding(14.dp)) {
+                    if (sending) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = AYX_GREEN)
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    Text("Sent: $sentCount / $totalCount", style = MaterialTheme.typography.bodyMedium)
+                    if (failedCount > 0) {
+                        Text("Failed: $failedCount", color = ERR_RED, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+        }
+
+        // Send button
+        Button(
+            onClick = {
+                scope.launch {
+                    errorMsg = null
+                    sentCount = 0; failedCount = 0; totalCount = 0
+                    try {
+                        val items = parseBroadcastJson(jsonInput)
+                        if (items.isEmpty()) { errorMsg = "No valid entries found in JSON"; return@launch }
+                        val effectiveTimer = if (showCustom) (customTimer.toIntOrNull() ?: 0) else timerSecs
+                        if (effectiveTimer <= 0) { errorMsg = "Please set a valid timer"; return@launch }
+
+                        // Check daily limit
+                        val allowed = if (isPremium) items.size else minOf(items.size, remaining)
+                        if (allowed <= 0) { errorMsg = "Daily limit reached (20/day for free)"; return@launch }
+                        val toSend = items.take(allowed)
+                        if (toSend.size < items.size) {
+                            errorMsg = "Only ${toSend.size} will be sent (daily limit). ${items.size - toSend.size} skipped."
+                        }
+
+                        sending = true
+                        totalCount = toSend.size
+                        var sent = 0; var failed = 0
+
+                        for ((index, item) in toSend.withIndex()) {
+                            try {
+                                val jid = if (item.phone.contains("@")) item.phone else "${item.phone}@s.whatsapp.net"
+                                val ok = GatewayClient.sendToJid(jid, item.message)
+                                if (ok) {
+                                    sent++
+                                    // Hide from chat list
+                                    ChatFlags.hidden[jid] = true
+                                    ChatFlags.saveHidden()
+                                } else failed++
+                            } catch (e: Exception) { failed++ }
+                            sentCount = sent; failedCount = failed
+                            // Update daily count
+                            dailyCount++
+                            prefs.edit().putInt("broadcast_daily_count", dailyCount).putString("broadcast_daily_date", today).apply()
+                            // Delay before next (except after last)
+                            if (index < toSend.size - 1) delay(effectiveTimer * 1000L)
+                        }
+                        sending = false
+                    } catch (e: Exception) {
+                        errorMsg = "Error: ${e.message}"
+                        sending = false
+                    }
+                }
+            },
+            enabled = !sending && jsonInput.isNotBlank(),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(if (sending) "Sending..." else "Start Broadcast")
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Text("Broadcast messages are hidden from the chat list. Double-tap the WhatsAyX title to reveal them.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+private fun parseBroadcastJson(json: String): List<BroadcastItem> {
+    val result = mutableListOf<BroadcastItem>()
+    try {
+        val arr = org.json.JSONArray(json.trim())
+        for (i in 0 until arr.length()) {
+            val obj = arr.getJSONObject(i)
+            val phone = obj.optString("phone", "").trim().replace(Regex("[^0-9]"), "")
+
+
+// v237: Premium — plan selection (1/3/6 months) with secure URL
+@Composable
+private fun PremiumScreen(ctx: Context) {
+    val prefs = remember { ctx.getSharedPreferences("ayx_broadcast", Context.MODE_PRIVATE) }
+    val isPremium = prefs.getBoolean("broadcast_premium", false)
+    var selectedPlan by remember { mutableStateOf("1month") }
+    var secureCode by remember { mutableStateOf(prefs.getString("premium_secure_code", "") ?: "") }
+    var showSecureInput by remember { mutableStateOf(secureCode.isEmpty()) }
+
+    val plans = listOf(
+        Triple("1month", "1 Month", 49),
+        Triple("3months", "3 Months", 129),
+        Triple("6months", "6 Months", 229)
+    )
+
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("AyX Premium", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+
+        if (isPremium) {
+            StyledSurface(shape = uiShapeFor(16), color = AYX_GREEN.copy(alpha = 0.15f)) {
+                Row(Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("✓ Premium Active", color = AYX_GREEN, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                }
+            }
+        } else {
+            Text("Unlock unlimited Broadcast, AI Image & Voice", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+
+        // Plan selection
+        Text("Choose Plan:", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+        plans.forEach { (id, label, price) ->
+            val selected = selectedPlan == id
+            StyledSurface(
+                shape = uiShapeFor(12),
+                color = if (selected) AYX_GREEN.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                modifier = Modifier.fillMaxWidth().clickable { selectedPlan = id }
+            ) {
+                Row(Modifier.padding(14.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column {
+                        Text(label, fontWeight = FontWeight.Medium)
+                        if (id == "3months") Text("Save ₹18", style = MaterialTheme.typography.bodySmall, color = AYX_GREEN)
+                        if (id == "6months") Text("Save ₹65", style = MaterialTheme.typography.bodySmall, color = AYX_GREEN)
+                    }
+                    Text("₹$price", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium, color = if (selected) AYX_GREEN else MaterialTheme.colorScheme.onSurface)
+                }
+            }
+        }
+
+        // Secure code input (one-time setup)
+        if (showSecureInput) {
+            OutlinedTextField(
+                value = secureCode,
+                onValueChange = { secureCode = it },
+                label = { Text("Secure Code (from website setup)") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            Button(onClick = {
+                prefs.edit().putString("premium_secure_code", secureCode.trim()).apply()
+                showSecureInput = false
+            }, modifier = Modifier.fillMaxWidth()) {
+                Text("Save Secure Code")
+            }
+        } else {
+            TextButton(onClick = { showSecureInput = true }) {
+                Text("Change Secure Code", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
+        // Buy button
+        if (!isPremium) {
+            Button(
+                onClick = {
+                    val code = prefs.getString("premium_secure_code", "") ?: ""
+                    if (code.isEmpty()) {
+                        android.widget.Toast.makeText(ctx, "Please set Secure Code first", android.widget.Toast.LENGTH_SHORT).show()
+                        showSecureInput = true
+                        return@Button
+                    }
+                    // Generate note
+                    val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+                    val noteLen = (4..6).random()
+                    val note = (1..noteLen).map { chars.random() }.joinToString("")
+                    val ts = System.currentTimeMillis()
+                    prefs.edit()
+                        .putString("premium_pending_note", note)
+                        .putLong("premium_pending_ts", ts)
+                        .putString("premium_pending_plan", selectedPlan)
+                        .apply()
+                    val plan = plans.find { it.first == selectedPlan }
+                    val url = "https://imayx.in/ayx/premium/buy/$code/$note/"
+                    try {
+                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                        ctx.startActivity(intent)
+                        android.widget.Toast.makeText(ctx, "Note: $note — UPI me ye note likhna (₹${plan?.third})", android.widget.Toast.LENGTH_LONG).show()
+                    } catch (e: Exception) {
+                        android.widget.Toast.makeText(ctx, "Cannot open browser", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                val plan = plans.find { it.first == selectedPlan }
+                Text("Buy ${plan?.second} — ₹${plan?.third}")
+            }
+        }
+
+        // Features list
+        StyledSurface(shape = uiShapeFor(12), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Premium includes:", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+                Text("• Unlimited Broadcast messages", style = MaterialTheme.typography.bodySmall)
+                Text("• Unlimited AI Image generation", style = MaterialTheme.typography.bodySmall)
+                Text("• Unlimited AI Voice", style = MaterialTheme.typography.bodySmall)
+                Text("• Priority support", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
 private fun TemplatesSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit, ctx: Context) {
     val prefs = remember { ctx.getSharedPreferences("ayx_templates", Context.MODE_PRIVATE) }
     var enabled by remember { mutableStateOf(prefs.getBoolean("templates_enabled", false)) }
