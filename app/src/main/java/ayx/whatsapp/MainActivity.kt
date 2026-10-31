@@ -748,28 +748,34 @@ private fun CrashReportDialog(report: String, onDone: () -> Unit) {
         },
         confirmButton = {
             TextButton(onClick = {
-                // v197: ACTION_SEND + message/rfc822 so the chooser lists
-                // EVERY installed mail app (Gmail, Proton Mail, Hotmail,
-                // Outlook...). The old ACTION_SENDTO mailto: form only
-                // matches mailto filters AND, with no <queries> in the
-                // manifest (Android 11+ package visibility), resolveActivity
-                // returned null even with mail apps installed — the exact
-                // v196 "No mail app found" toast on a device that HAS mail
-                // apps. Same recipient, subject, and full report body.
-                // Preservation (v196) kept: nothing resolves -> toast and
-                // NO onDone(), so the report stays saved for next launch.
-                val intent = Intent(Intent.ACTION_SEND).apply {
+                // v247: Open Gmail DIRECTLY (user order) — no chooser.
+                // Falls back to chooser if Gmail not installed.
+                val gmailIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "message/rfc822"
+                    setPackage("com.google.android.gm")
                     putExtra(Intent.EXTRA_EMAIL, arrayOf("raju@imayx.in"))
                     putExtra(Intent.EXTRA_SUBJECT, CrashReporter.subject(report))
                     putExtra(Intent.EXTRA_TEXT, report)
                 }
-                val canSend = runCatching { intent.resolveActivity(ctx.packageManager) != null }.getOrDefault(false)
-                if (!canSend) {
-                    Toast.makeText(ctx, "No mail app found — open a mail app to send the report", Toast.LENGTH_LONG).show()
-                } else {
-                    runCatching { ctx.startActivity(Intent.createChooser(intent, "Send crash report")) }
+                val gmailAvailable = runCatching { gmailIntent.resolveActivity(ctx.packageManager) != null }.getOrDefault(false)
+                if (gmailAvailable) {
+                    runCatching { ctx.startActivity(gmailIntent) }
                     onDone()
+                } else {
+                    // Fallback: generic chooser
+                    val intent = Intent(Intent.ACTION_SEND).apply {
+                        type = "message/rfc822"
+                        putExtra(Intent.EXTRA_EMAIL, arrayOf("raju@imayx.in"))
+                        putExtra(Intent.EXTRA_SUBJECT, CrashReporter.subject(report))
+                        putExtra(Intent.EXTRA_TEXT, report)
+                    }
+                    val canSend = runCatching { intent.resolveActivity(ctx.packageManager) != null }.getOrDefault(false)
+                    if (!canSend) {
+                        Toast.makeText(ctx, "No mail app found — open a mail app to send the report", Toast.LENGTH_LONG).show()
+                    } else {
+                        runCatching { ctx.startActivity(Intent.createChooser(intent, "Send crash report")) }
+                        onDone()
+                    }
                 }
             }) { Text("Send crash report") }
         },
@@ -5586,15 +5592,15 @@ private fun BroadcastScreen(ctx: Context) {
     val remaining = if (isPremium) -1 else (dailyLimit - dailyCount).coerceAtLeast(0)
 
     val aiPrompt = remember {
-        """Mujhe WhatsApp broadcast ke liye JSON banao. Format exactly aisa hona chahiye:
+        """Create JSON for WhatsApp broadcast. Format must be exactly like this:
 [
-  {"phone": "919876543210", "message": "Hello! Ye mera message hai."},
-  {"phone": "918765432109", "message": "Hi! Dusra message."}
+  {"phone": "919876543210", "message": "Hello! This is my message."},
+  {"phone": "918765432109", "message": "Hi! Another message."}
 ]
 Rules:
-- phone me country code hona chahiye (91 for India), bina + ke
-- Har entry me phone aur message dono hone chahiye
-- Sirf JSON output do, koi extra text nahi"""
+- phone must include country code (91 for India), without +
+- Each entry must have both phone and message
+- Output ONLY JSON, no extra text"""
     }
 
     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -5609,7 +5615,7 @@ Rules:
                         android.widget.Toast.makeText(ctx, "Prompt copied!", android.widget.Toast.LENGTH_SHORT).show()
                     }) { Text("Copy") }
                 }
-                Text("Is prompt ko copy karke kisi bhi AI ko bhejo, message aur numbers likho, AI JSON banayega. Phir JSON yahan paste karo.",
+                Text("Copy this prompt and send it to any AI with your message and numbers. The AI will create JSON. Then paste the JSON here.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (showPrompt) {
                     Spacer(Modifier.height(8.dp))
@@ -5646,8 +5652,8 @@ Rules:
                                 .putString("premium_pending_note", note)
                                 .putLong("premium_pending_ts", ts)
                                 .apply()
-                            val baseUrl = prefs.getString("premium_url", "https://imayx.in/premium") ?: "https://imayx.in/premium"
-                            val url = "$baseUrl?note=$note&ts=$ts"
+                            val secureCode = "ZGUQZF0opef7B04Tjt6k1CU06HoeoFAkGODk-wPnzKg"
+                            val url = "https://imayx.in/ayx/premium/buy/$secureCode/$note/"
                             try {
                                 val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
                                 ctx.startActivity(intent)
