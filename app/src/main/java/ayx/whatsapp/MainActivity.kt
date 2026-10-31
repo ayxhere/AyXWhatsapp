@@ -5927,6 +5927,7 @@ private fun PremiumScreen(ctx: Context) {
 }
 
 
+@Composable
 private fun TemplatesSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit, ctx: Context) {
     val prefs = remember { ctx.getSharedPreferences("ayx_templates", Context.MODE_PRIVATE) }
     var enabled by remember { mutableStateOf(prefs.getBoolean("templates_enabled", false)) }
