@@ -5653,7 +5653,7 @@ Rules:
                                 .putLong("premium_pending_ts", ts)
                                 .apply()
                             val secureCode = "ZGUQZF0opef7B04Tjt6k1CU06HoeoFAkGODk-wPnzKg"
-                            val url = "https://imayx.in/ayx/premium/buy/$secureCode/$note/"
+                            val url = "https://imayx.in/ayx/premium/buy/?code=$secureCode&note=$note"
                             try {
                                 val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
                                 ctx.startActivity(intent)
@@ -5904,7 +5904,7 @@ private fun PremiumScreen(ctx: Context) {
                         .putString("premium_pending_plan", selectedPlan)
                         .apply()
                     val plan = plans.find { it.first == selectedPlan }
-                    val url = "https://imayx.in/ayx/premium/buy/$code/$note/"
+                    val url = "https://imayx.in/ayx/premium/buy/?code=$code&note=$note"
                     try {
                         val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
                         ctx.startActivity(intent)
