@@ -5,7 +5,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
- * AyX Premium Design System — four selectable visual themes.
+ * AyX Design System — four selectable visual themes.
  *
  * Each theme provides a complete set of design tokens. Screens read the
  * active theme via [AyxThemeProvider.current] and style themselves

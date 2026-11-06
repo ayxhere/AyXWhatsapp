@@ -11,7 +11,7 @@ import android.os.Build
 import java.security.MessageDigest
 
 /**
- * Paytm-style app-integrity verdict, computed once per process and cached.
+ * App-integrity verdict, computed once per process and cached.
  *
  * Genuine = ALL of:
  *  1. The running APK is signed with the release key (SHA-256 of the signing

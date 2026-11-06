@@ -46,7 +46,7 @@ import androidx.compose.ui.unit.dp
 /**
  * Settings → Appearance screen.
  *
- * Shows the four premium styles as selectable cards with live mini previews.
+ * Shows the four styles as selectable cards with live mini previews.
  * Selection applies immediately via [ThemeStore.setAppearanceStyle] and
  * persists across restarts (SharedPreferences).
  */

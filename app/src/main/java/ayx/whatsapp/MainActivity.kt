@@ -787,8 +787,7 @@ private fun CrashReportDialog(report: String, onDone: () -> Unit) {
 
 /**
  * v147: update prompt; content comes from the release the admin publishes
- * in the AyX Group panel (GET /v1/release, see AyxUpdate). v156: premium
- * redesign — a bigger glass card in the app's OWN theme (every color comes
+ * in the AyX Group panel (GET /v1/release, see AyxUpdate). v156: redesign — a bigger glass card in the app's OWN theme (every color comes
  * from MaterialTheme / dialogBg(), so it always matches the theme + accent
  * the user set in the app), a gradient download badge with a soft glow and
  * pulse, and a spring entrance animation. Behind it, ONLY the home content
@@ -865,7 +864,7 @@ private fun AyxUpdateDialog(info: AyxUpdate.Info, onLater: () -> Unit) {
                     Box(contentAlignment = Alignment.Center) {
                         // Soft ROUND light behind the badge (radial fade — round by construction).
                         Box(Modifier.size(104.dp).background(Brush.radialGradient(listOf(scheme.primary.copy(alpha = 0.38f), Color.Transparent)), CircleShape))
-                        // Premium rounded-box tile: gradient fill + hand-drawn glyph.
+                        // Rounded-box tile: gradient fill + hand-drawn glyph.
                         Box(
                             Modifier.size(64.dp).graphicsLayer { scaleX = badgeScale; scaleY = badgeScale }
                                 .background(Brush.linearGradient(listOf(scheme.primary, scheme.tertiary)), RoundedCornerShape(20.dp)),
@@ -2225,7 +2224,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
             if (status.registered && openChat == null && screen == "chats") {
                 if (chatsPage == 1) Box {
                     FloatingActionButton(onClick = { statusFabMenu = true }) { AyxIcon(Icons.Filled.PhotoCamera, "add status") }
-                    // v194: premium popup — rounded card, app menu tint, soft lift; items/order/behavior unchanged.
+                    // v194: popup — rounded card, app menu tint, soft lift; items/order/behavior unchanged.
                     DropdownMenu(expanded = statusFabMenu, onDismissRequest = { statusFabMenu = false },
                         shape = uiShapeFor(16), containerColor = MaterialTheme.colorScheme.surface.copy(alpha = ayxMenuAlpha()), shadowElevation = 8.dp, tonalElevation = 0.dp) {
                         DropdownMenuItem(text = { Text("Photo / Video", style = MaterialTheme.typography.bodyLarge) }, leadingIcon = { AyxIcon(Icons.Filled.PhotoCamera, null) },
@@ -5173,7 +5172,7 @@ private fun AlbumBubble(
 private fun settingsTitle(page: String): String = when (page) {
     "general" -> "General"; "autoreply" -> "Auto-reply"; "ai" -> "AI Assistant"; "chat" -> "Chat Settings"
     "imageai" -> "Image AI"; "aimemory" -> "AI Memory"; "voice" -> "AI Voice"; "font" -> "App font"; "emoji" -> "Emoji"
-    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "accent" -> "Accent Color"; "bluranim" -> "Blur & Animation"; "textanim" -> "Text Animation"; "msgmotion" -> "Message Motion"; "iconstyle" -> "Icon Style"; "about" -> "About"; "sync" -> "Sync"; "support" -> "Support Development"; "broadcast" -> "Broadcast"; "premium" -> "Premium"; else -> "Settings"
+    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "accent" -> "Accent Color"; "bluranim" -> "Blur & Animation"; "textanim" -> "Text Animation"; "msgmotion" -> "Message Motion"; "iconstyle" -> "Icon Style"; "about" -> "About"; "sync" -> "Sync"; "support" -> "Support Development"; "broadcast" -> "Broadcast"; else -> "Settings"
 }
 // parent page for nested back (Wallpaper under Chat Settings; Image AI / AI Memory / Voice under AI Assistant; Font / Emoji / Text Animation / Message Motion / Icon Style / Accent / Blur & Animation under Appearance)
 private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "appearance"; "emoji" -> "appearance"; "textanim" -> "appearance"; "msgmotion" -> "appearance"; "iconstyle" -> "appearance"; "accent" -> "appearance"; "bluranim" -> "appearance"; else -> "home" }
@@ -5194,7 +5193,6 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
             "emoji" -> SettingsSubPage { EmojiSettings(ctx) }
             "autoreply" -> SettingsSubPage { AutoReplySection(settings, onToggle, onRules) }
             "broadcast" -> SettingsSubPage { BroadcastScreen(ctx) }
-            "premium" -> SettingsSubPage { PremiumScreen(ctx) }
             "ai" -> SettingsSubPage { AiSettings(settings, onToggle, messages, dpCache, onOpenImageAi = { onPage("imageai") }, onOpenMemory = { onPage("aimemory") }) }
             "imageai" -> SettingsSubPage { ImageAiSettings(settings, onToggle, ctx) }
             "aimemory" -> AiMemoryScreen()   // has its OWN scroll — must NOT be wrapped in SettingsSubPage
@@ -5240,7 +5238,6 @@ private fun SettingsHome(status: GatewayClient.Status, onOpen: (String) -> Unit)
         CategoryCard(Icons.Filled.Palette, CAT_APPEARANCE, "Appearance", "Theme and accent color") { onOpen("appearance") }
         CategoryCard(Icons.Filled.Sync, CAT_AI, "Sync", "Drive backup of API keys & prompts") { onOpen("sync") }
         CategoryCard(Icons.Filled.Share, CAT_AUTOREPLY, "Broadcast", "Send bulk messages via JSON with timer") { onOpen("broadcast") }
-        CategoryCard(Icons.Filled.Star, Color(0xFFFFD700), "Premium", "Unlimited Broadcast, AI Image & Voice") { onOpen("premium") }
         CategoryCard(Icons.Filled.Info, CAT_ABOUT, "About", "App information and reset") { onOpen("about") }
         CategoryCard(Icons.Filled.Favorite, CAT_SUPPORT, "Support Development", "Donate via UPI or crypto to support AyX") { onOpen("support") }
         Spacer(Modifier.height(16.dp))
@@ -5577,14 +5574,13 @@ private fun EmptyState(icon: androidx.compose.ui.graphics.vector.ImageVector, ti
 }
 
 // v234: Broadcast — JSON-based bulk messaging with per-message timer.
-// Free: 20/day. Premium: unlimited. Messages are hidden from chat list
+// Unlimited. Messages are hidden from chat list
 // (ChatFlags.hidden) — double-tap the WhatsAyX title to reveal.
 private data class BroadcastItem(val phone: String, val message: String)
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun BroadcastScreen(ctx: Context) {
-    val prefs = remember { ctx.getSharedPreferences("ayx_broadcast", Context.MODE_PRIVATE) }
     var jsonInput by remember { mutableStateOf("") }
     var timerSecs by remember { mutableStateOf(30) }
     var customTimer by remember { mutableStateOf("") }
@@ -5596,14 +5592,6 @@ private fun BroadcastScreen(ctx: Context) {
     var errorMsg by remember { mutableStateOf<String?>(null) }
     var showPrompt by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-
-    val isPremium = prefs.getBoolean("broadcast_premium", false)
-    val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
-    val dailyDate = prefs.getString("broadcast_daily_date", "")
-    var dailyCount by remember { mutableStateOf(if (dailyDate == today) prefs.getInt("broadcast_daily_count", 0) else 0) }
-
-    val dailyLimit = if (isPremium) Int.MAX_VALUE else 20
-    val remaining = if (isPremium) -1 else (dailyLimit - dailyCount).coerceAtLeast(0)
 
     val aiPrompt = remember {
         """Create JSON for WhatsApp broadcast. Format must be exactly like this:
@@ -5638,58 +5626,6 @@ Rules:
                 }
                 TextButton(onClick = { showPrompt = !showPrompt }) {
                     Text(if (showPrompt) "Hide prompt" else "Show prompt")
-                }
-            }
-        }
-
-        // Daily limit indicator
-        StyledSurface(shape = uiShapeFor(16), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)) {
-            Column(Modifier.padding(14.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (isPremium) "Premium: Unlimited" else "Today: $dailyCount / $dailyLimit sent",
-                        style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                    if (!isPremium && remaining == 0) {
-                        Text("Limit reached", color = ERR_RED, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
-                    }
-                }
-                if (!isPremium) {
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedButton(
-                        onClick = {
-                            // v252: buy URL from backend config — never hardcoded.
-                            scope.launch {
-                                val base = fetchBuyUrlBase()
-                                if (base.isNullOrBlank()) {
-                                    android.widget.Toast.makeText(ctx, "Could not reach server — check connection and try again", android.widget.Toast.LENGTH_SHORT).show()
-                                    return@launch
-                                }
-                                // v235: generate 4-6 char alphanumeric note for payment matching
-                                val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-                                val noteLen = (4..6).random()
-                                val note = (1..noteLen).map { chars.random() }.joinToString("")
-                                val ts = System.currentTimeMillis()
-                                // Save for verification app to pick up
-                                prefs.edit()
-                                    .putString("premium_pending_note", note)
-                                    .putLong("premium_pending_ts", ts)
-                                    .apply()
-                                val secureCode = "ZGUQZF0opef7B04Tjt6k1CU06HoeoFAkGODk-wPnzKg"
-                                val deviceId2 = android.provider.Settings.Secure.getString(ctx.contentResolver, android.provider.Settings.Secure.ANDROID_ID) ?: ""
-                                // v253: send the selected plan so the buy page locks to one plan
-                                val url = base.trimEnd('/') + "/?code=$secureCode&note=$note&device_id=$deviceId2&plan=${websitePlan()}"
-                                try {
-                                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
-                                    ctx.startActivity(intent)
-                                    android.widget.Toast.makeText(ctx, "Opening payment page… Note: $note", android.widget.Toast.LENGTH_LONG).show()
-                                } catch (e: Exception) {
-                                    android.widget.Toast.makeText(ctx, "Cannot open browser", android.widget.Toast.LENGTH_SHORT).show()
-                                }
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Buy Premium — Unlimited Broadcast")
-                    }
                 }
             }
         }
@@ -5778,19 +5714,11 @@ Rules:
                         val effectiveTimer = if (showCustom) (customTimer.toIntOrNull() ?: 0) else timerSecs
                         if (effectiveTimer <= 0) { errorMsg = "Please set a valid timer"; return@launch }
 
-                        // Check daily limit
-                        val allowed = if (isPremium) items.size else minOf(items.size, remaining)
-                        if (allowed <= 0) { errorMsg = "Daily limit reached (20/day for free)"; return@launch }
-                        val toSend = items.take(allowed)
-                        if (toSend.size < items.size) {
-                            errorMsg = "Only ${toSend.size} will be sent (daily limit). ${items.size - toSend.size} skipped."
-                        }
-
                         sending = true
-                        totalCount = toSend.size
+                        totalCount = items.size
                         var sent = 0; var failed = 0
 
-                        for ((index, item) in toSend.withIndex()) {
+                        for ((index, item) in items.withIndex()) {
                             try {
                                 val jid = if (item.phone.contains("@")) item.phone else "${item.phone}@s.whatsapp.net"
                                 val ok = GatewayClient.sendToJid(jid, item.message)
@@ -5802,11 +5730,8 @@ Rules:
                                 } else failed++
                             } catch (e: Exception) { failed++ }
                             sentCount = sent; failedCount = failed
-                            // Update daily count
-                            dailyCount++
-                            prefs.edit().putInt("broadcast_daily_count", dailyCount).putString("broadcast_daily_date", today).apply()
                             // Delay before next (except after last)
-                            if (index < toSend.size - 1) delay(effectiveTimer * 1000L)
+                            if (index < items.size - 1) delay(effectiveTimer * 1000L)
                         }
                         sending = false
                     } catch (e: Exception) {
@@ -5842,208 +5767,6 @@ private fun parseBroadcastJson(json: String): List<BroadcastItem> {
     } catch (e: Exception) { /* invalid JSON */ }
     return result
 }
-
-// v235: Daily limit helper for premium-gated features (AI image, voice, broadcast).
-// Free: `freeLimit`/day. Premium (broadcast_premium pref): unlimited.
-private fun checkDailyLimit(ctx: android.content.Context, key: String, freeLimit: Int): Boolean {
-    val prefs = ctx.getSharedPreferences("ayx_broadcast", android.content.Context.MODE_PRIVATE)
-    if (prefs.getBoolean("broadcast_premium", false)) return true
-    val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
-    val dateKey = "${key}_date"
-    val countKey = "${key}_count"
-    val savedDate = prefs.getString(dateKey, "")
-    val count = if (savedDate == today) prefs.getInt(countKey, 0) else 0
-    if (count >= freeLimit) return false
-    prefs.edit().putString(dateKey, today).putInt(countKey, count + 1).apply()
-    return true
-}
-private fun getDailyCount(ctx: android.content.Context, key: String): Int {
-    val prefs = ctx.getSharedPreferences("ayx_broadcast", android.content.Context.MODE_PRIVATE)
-    val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
-    return if (prefs.getString("${key}_date", "") == today) prefs.getInt("${key}_count", 0) else 0
-}
-
-// v252: NO hardcoded payment URL in the app. The buy page URL comes from
-// the backend — GET /v1/premium/config returns {buy_url} (server-side,
-// env-overridable, default is the site's premium buy page). Every Buy
-// tap fetches it first; null means the backend is unreachable and Buy
-// must show an error — there is NO hardcoded fallback URL anywhere.
-// The secure code stays in-app (v239); only the URL host/path is remote.
-private suspend fun fetchBuyUrlBase(): String? = withContext(Dispatchers.IO) {
-    try {
-        val conn = java.net.URL("https://imayx.in/v1/premium/config").openConnection() as java.net.HttpURLConnection
-        conn.connectTimeout = 10000
-        conn.readTimeout = 10000
-        val buyUrl = org.json.JSONObject(conn.inputStream.bufferedReader().readText()).optString("buy_url", "")
-        buyUrl.ifBlank { null }
-    } catch (_: Exception) { null }
-}
-
-// v253: map the app's plan id to a value the website's ?plan= accepts
-// (monthly|yearly|launch|test). The app sells 1month/3months/6months, all
-// ₹1 (test state); the website has no 3/6-month plan and its only ₹1 plan
-// is "test", so every app plan maps to "test" for now — the amount charged
-// matches the ₹1 the app shows and the page locks to a single plan.
-// TODO when app prices are restored: align the catalogs first (app ->
-// monthly/yearly, or website gains 3/6-month plans), then update this map.
-private fun websitePlan(appPlan: String = ""): String = "test"
-
-// v237: Premium — plan selection (1/3/6 months) with secure URL
-@Composable
-private fun PremiumScreen(ctx: Context) {
-    val prefs = remember { ctx.getSharedPreferences("ayx_broadcast", Context.MODE_PRIVATE) }
-    var isPremium by remember { mutableStateOf(prefs.getBoolean("broadcast_premium", false)) }
-    val buyScope = rememberCoroutineScope()   // v252: Buy taps fetch the buy URL from the backend first
-    // v249: Check backend for premium status on open
-    androidx.compose.runtime.LaunchedEffect(Unit) {
-        try {
-            val deviceId = android.provider.Settings.Secure.getString(ctx.contentResolver, android.provider.Settings.Secure.ANDROID_ID) ?: ""
-            if (deviceId.isNotEmpty()) {
-                val url = java.net.URL("https://imayx.in/v1/premium/check?device_id=$deviceId")
-                val conn = url.openConnection() as java.net.HttpURLConnection
-                conn.connectTimeout = 10000
-                conn.readTimeout = 10000
-                val text = conn.inputStream.bufferedReader().readText()
-                if (text.contains("\"premium\":true")) {
-                    prefs.edit().putBoolean("broadcast_premium", true).apply()
-                    isPremium = true
-                }
-            }
-        } catch (_: Exception) {}
-    }
-    var selectedPlan by remember { mutableStateOf("1month") }
-    // v239: secure code hardcoded (user order) — no manual entry needed
-    val secureCode = "ZGUQZF0opef7B04Tjt6k1CU06HoeoFAkGODk-wPnzKg"
-
-    val plans = listOf(
-        Triple("1month", "1 Month", 1),
-        Triple("3months", "3 Months", 1),
-        Triple("6months", "6 Months", 1)
-    )
-
-    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("AyX Premium", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-
-        if (isPremium) {
-            StyledSurface(shape = uiShapeFor(16), color = AYX_GREEN.copy(alpha = 0.15f)) {
-                Row(Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("✓ Premium Active", color = AYX_GREEN, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                }
-            }
-        } else {
-            Text("Unlock unlimited Broadcast, AI Image & Voice", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-
-        Text("Choose Plan:", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
-        plans.forEach { (id, label, price) ->
-            val selected = selectedPlan == id
-            StyledSurface(
-                shape = uiShapeFor(12),
-                color = if (selected) AYX_GREEN.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                modifier = Modifier.fillMaxWidth().clickable { selectedPlan = id }
-            ) {
-                Row(Modifier.padding(14.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Column {
-                        Text(label, fontWeight = FontWeight.Medium)
-                        if (id == "3months") Text("Save ₹18", style = MaterialTheme.typography.bodySmall, color = AYX_GREEN)
-                        if (id == "6months") Text("Save ₹65", style = MaterialTheme.typography.bodySmall, color = AYX_GREEN)
-                    }
-                    Text("₹$price", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium, color = if (selected) AYX_GREEN else MaterialTheme.colorScheme.onSurface)
-                }
-            }
-        }
-
-        // v239: secure code hardcoded — no input UI needed
-
-        if (!isPremium) {
-            Button(
-                onClick = {
-                    // v252: buy URL from backend config — never hardcoded.
-                    buyScope.launch {
-                        val base = fetchBuyUrlBase()
-                        if (base.isNullOrBlank()) {
-                            android.widget.Toast.makeText(ctx, "Could not reach server — check connection and try again", android.widget.Toast.LENGTH_SHORT).show()
-                            return@launch
-                        }
-                        val code = secureCode
-                        val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-                        val noteLen = (4..6).random()
-                        val note = (1..noteLen).map { chars.random() }.joinToString("")
-                        val ts = System.currentTimeMillis()
-                        prefs.edit()
-                            .putString("premium_pending_note", note)
-                            .putLong("premium_pending_ts", ts)
-                            .putString("premium_pending_plan", selectedPlan)
-                            .apply()
-                        val plan = plans.find { it.first == selectedPlan }
-                        val deviceId = android.provider.Settings.Secure.getString(ctx.contentResolver, android.provider.Settings.Secure.ANDROID_ID) ?: ""
-                        // v253: send the selected plan so the buy page locks to one plan
-                        val url = base.trimEnd('/') + "/?code=$code&note=$note&device_id=$deviceId&plan=${websitePlan(selectedPlan)}"
-                        try {
-                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
-                            ctx.startActivity(intent)
-                            android.widget.Toast.makeText(ctx, "Opening payment page… Note: $note (₹${plan?.third})", android.widget.Toast.LENGTH_LONG).show()
-                        } catch (e: Exception) {
-                            android.widget.Toast.makeText(ctx, "Cannot open browser", android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                val plan = plans.find { it.first == selectedPlan }
-                Text("Buy ${plan?.second} — ₹${plan?.third}")
-            }
-            // v251: Paytm checkout — opens the same buy page with ?pay=paytm,
-            // the website auto-starts Paytm (UPI/Card). UPI QR flow unchanged.
-            OutlinedButton(
-                onClick = {
-                    // v252: buy URL from backend config — never hardcoded.
-                    buyScope.launch {
-                        val base = fetchBuyUrlBase()
-                        if (base.isNullOrBlank()) {
-                            android.widget.Toast.makeText(ctx, "Could not reach server — check connection and try again", android.widget.Toast.LENGTH_SHORT).show()
-                            return@launch
-                        }
-                        val code = secureCode
-                        val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-                        val noteLen = (4..6).random()
-                        val note = (1..noteLen).map { chars.random() }.joinToString("")
-                        val ts = System.currentTimeMillis()
-                        prefs.edit()
-                            .putString("premium_pending_note", note)
-                            .putLong("premium_pending_ts", ts)
-                            .putString("premium_pending_plan", selectedPlan)
-                            .apply()
-                        val deviceId = android.provider.Settings.Secure.getString(ctx.contentResolver, android.provider.Settings.Secure.ANDROID_ID) ?: ""
-                        // v253: send the selected plan so the buy page locks to one plan
-                        val url = base.trimEnd('/') + "/?code=$code&note=$note&device_id=$deviceId&pay=paytm&plan=${websitePlan(selectedPlan)}"
-                        try {
-                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
-                            ctx.startActivity(intent)
-                            android.widget.Toast.makeText(ctx, "Paytm checkout opening…", android.widget.Toast.LENGTH_SHORT).show()
-                        } catch (e: Exception) {
-                            android.widget.Toast.makeText(ctx, "Cannot open browser", android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Pay via Paytm (UPI / Card)")
-            }
-        }
-
-        StyledSurface(shape = uiShapeFor(12), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Premium includes:", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
-                Text("• Unlimited Broadcast messages", style = MaterialTheme.typography.bodySmall)
-                Text("• Unlimited AI Image generation", style = MaterialTheme.typography.bodySmall)
-                Text("• Unlimited AI Voice", style = MaterialTheme.typography.bodySmall)
-                Text("• Priority support", style = MaterialTheme.typography.bodySmall)
-            }
-        }
-    }
-}
-
 
 @Composable
 private fun AutoReplySection(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit, onRules: (List<GatewayClient.Rule>) -> Unit) {
@@ -8680,7 +8403,7 @@ private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, chats: List<Gatew
         onPageChange(pager.currentPage)
         while (pager.currentPage == 1) { onLoadStatuses(); delay(5000) }
     }
-    // v156: while the premium update dialog is up, blur ONLY this content pager
+    // v156: while the update dialog is up, blur ONLY this content pager
     // (chats + status pages). The floating glass header is a sibling overlay in
     // GatewayApp, outside this pager, so it stays perfectly sharp.
     val updateBlurDp by animateDpAsState(if (updateBlur) 18.dp else 0.dp, label = "updateblur")

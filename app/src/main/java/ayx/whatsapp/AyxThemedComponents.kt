@@ -112,7 +112,7 @@ fun AyxSurface(
     ) { content() }
 }
 
-/** Gradient brush helper for skeuomorphic / premium surfaces. */
+/** Gradient brush helper for skeuomorphic / rich surfaces. */
 @Composable
 fun ayxRaisedBrush(): Brush {
     val theme = AyxThemeProvider.current
