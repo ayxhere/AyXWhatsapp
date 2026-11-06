@@ -5675,7 +5675,8 @@ Rules:
                                     .apply()
                                 val secureCode = "ZGUQZF0opef7B04Tjt6k1CU06HoeoFAkGODk-wPnzKg"
                                 val deviceId2 = android.provider.Settings.Secure.getString(ctx.contentResolver, android.provider.Settings.Secure.ANDROID_ID) ?: ""
-                                val url = base.trimEnd('/') + "/?code=$secureCode&note=$note&device_id=$deviceId2"
+                                // v253: send the selected plan so the buy page locks to one plan
+                                val url = base.trimEnd('/') + "/?code=$secureCode&note=$note&device_id=$deviceId2&plan=${websitePlan()}"
                                 try {
                                     val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
                                     ctx.startActivity(intent)
@@ -5878,6 +5879,15 @@ private suspend fun fetchBuyUrlBase(): String? = withContext(Dispatchers.IO) {
     } catch (_: Exception) { null }
 }
 
+// v253: map the app's plan id to a value the website's ?plan= accepts
+// (monthly|yearly|launch|test). The app sells 1month/3months/6months, all
+// ₹1 (test state); the website has no 3/6-month plan and its only ₹1 plan
+// is "test", so every app plan maps to "test" for now — the amount charged
+// matches the ₹1 the app shows and the page locks to a single plan.
+// TODO when app prices are restored: align the catalogs first (app ->
+// monthly/yearly, or website gains 3/6-month plans), then update this map.
+private fun websitePlan(appPlan: String = ""): String = "test"
+
 // v237: Premium — plan selection (1/3/6 months) with secure URL
 @Composable
 private fun PremiumScreen(ctx: Context) {
@@ -5967,7 +5977,8 @@ private fun PremiumScreen(ctx: Context) {
                             .apply()
                         val plan = plans.find { it.first == selectedPlan }
                         val deviceId = android.provider.Settings.Secure.getString(ctx.contentResolver, android.provider.Settings.Secure.ANDROID_ID) ?: ""
-                        val url = base.trimEnd('/') + "/?code=$code&note=$note&device_id=$deviceId"
+                        // v253: send the selected plan so the buy page locks to one plan
+                        val url = base.trimEnd('/') + "/?code=$code&note=$note&device_id=$deviceId&plan=${websitePlan(selectedPlan)}"
                         try {
                             val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
                             ctx.startActivity(intent)
@@ -6004,7 +6015,8 @@ private fun PremiumScreen(ctx: Context) {
                             .putString("premium_pending_plan", selectedPlan)
                             .apply()
                         val deviceId = android.provider.Settings.Secure.getString(ctx.contentResolver, android.provider.Settings.Secure.ANDROID_ID) ?: ""
-                        val url = base.trimEnd('/') + "/?code=$code&note=$note&device_id=$deviceId&pay=paytm"
+                        // v253: send the selected plan so the buy page locks to one plan
+                        val url = base.trimEnd('/') + "/?code=$code&note=$note&device_id=$deviceId&pay=paytm&plan=${websitePlan(selectedPlan)}"
                         try {
                             val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
                             ctx.startActivity(intent)
