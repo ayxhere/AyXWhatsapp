@@ -352,14 +352,16 @@ private const val PRIVACY_TEXT = """WA Gateway runs entirely on your device. It 
 By continuing you agree to use this app responsibly and accept these terms."""
 
 class MainActivity : ComponentActivity() {
-    // v199: notification permission REMOVED at the user's order — the
-    // app never asks for it anymore (no manifest entry, no request
-    // here). Note: this does NOT remove the "Background service"
-    // notification — that is NodeService's foreground-service notice,
-    // which Android shows regardless of this permission. Removing it
-    // needs demoting the service out of foreground (a liveness
-    // trade-off, not done here). New-message + reminder notifications
-    // stop with the permission; message delivery itself is unaffected.
+    // v199: notification permission was REMOVED at the user's order (no
+    // manifest entry, no request here) — new-message + reminder
+    // notifications stopped with it. v234 re-added the manifest entry,
+    // but the runtime request was never restored, so on Android 13+ the
+    // system still denied it by default and notifications stayed dead.
+    // v252: runtime request restored (ensureNotificationPermission, asked
+    // once at startup) per user order. Note: this does NOT remove the
+    // "Background service" notification — that is NodeService's
+    // foreground-service notice, which Android shows regardless of this
+    // permission. Message delivery itself is unaffected by this permission.
 
     // v147: a crash report saved by the previous run (CrashReporter) and a
     // pending update (AyxUpdate) — both surface as dialogs at the root of
@@ -1630,6 +1632,21 @@ fun GatewayApp(updateBlur: Boolean = false) {
     val contactsPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) doLoadContacts() else notify("contacts permission needed")
     }
+    // v252: notification permission restored — the manifest entry came back
+    // in v234 but the runtime request was removed in v199 and never
+    // restored, so on Android 13+ the system denied POST_NOTIFICATIONS by
+    // default and every notification was silently dropped ("notification
+    // dead"). Asked once at startup (see LaunchedEffect below), same
+    // pattern as contacts/camera.
+    val notifPermLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (!granted) notify("Notification permission needed for message alerts")
+    }
+    fun ensureNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
     fun ensureContacts() {
         if (deviceContacts.isNotEmpty() || contactsLoading) return
         if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) doLoadContacts()
@@ -1714,6 +1731,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
     }
     LaunchedEffect(Unit) {
         ContactStore.init(ctx)
+        ensureNotificationPermission()   // v252: ask once at startup (was never requested since v199)
         if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
             val all = withContext(Dispatchers.IO) { loadDeviceContacts(ctx) }
             all.forEach { ContactStore.putDevice(it.number, it.name) }
@@ -5155,10 +5173,10 @@ private fun AlbumBubble(
 private fun settingsTitle(page: String): String = when (page) {
     "general" -> "General"; "autoreply" -> "Auto-reply"; "ai" -> "AI Assistant"; "chat" -> "Chat Settings"
     "imageai" -> "Image AI"; "aimemory" -> "AI Memory"; "voice" -> "AI Voice"; "font" -> "App font"; "emoji" -> "Emoji"
-    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "accent" -> "Accent Color"; "bluranim" -> "Blur & Animation"; "textanim" -> "Text Animation"; "msgmotion" -> "Message Motion"; "iconstyle" -> "Icon Style"; "about" -> "About"; "sync" -> "Sync"; "support" -> "Support Development"; "templates" -> "Message Templates"; "broadcast" -> "Broadcast"; "premium" -> "Premium"; else -> "Settings"
+    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "accent" -> "Accent Color"; "bluranim" -> "Blur & Animation"; "textanim" -> "Text Animation"; "msgmotion" -> "Message Motion"; "iconstyle" -> "Icon Style"; "about" -> "About"; "sync" -> "Sync"; "support" -> "Support Development"; "broadcast" -> "Broadcast"; "premium" -> "Premium"; else -> "Settings"
 }
 // parent page for nested back (Wallpaper under Chat Settings; Image AI / AI Memory / Voice under AI Assistant; Font / Emoji / Text Animation / Message Motion / Icon Style / Accent / Blur & Animation under Appearance)
-private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "templates" -> "home"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "appearance"; "emoji" -> "appearance"; "textanim" -> "appearance"; "msgmotion" -> "appearance"; "iconstyle" -> "appearance"; "accent" -> "appearance"; "bluranim" -> "appearance"; else -> "home" }
+private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "appearance"; "emoji" -> "appearance"; "textanim" -> "appearance"; "msgmotion" -> "appearance"; "iconstyle" -> "appearance"; "accent" -> "appearance"; "bluranim" -> "appearance"; else -> "home" }
 
 @Composable
 private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient.Settings, page: String, onPage: (String) -> Unit, wallpaperVersion: Int,
@@ -5175,7 +5193,6 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
             "font" -> SettingsSubPage { FontSettings(ctx) }
             "emoji" -> SettingsSubPage { EmojiSettings(ctx) }
             "autoreply" -> SettingsSubPage { AutoReplySection(settings, onToggle, onRules) }
-            "templates" -> SettingsSubPage { TemplatesSettings(settings, onToggle, ctx) }
             "broadcast" -> SettingsSubPage { BroadcastScreen(ctx) }
             "premium" -> SettingsSubPage { PremiumScreen(ctx) }
             "ai" -> SettingsSubPage { AiSettings(settings, onToggle, messages, dpCache, onOpenImageAi = { onPage("imageai") }, onOpenMemory = { onPage("aimemory") }) }
@@ -5217,7 +5234,6 @@ private fun SettingsHome(status: GatewayClient.Status, onOpen: (String) -> Unit)
         Spacer(Modifier.height(2.dp))
         CategoryCard(Icons.Filled.Tune, CAT_GENERAL, "General", "Online, privacy and messages") { onOpen("general") }
         CategoryCard(Icons.Filled.QuestionAnswer, CAT_AUTOREPLY, "Auto-reply", "Keyword rules and automatic replies") { onOpen("autoreply") }
-        CategoryCard(Icons.Filled.Description, CAT_AUTOREPLY, "Message Templates", "Custom templates, auto-send on new messages") { onOpen("templates") }
         CategoryCard(Icons.Filled.AutoAwesome, CAT_AI, "AI Assistant", "AI replies, groups and language") { onOpen("ai") }
         CategoryCard(Icons.Filled.GraphicEq, Color(0xFF4DD0C4), "AI Voice", "Voice reply, voice notes & voice artists") { onOpen("voice") }
         CategoryCard(Icons.Filled.Chat, CAT_WALLPAPER, "Chat", "Wallpaper, bubble style and header") { onOpen("chat") }
@@ -5560,8 +5576,6 @@ private fun EmptyState(icon: androidx.compose.ui.graphics.vector.ImageVector, ti
     }
 }
 
-// v223: Message Templates — user-editable templates with on/off toggle.
-// When enabled, the template auto-sends when someone messages (first message).
 // v234: Broadcast — JSON-based bulk messaging with per-message timer.
 // Free: 20/day. Premium: unlimited. Messages are hidden from chat list
 // (ChatFlags.hidden) — double-tap the WhatsAyX title to reveal.
@@ -5642,25 +5656,33 @@ Rules:
                     Spacer(Modifier.height(8.dp))
                     OutlinedButton(
                         onClick = {
-                            // v235: generate 4-6 char alphanumeric note for payment matching
-                            val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-                            val noteLen = (4..6).random()
-                            val note = (1..noteLen).map { chars.random() }.joinToString("")
-                            val ts = System.currentTimeMillis()
-                            // Save for verification app to pick up
-                            prefs.edit()
-                                .putString("premium_pending_note", note)
-                                .putLong("premium_pending_ts", ts)
-                                .apply()
-                            val secureCode = "ZGUQZF0opef7B04Tjt6k1CU06HoeoFAkGODk-wPnzKg"
-                            val deviceId2 = android.provider.Settings.Secure.getString(ctx.contentResolver, android.provider.Settings.Secure.ANDROID_ID) ?: ""
-                            val url = "https://imayx.in/ayx/premium/buy/?code=$secureCode&note=$note&device_id=$deviceId2"
-                            try {
-                                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
-                                ctx.startActivity(intent)
-                                android.widget.Toast.makeText(ctx, "Note: $note — UPI payment me ye note likhna", android.widget.Toast.LENGTH_LONG).show()
-                            } catch (e: Exception) {
-                                android.widget.Toast.makeText(ctx, "Cannot open browser", android.widget.Toast.LENGTH_SHORT).show()
+                            // v252: buy URL from backend config — never hardcoded.
+                            scope.launch {
+                                val base = fetchBuyUrlBase()
+                                if (base.isNullOrBlank()) {
+                                    android.widget.Toast.makeText(ctx, "Could not reach server — check connection and try again", android.widget.Toast.LENGTH_SHORT).show()
+                                    return@launch
+                                }
+                                // v235: generate 4-6 char alphanumeric note for payment matching
+                                val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+                                val noteLen = (4..6).random()
+                                val note = (1..noteLen).map { chars.random() }.joinToString("")
+                                val ts = System.currentTimeMillis()
+                                // Save for verification app to pick up
+                                prefs.edit()
+                                    .putString("premium_pending_note", note)
+                                    .putLong("premium_pending_ts", ts)
+                                    .apply()
+                                val secureCode = "ZGUQZF0opef7B04Tjt6k1CU06HoeoFAkGODk-wPnzKg"
+                                val deviceId2 = android.provider.Settings.Secure.getString(ctx.contentResolver, android.provider.Settings.Secure.ANDROID_ID) ?: ""
+                                val url = base.trimEnd('/') + "/?code=$secureCode&note=$note&device_id=$deviceId2"
+                                try {
+                                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                                    ctx.startActivity(intent)
+                                    android.widget.Toast.makeText(ctx, "Opening payment page… Note: $note", android.widget.Toast.LENGTH_LONG).show()
+                                } catch (e: Exception) {
+                                    android.widget.Toast.makeText(ctx, "Cannot open browser", android.widget.Toast.LENGTH_SHORT).show()
+                                }
                             }
                         },
                         modifier = Modifier.fillMaxWidth()
@@ -5840,13 +5862,28 @@ private fun getDailyCount(ctx: android.content.Context, key: String): Int {
     return if (prefs.getString("${key}_date", "") == today) prefs.getInt("${key}_count", 0) else 0
 }
 
-// v223: Message Templates — user-editable templates with on/off toggle.
-// When enabled, the template auto-sends when someone messages (first message).
+// v252: NO hardcoded payment URL in the app. The buy page URL comes from
+// the backend — GET /v1/premium/config returns {buy_url} (server-side,
+// env-overridable, default is the site's premium buy page). Every Buy
+// tap fetches it first; null means the backend is unreachable and Buy
+// must show an error — there is NO hardcoded fallback URL anywhere.
+// The secure code stays in-app (v239); only the URL host/path is remote.
+private suspend fun fetchBuyUrlBase(): String? = withContext(Dispatchers.IO) {
+    try {
+        val conn = java.net.URL("https://imayx.in/v1/premium/config").openConnection() as java.net.HttpURLConnection
+        conn.connectTimeout = 10000
+        conn.readTimeout = 10000
+        val buyUrl = org.json.JSONObject(conn.inputStream.bufferedReader().readText()).optString("buy_url", "")
+        buyUrl.ifBlank { null }
+    } catch (_: Exception) { null }
+}
+
 // v237: Premium — plan selection (1/3/6 months) with secure URL
 @Composable
 private fun PremiumScreen(ctx: Context) {
     val prefs = remember { ctx.getSharedPreferences("ayx_broadcast", Context.MODE_PRIVATE) }
     var isPremium by remember { mutableStateOf(prefs.getBoolean("broadcast_premium", false)) }
+    val buyScope = rememberCoroutineScope()   // v252: Buy taps fetch the buy URL from the backend first
     // v249: Check backend for premium status on open
     androidx.compose.runtime.LaunchedEffect(Unit) {
         try {
@@ -5911,25 +5948,33 @@ private fun PremiumScreen(ctx: Context) {
         if (!isPremium) {
             Button(
                 onClick = {
-                    val code = secureCode
-                    val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-                    val noteLen = (4..6).random()
-                    val note = (1..noteLen).map { chars.random() }.joinToString("")
-                    val ts = System.currentTimeMillis()
-                    prefs.edit()
-                        .putString("premium_pending_note", note)
-                        .putLong("premium_pending_ts", ts)
-                        .putString("premium_pending_plan", selectedPlan)
-                        .apply()
-                    val plan = plans.find { it.first == selectedPlan }
-                    val deviceId = android.provider.Settings.Secure.getString(ctx.contentResolver, android.provider.Settings.Secure.ANDROID_ID) ?: ""
-                    val url = "https://imayx.in/ayx/premium/buy/?code=$code&note=$note&device_id=$deviceId"
-                    try {
-                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
-                        ctx.startActivity(intent)
-                        android.widget.Toast.makeText(ctx, "Note: $note — UPI me ye note likhna (₹${plan?.third})", android.widget.Toast.LENGTH_LONG).show()
-                    } catch (e: Exception) {
-                        android.widget.Toast.makeText(ctx, "Cannot open browser", android.widget.Toast.LENGTH_SHORT).show()
+                    // v252: buy URL from backend config — never hardcoded.
+                    buyScope.launch {
+                        val base = fetchBuyUrlBase()
+                        if (base.isNullOrBlank()) {
+                            android.widget.Toast.makeText(ctx, "Could not reach server — check connection and try again", android.widget.Toast.LENGTH_SHORT).show()
+                            return@launch
+                        }
+                        val code = secureCode
+                        val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+                        val noteLen = (4..6).random()
+                        val note = (1..noteLen).map { chars.random() }.joinToString("")
+                        val ts = System.currentTimeMillis()
+                        prefs.edit()
+                            .putString("premium_pending_note", note)
+                            .putLong("premium_pending_ts", ts)
+                            .putString("premium_pending_plan", selectedPlan)
+                            .apply()
+                        val plan = plans.find { it.first == selectedPlan }
+                        val deviceId = android.provider.Settings.Secure.getString(ctx.contentResolver, android.provider.Settings.Secure.ANDROID_ID) ?: ""
+                        val url = base.trimEnd('/') + "/?code=$code&note=$note&device_id=$deviceId"
+                        try {
+                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                            ctx.startActivity(intent)
+                            android.widget.Toast.makeText(ctx, "Opening payment page… Note: $note (₹${plan?.third})", android.widget.Toast.LENGTH_LONG).show()
+                        } catch (e: Exception) {
+                            android.widget.Toast.makeText(ctx, "Cannot open browser", android.widget.Toast.LENGTH_SHORT).show()
+                        }
                     }
                 },
                 modifier = Modifier.fillMaxWidth()
@@ -5941,24 +5986,32 @@ private fun PremiumScreen(ctx: Context) {
             // the website auto-starts Paytm (UPI/Card). UPI QR flow unchanged.
             OutlinedButton(
                 onClick = {
-                    val code = secureCode
-                    val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-                    val noteLen = (4..6).random()
-                    val note = (1..noteLen).map { chars.random() }.joinToString("")
-                    val ts = System.currentTimeMillis()
-                    prefs.edit()
-                        .putString("premium_pending_note", note)
-                        .putLong("premium_pending_ts", ts)
-                        .putString("premium_pending_plan", selectedPlan)
-                        .apply()
-                    val deviceId = android.provider.Settings.Secure.getString(ctx.contentResolver, android.provider.Settings.Secure.ANDROID_ID) ?: ""
-                    val url = "https://imayx.in/ayx/premium/buy/?code=$code&note=$note&device_id=$deviceId&pay=paytm"
-                    try {
-                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
-                        ctx.startActivity(intent)
-                        android.widget.Toast.makeText(ctx, "Paytm checkout opening…", android.widget.Toast.LENGTH_SHORT).show()
-                    } catch (e: Exception) {
-                        android.widget.Toast.makeText(ctx, "Cannot open browser", android.widget.Toast.LENGTH_SHORT).show()
+                    // v252: buy URL from backend config — never hardcoded.
+                    buyScope.launch {
+                        val base = fetchBuyUrlBase()
+                        if (base.isNullOrBlank()) {
+                            android.widget.Toast.makeText(ctx, "Could not reach server — check connection and try again", android.widget.Toast.LENGTH_SHORT).show()
+                            return@launch
+                        }
+                        val code = secureCode
+                        val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+                        val noteLen = (4..6).random()
+                        val note = (1..noteLen).map { chars.random() }.joinToString("")
+                        val ts = System.currentTimeMillis()
+                        prefs.edit()
+                            .putString("premium_pending_note", note)
+                            .putLong("premium_pending_ts", ts)
+                            .putString("premium_pending_plan", selectedPlan)
+                            .apply()
+                        val deviceId = android.provider.Settings.Secure.getString(ctx.contentResolver, android.provider.Settings.Secure.ANDROID_ID) ?: ""
+                        val url = base.trimEnd('/') + "/?code=$code&note=$note&device_id=$deviceId&pay=paytm"
+                        try {
+                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                            ctx.startActivity(intent)
+                            android.widget.Toast.makeText(ctx, "Paytm checkout opening…", android.widget.Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) {
+                            android.widget.Toast.makeText(ctx, "Cannot open browser", android.widget.Toast.LENGTH_SHORT).show()
+                        }
                     }
                 },
                 modifier = Modifier.fillMaxWidth()
@@ -5979,345 +6032,6 @@ private fun PremiumScreen(ctx: Context) {
     }
 }
 
-
-@Composable
-private fun TemplatesSettings(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit, ctx: Context) {
-    val prefs = remember { ctx.getSharedPreferences("ayx_templates", Context.MODE_PRIVATE) }
-    var enabled by remember { mutableStateOf(prefs.getBoolean("templates_enabled", false)) }
-    var templateText by remember { mutableStateOf(prefs.getString("template_main", "") ?: "") }
-    var templateImage by remember { mutableStateOf(prefs.getString("template_image", "") ?: "") }
-    var templateLang by remember { mutableStateOf(prefs.getString("template_lang", "en") ?: "en") }
-    var buttonsJson by remember { mutableStateOf(prefs.getString("template_buttons", "[]") ?: "[]") }
-    var saved by remember { mutableStateOf(false) }
-    var showImagePicker by remember { mutableStateOf(false) }
-    var showButtonEditor by remember { mutableStateOf(false) }
-
-    // Parse buttons
-    val buttons = remember(buttonsJson) {
-        try {
-            val arr = org.json.JSONArray(buttonsJson)
-            (0 until arr.length()).map { i ->
-                val o = arr.getJSONObject(i)
-                Triple(o.optString("text", ""), o.optString("type", "quick_reply"), o.optString("value", ""))
-            }.toMutableList()
-        } catch (e: Exception) { mutableListOf<Triple<String, String, String>>() }
-    }
-
-    // Image picker launcher
-    val imagePickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.GetContent()
-    ) { uri ->
-        uri?.let {
-            try {
-                val inputStream = ctx.contentResolver.openInputStream(it)
-                val bytes = inputStream?.readBytes()
-                inputStream?.close()
-                if (bytes != null && bytes.size < 500000) { // 500KB limit
-                    val base64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
-                    templateImage = base64
-                    prefs.edit().putString("template_image", base64).apply()
-                } else {
-                    android.widget.Toast.makeText(ctx, "Image too large (max 500KB)", android.widget.Toast.LENGTH_SHORT).show()
-                }
-            } catch (e: Exception) {
-                android.widget.Toast.makeText(ctx, "Failed to load image", android.widget.Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    SettingsGroup("Message Templates") {
-        SettingRow(
-            Icons.Filled.Description, CAT_AUTOREPLY,
-            "Templates enabled",
-            "Auto-send template on new messages",
-            enabled
-        ) {
-            enabled = it
-            prefs.edit().putBoolean("templates_enabled", it).apply()
-            onToggle(JSONObject().put("templatesEnabled", it))
-        }
-
-        Spacer(Modifier.height(12.dp))
-
-        // v228: Template image
-        Text(
-            "Header Image (optional)",
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(horizontal = 16.dp)
-        )
-        Spacer(Modifier.height(8.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Button(
-                onClick = { imagePickerLauncher.launch("image/*") },
-                modifier = Modifier.weight(1f)
-            ) {
-                Text(if (templateImage.isEmpty()) "Add Image" else "Change Image")
-            }
-            if (templateImage.isNotEmpty()) {
-                OutlinedButton(
-                    onClick = {
-                        templateImage = ""
-                        prefs.edit().remove("template_image").apply()
-                    }
-                ) {
-                    Text("Remove")
-                }
-            }
-        }
-        if (templateImage.isNotEmpty()) {
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "✓ Image added",
-                style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFF4CAF50),
-                modifier = Modifier.padding(horizontal = 16.dp)
-            )
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        // Template text
-        Text(
-            "Message Text",
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(horizontal = 16.dp)
-        )
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-            value = templateText,
-            onValueChange = {
-                templateText = it
-                saved = false
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .heightIn(min = 120.dp),
-            placeholder = { Text("Type your template message here...\n\nExample:\nHi! Thanks for messaging. I'll reply soon.") },
-            maxLines = 10
-        )
-
-        Spacer(Modifier.height(16.dp))
-
-        // v228: Language selector
-        Text(
-            "Language",
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(horizontal = 16.dp)
-        )
-        Spacer(Modifier.height(8.dp))
-        val languages = listOf("en" to "English", "hi" to "Hindi", "bn" to "Bangla", "es" to "Spanish", "fr" to "French", "de" to "German", "ar" to "Arabic", "pt" to "Portuguese")
-        var langExpanded by remember { mutableStateOf(false) }
-        Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-            OutlinedButton(
-                onClick = { langExpanded = true },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(languages.find { it.first == templateLang }?.second ?: "English")
-            }
-            androidx.compose.material3.DropdownMenu(
-                expanded = langExpanded,
-                onDismissRequest = { langExpanded = false }
-            ) {
-                languages.forEach { (code, name) ->
-                    androidx.compose.material3.DropdownMenuItem(
-                        text = { Text(name) },
-                        onClick = {
-                            templateLang = code
-                            prefs.edit().putString("template_lang", code).apply()
-                            langExpanded = false
-                            saved = false
-                        }
-                    )
-                }
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        // v228: Buttons section
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                "Buttons (${buttons.size}/3)",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold
-            )
-            if (buttons.size < 3) {
-                TextButton(onClick = { showButtonEditor = true }) {
-                    Text("+ Add Button")
-                }
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-
-        // List existing buttons
-        buttons.forEachIndexed { index, (text, type, value) ->
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(text, fontWeight = FontWeight.Medium)
-                        Text(
-                            when (type) {
-                                "url" -> "🔗 $value"
-                                "call" -> "📞 $value"
-                                else -> "💬 Quick reply"
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    IconButton(onClick = {
-                        val newList = buttons.toMutableList().apply { removeAt(index) }
-                        val arr = org.json.JSONArray()
-                        newList.forEach { (t, ty, v) ->
-                            arr.put(JSONObject().put("text", t).put("type", ty).put("value", v))
-                        }
-                        buttonsJson = arr.toString()
-                        prefs.edit().putString("template_buttons", arr.toString()).apply()
-                        saved = false
-                    }) {
-                        Icon(Icons.Filled.Delete, contentDescription = "Delete")
-                    }
-                }
-            }
-        }
-
-        if (buttons.isEmpty()) {
-            Text(
-                "No buttons yet. Add up to 3 buttons.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp)
-            )
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        Button(
-            onClick = {
-                prefs.edit().putString("template_main", templateText).apply()
-                // Sync all to gateway
-                val patch = JSONObject()
-                    .put("templateMain", templateText)
-                    .put("templateImage", templateImage)
-                    .put("templateLang", templateLang)
-                    .put("templateButtons", buttonsJson)
-                onToggle(patch)
-                saved = true
-                android.widget.Toast.makeText(ctx, "Template saved!", android.widget.Toast.LENGTH_SHORT).show()
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-        ) {
-            Text(if (saved) "Saved ✓" else "Save Template")
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        Text(
-            "Tip: Use {name} to insert the sender's name automatically.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 16.dp)
-        )
-    }
-
-    // v228: Button editor dialog
-    if (showButtonEditor) {
-        var btnText by remember { mutableStateOf("") }
-        var btnType by remember { mutableStateOf("quick_reply") }
-        var btnValue by remember { mutableStateOf("") }
-
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { showButtonEditor = false },
-            title = { Text("Add Button") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedTextField(
-                        value = btnText,
-                        onValueChange = { btnText = it },
-                        label = { Text("Button text") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-
-                    Text("Button type:", style = MaterialTheme.typography.bodySmall)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf("quick_reply" to "Reply", "url" to "Link", "call" to "Call").forEach { (type, label) ->
-                            FilterChip(
-                                selected = btnType == type,
-                                onClick = { btnType = type },
-                                label = { Text(label) }
-                            )
-                        }
-                    }
-
-                    if (btnType == "url") {
-                        OutlinedTextField(
-                            value = btnValue,
-                            onValueChange = { btnValue = it },
-                            label = { Text("URL (https://...)") },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true
-                        )
-                    } else if (btnType == "call") {
-                        OutlinedTextField(
-                            value = btnValue,
-                            onValueChange = { btnValue = it },
-                            label = { Text("Phone number") },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        if (btnText.isNotBlank()) {
-                            val newList = buttons.toMutableList().apply {
-                                add(Triple(btnText, btnType, btnValue))
-                            }
-                            val arr = org.json.JSONArray()
-                            newList.forEach { (t, ty, v) ->
-                                arr.put(JSONObject().put("text", t).put("type", ty).put("value", v))
-                            }
-                            buttonsJson = arr.toString()
-                            prefs.edit().putString("template_buttons", arr.toString()).apply()
-                            saved = false
-                            showButtonEditor = false
-                        }
-                    }
-                ) {
-                    Text("Add")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showButtonEditor = false }) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
-}
 
 @Composable
 private fun AutoReplySection(settings: GatewayClient.Settings, onToggle: (JSONObject) -> Unit, onRules: (List<GatewayClient.Rule>) -> Unit) {
