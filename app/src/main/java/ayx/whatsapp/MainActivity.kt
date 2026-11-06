@@ -5937,6 +5937,34 @@ private fun PremiumScreen(ctx: Context) {
                 val plan = plans.find { it.first == selectedPlan }
                 Text("Buy ${plan?.second} — ₹${plan?.third}")
             }
+            // v251: Paytm checkout — opens the same buy page with ?pay=paytm,
+            // the website auto-starts Paytm (UPI/Card). UPI QR flow unchanged.
+            OutlinedButton(
+                onClick = {
+                    val code = secureCode
+                    val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+                    val noteLen = (4..6).random()
+                    val note = (1..noteLen).map { chars.random() }.joinToString("")
+                    val ts = System.currentTimeMillis()
+                    prefs.edit()
+                        .putString("premium_pending_note", note)
+                        .putLong("premium_pending_ts", ts)
+                        .putString("premium_pending_plan", selectedPlan)
+                        .apply()
+                    val deviceId = android.provider.Settings.Secure.getString(ctx.contentResolver, android.provider.Settings.Secure.ANDROID_ID) ?: ""
+                    val url = "https://imayx.in/ayx/premium/buy/?code=$code&note=$note&device_id=$deviceId&pay=paytm"
+                    try {
+                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                        ctx.startActivity(intent)
+                        android.widget.Toast.makeText(ctx, "Paytm checkout opening…", android.widget.Toast.LENGTH_SHORT).show()
+                    } catch (e: Exception) {
+                        android.widget.Toast.makeText(ctx, "Cannot open browser", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Pay via Paytm (UPI / Card)")
+            }
         }
 
         StyledSurface(shape = uiShapeFor(12), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)) {
