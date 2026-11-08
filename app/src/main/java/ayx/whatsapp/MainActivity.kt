@@ -11470,39 +11470,6 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
         runCatching { musicPrefs.edit().putString("favourites", favourites.joinToString("\n") { it.first + "|" + it.second }).apply() }
     }
     fun isFav(sg: GatewayClient.Song) = favourites.any { it.first == sg.title && it.second == sg.artist }
-    fun toggleFav(sg: GatewayClient.Song) {
-        val wasFav = isFav(sg)
-        favourites = if (wasFav) (favourites - (sg.title to sg.artist)).toMutableList()
-            else (listOf(sg.title to sg.artist) + favourites).toMutableList()
-        saveFavourites()
-        // v192: debounced Drive upload of the saved-songs list
-        // (silent when Drive is not signed in).
-        SavedSongsDrive.onFavouritesChanged(ctx, favourites)
-        // v255: favouriting ALSO saves the song audio itself to Drive
-        // (AyX Backup folder, "Title - Artist.m4a"). Silent when
-        // Drive is not signed in or the audio can't be resolved.
-        if (!wasFav) {
-            scope.launch(Dispatchers.IO) {
-                val url = resolveFavAudio(sg)
-                if (!url.isNullOrBlank()) {
-                    runCatching { SavedSongsDrive.saveSongAudio(ctx, sg.title, sg.artist, url) }
-                }
-            }
-        }
-    }
-    // v255: effective audio URL for a favourited song — mirrors
-    // selectSong's resolution (JioSaavn rows already carry the full
-    // track; iTunes/Spotify resolve it through the JioSaavn matcher),
-    // falling back to the row's own URL (iTunes 30 s preview).
-    suspend fun resolveFavAudio(sg: GatewayClient.Song): String? {
-        val key = sg.title + "|" + sg.artist
-        resolvedSongs[key]?.url?.takeIf { it.isNotBlank() }?.let { return it }
-        if (provider == MusicProviders.SAAVN && sg.url.isNotBlank()) return sg.url
-        val r = if (provider == MusicProviders.SPOTIFY) MusicProviders.resolveSpotifyAudio(ctx, sg)
-            else if (provider == MusicProviders.ITUNES) MusicProviders.resolveItunesFullAudio(ctx, sg)
-            else MusicProviders.resolveFullAudio(ctx, sg)
-        return r?.url?.takeIf { it.isNotBlank() } ?: sg.url.takeIf { it.isNotBlank() }
-    }
     // v192: Saved songs page state (own screen, opened from the icon
     // beside the Spotify chip).
     var showSaved by remember { mutableStateOf(false) }
@@ -11560,6 +11527,45 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
             val bytes = out.toByteArray()
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
         }.getOrNull()
+    }
+    // v256: resolveFavAudio + toggleFav moved HERE from above the
+    // provider declaration — Kotlin local declarations are only
+    // visible AFTER their declaration point, so a helper that needs
+    // provider + resolvedSongs (and the toggleFav that calls it)
+    // must live after those declarations. v255 had them before,
+    // which broke the build (unresolved references).
+    // v255: effective audio URL for a favourited song — mirrors
+    // selectSong's resolution (JioSaavn rows already carry the full
+    // track; iTunes/Spotify resolve it through the JioSaavn matcher),
+    // falling back to the row's own URL (iTunes 30 s preview).
+    suspend fun resolveFavAudio(sg: GatewayClient.Song): String? {
+        val key = sg.title + "|" + sg.artist
+        resolvedSongs[key]?.url?.takeIf { it.isNotBlank() }?.let { return it }
+        if (provider == MusicProviders.SAAVN && sg.url.isNotBlank()) return sg.url
+        val r = if (provider == MusicProviders.SPOTIFY) MusicProviders.resolveSpotifyAudio(ctx, sg)
+            else if (provider == MusicProviders.ITUNES) MusicProviders.resolveItunesFullAudio(ctx, sg)
+            else MusicProviders.resolveFullAudio(ctx, sg)
+        return r?.url?.takeIf { it.isNotBlank() } ?: sg.url.takeIf { it.isNotBlank() }
+    }
+    fun toggleFav(sg: GatewayClient.Song) {
+        val wasFav = isFav(sg)
+        favourites = if (wasFav) (favourites - (sg.title to sg.artist)).toMutableList()
+            else (listOf(sg.title to sg.artist) + favourites).toMutableList()
+        saveFavourites()
+        // v192: debounced Drive upload of the saved-songs list
+        // (silent when Drive is not signed in).
+        SavedSongsDrive.onFavouritesChanged(ctx, favourites)
+        // v255: favouriting ALSO saves the song audio itself to Drive
+        // (AyX Backup folder, "Title - Artist.m4a"). Silent when
+        // Drive is not signed in or the audio can't be resolved.
+        if (!wasFav) {
+            scope.launch(Dispatchers.IO) {
+                val url = resolveFavAudio(sg)
+                if (!url.isNullOrBlank()) {
+                    runCatching { SavedSongsDrive.saveSongAudio(ctx, sg.title, sg.artist, url) }
+                }
+            }
+        }
     }
     fun playPreview(url: String) {
         runCatching {
