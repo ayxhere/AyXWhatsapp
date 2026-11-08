@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -203,6 +204,64 @@ object MusicProviders {
                 (it.optLong("trackTimeMillis", 0L) / 1000L).toInt()))
         }
         return out
+    }
+
+    // ---------- v257: cover art for catalog rows + trending ----------
+    // Catalog rows (Popular / Favourites / Saved) carry title+artist
+    // only — no artwork URL. Resolve one from iTunes (limit 1, light
+    // JSON) with a JioSaavn single-page search as fallback. Null when
+    // nothing matches; the caller keeps its placeholder tile.
+    suspend fun resolveCoverArt(title: String, artist: String): String? = withContext(Dispatchers.IO) {
+        runCatching {
+            val q = (title + " " + artist).trim()
+            if (q.isBlank()) return@runCatching null
+            val itUrl = "https://itunes.apple.com/search?term=" + enc(q) + "&media=music&entity=song&limit=1"
+            val itData = JSONObject(httpText(itUrl))
+            val itRes = itData.optJSONArray("results")
+            if (itRes != null && itRes.length() > 0) {
+                val art = (itRes.optJSONObject(0)?.optString("artworkUrl100").orEmpty())
+                    .replace("100x100bb.jpg", "600x600bb.jpg")
+                if (art.isNotBlank()) return@runCatching art
+            }
+            val rows = runCatching { searchSaavnPage(q, 1) }.getOrDefault(emptyList())
+            rows.firstOrNull()?.image?.takeIf { it.isNotBlank() }
+        }.getOrNull()
+    }
+
+    // v257: fresh songs for pull-to-refresh — JioSaavn trending,
+    // song items only (albums/playlists need a second fetch each).
+    // Same mapping as the search parser (decrypted audio, 500px art).
+    suspend fun getTrendingSongs(): List<GatewayClient.Song> = withContext(Dispatchers.IO) {
+        try {
+            val url = "https://www.jiosaavn.com/api.php?__call=content.getTrending&ctx=web6dot0&api_version=4&_format=json&_marker=0"
+            val body = httpText(url, headers = mapOf("Referer" to "https://www.jiosaavn.com/", "Accept" to "application/json"))
+            val arr = JSONArray(body)
+            val out = ArrayList<GatewayClient.Song>()
+            for (i in 0 until arr.length()) {
+                val it = arr.optJSONObject(i) ?: continue
+                if (it.optString("type") != "song") continue
+                val mi = it.optJSONObject("more_info") ?: continue
+                val audio = saavnDecrypt(mi.optString("encrypted_media_url")) ?: continue
+                var artist = ""
+                try {
+                    val prim = mi.optJSONObject("artistMap")?.optJSONArray("primary_artists")
+                    if (prim != null && prim.length() > 0) {
+                        artist = (0 until prim.length()).mapNotNull { j -> prim.optJSONObject(j)?.optString("name") }.joinToString(", ")
+                    }
+                } catch (e: Exception) {}
+                if (artist.isBlank()) artist = it.optString("subtitle")
+                val dur = (mi.optString("duration") ?: "").toIntOrNull() ?: 0
+                out.add(GatewayClient.Song(
+                    deEnt(it.optString("title")),
+                    deEnt(artist),
+                    it.optString("image").replace("150x150", "500x500").ifEmpty { null },
+                    audio,
+                    dur))
+            }
+            out
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
 
     /**

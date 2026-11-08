@@ -242,6 +242,8 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -11438,6 +11440,7 @@ private fun ProfileScreen(myJid: String?, dpCache: MutableMap<String, ImageBitma
 
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = false, onQueryChange: (String) -> Unit = {}, onSelect: (GatewayClient.Song) -> Unit, onClose: () -> Unit) {
     var q by remember { mutableStateOf(initialQuery) }
     val qState = rememberUpdatedState(q)
@@ -11527,6 +11530,30 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
             val bytes = out.toByteArray()
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
         }.getOrNull()
+    }
+    // v257: resolved cover URLs for catalog rows (title|artist -> image
+    // URL; null = looked up, none found). Bitmaps live in coverCache.
+    val coverUrlCache = remember { mutableStateMapOf<String, String?>() }
+    // v257: pull-to-refresh state — fresh trending songs + reshuffled
+    // Popular order. Standard Material3 pull-to-refresh animation.
+    var trending by remember { mutableStateOf<List<GatewayClient.Song>>(emptyList()) }
+    var popularOrder by remember { mutableStateOf(PopularSongs.LIST) }
+    var isRefreshing by remember { mutableStateOf(false) }
+    val pullRefreshState = rememberPullToRefreshState()
+    fun doRefresh() {
+        if (isRefreshing) return
+        isRefreshing = true
+        scope.launch {
+            if (q.trim().length >= 2) {
+                val r = MusicProviders.search(provider, q.trim(), ctx)
+                results = r.first; error = r.second
+            } else {
+                val fresh = runCatching { MusicProviders.getTrendingSongs() }.getOrNull()
+                if (!fresh.isNullOrEmpty()) trending = fresh
+                else popularOrder = PopularSongs.LIST.shuffled()
+            }
+            isRefreshing = false
+        }
     }
     // v256: resolveFavAudio + toggleFav moved HERE from above the
     // provider declaration — Kotlin local declarations are only
@@ -11644,6 +11671,40 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
             else Toast.makeText(ctx, "Couldn't find audio for this song", Toast.LENGTH_LONG).show()
         }
     }
+    // v257: shared cover tile (picker rows + Saved page). The cover
+    // photo IS the play/pause control (v255); catalog rows with no
+    // artwork resolve it once per title+artist and cache the URL.
+    @Composable
+    fun CoverTile(sg: GatewayClient.Song) {
+        val sKey = sg.title + "|" + sg.artist
+        val effUrl = (resolvedSongs[sKey] ?: sg).url
+        val isPlaying = previewUrl != null && previewUrl == effUrl
+        val coverUrl = sg.image ?: coverUrlCache[sKey]
+        if (sg.image.isNullOrBlank() && !coverUrlCache.containsKey(sKey)) {
+            LaunchedEffect(sKey) { coverUrlCache[sKey] = MusicProviders.resolveCoverArt(sg.title, sg.artist) }
+        }
+        val coverBmp = coverUrl?.let { coverCache[it] }
+        if (!coverUrl.isNullOrBlank() && !coverCache.containsKey(coverUrl)) {
+            LaunchedEffect(coverUrl) { coverCache[coverUrl] = loadCoverBitmap(coverUrl) }
+        }
+        Box(
+            Modifier.size(48.dp)
+                .clip(uiShapeFor(8))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .then(if (isPlaying) Modifier.border(2.dp, IOS_BLUE, uiShapeFor(8)) else Modifier)
+                .clickable { previewSong(sg) },
+            contentAlignment = Alignment.Center
+        ) {
+            if (coverBmp != null) {
+                Image(coverBmp, contentDescription = "cover", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            } else {
+                AyxIcon(Icons.Filled.MusicNote, "no cover", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (resolvingKey == sKey) {
+                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = IOS_BLUE)
+            }
+        }
+    }
     // v191: shared song row. Search rows keep the existing "© lyrics"
     // indicator; popular/favourite rows hide it (their lyrics probe
     // never runs — the probe below still covers search results only).
@@ -11655,31 +11716,10 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
             val sKey = sg.title + "|" + sg.artist
             val effUrl = (resolvedSongs[sKey] ?: sg).url
             // v255: NO play/pause icon — the cover photo IS the
-            // play/pause control. Tap it to preview, tap again to
-            // pause. Playing row: blue border + blue title.
+            // play/pause control (CoverTile). Playing row: blue
+            // border + blue title.
             val isPlaying = previewUrl != null && previewUrl == effUrl
-            val coverUrl = sg.image
-            val coverBmp = coverUrl?.let { coverCache[it] }
-            if (!coverUrl.isNullOrBlank() && !coverCache.containsKey(coverUrl)) {
-                LaunchedEffect(coverUrl) { coverCache[coverUrl] = loadCoverBitmap(coverUrl) }
-            }
-            Box(
-                Modifier.size(48.dp)
-                    .clip(uiShapeFor(8))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .then(if (isPlaying) Modifier.border(2.dp, IOS_BLUE, uiShapeFor(8)) else Modifier)
-                    .clickable { previewSong(sg) },
-                contentAlignment = Alignment.Center
-            ) {
-                if (coverBmp != null) {
-                    Image(coverBmp, contentDescription = "cover", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                } else {
-                    AyxIcon(Icons.Filled.MusicNote, "no cover", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                if (resolvingKey == sKey) {
-                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = IOS_BLUE)
-                }
-            }
+            CoverTile(sg)
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Text(sg.title, maxLines = 1, overflow = TextOverflow.Ellipsis, color = if (isPlaying) IOS_BLUE else Color.Unspecified)
@@ -11725,6 +11765,8 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
                                 items(favourites) { fav ->
                                     val sg = GatewayClient.Song(fav.first, fav.second, null, "", 0)
                                     Row(Modifier.fillMaxWidth().clickable { showSaved = false; selectCatalogSong(sg) }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        CoverTile(sg)
+                                        Spacer(Modifier.width(10.dp))
                                         Column(Modifier.weight(1f)) {
                                             Text(sg.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             Text(sg.artist, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -11825,21 +11867,36 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
                         }
                     }
                     Spacer(Modifier.height(6.dp))
-                    LazyColumn(Modifier.fillMaxSize()) {
-                        if (q.trim().length < 2) {
-                            // v255: no query yet — fixed Popular list
-                            // only. Favourites are NOT pinned here
-                            // anymore; they live only in the Saved page
-                            // (bookmark icon beside the Spotify chip).
-                            // No network call here.
-                            item { Text("Popular", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp, start = 2.dp)) }
-                            items(PopularSongs.LIST) { entry ->
-                                val sg = GatewayClient.Song(entry.first, entry.second, null, "", 0)
-                                SongRow(sg, showLyrics = false, onTap = { selectCatalogSong(sg) })
-                            }
-                        } else {
-                            itemsIndexed(results) { _, sg ->
-                                SongRow(sg, showLyrics = true, onTap = { selectSong(sg) })
+                    // v257: pull down to refresh — standard Material3
+                    // pull-to-refresh animation; refresh brings new
+                    // songs (search re-runs, or fresh Trending).
+                    PullToRefreshBox(
+                        isRefreshing = isRefreshing,
+                        onRefresh = { doRefresh() },
+                        state = pullRefreshState,
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        LazyColumn(Modifier.fillMaxSize()) {
+                            if (q.trim().length < 2) {
+                                // v257: fresh trending songs (from the
+                                // last pull-to-refresh) on top, then the
+                                // Popular list. Favourites live only in
+                                // the Saved page (bookmark icon).
+                                if (trending.isNotEmpty()) {
+                                    item { Text("Trending", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp, start = 2.dp)) }
+                                    items(trending) { sg ->
+                                        SongRow(sg, showLyrics = false, onTap = { runCatching { player.stop() }; onSelect(sg) })
+                                    }
+                                }
+                                item { Text("Popular", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp, start = 2.dp)) }
+                                items(popularOrder) { entry ->
+                                    val sg = GatewayClient.Song(entry.first, entry.second, null, "", 0)
+                                    SongRow(sg, showLyrics = false, onTap = { selectCatalogSong(sg) })
+                                }
+                            } else {
+                                itemsIndexed(results) { _, sg ->
+                                    SongRow(sg, showLyrics = true, onTap = { selectSong(sg) })
+                                }
                             }
                         }
                     }
