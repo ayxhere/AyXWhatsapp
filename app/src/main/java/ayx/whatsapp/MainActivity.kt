@@ -2613,7 +2613,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
                     chatListState = homeChatListState,
                     updateBlur = updateBlur,
                     onPageChange = { chatsPage = it },
-                    onLoadStatuses = { scope.launch { val fresh = GatewayClient.getStatuses(); statuses = if (fresh.isNotEmpty()) StatusData.merge(fresh) else StatusData.load() } },
+                    onLoadStatuses = { scope.launch { val fresh = GatewayClient.getStatuses(); statuses = if (fresh.isNotEmpty()) StatusData.merge(fresh) else StatusData.load(); StatusMediaCache.prefetch(ctx, statuses) } },
                     onOpenStatus = { st ->
                         if (StatusFlags.isLocked(st.sender)) {
                             val km = ctx.getSystemService(KeyguardManager::class.java)
@@ -11007,6 +11007,9 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
     var confirmDelete by remember { mutableStateOf<String?>(null) }
     var showViewers by remember { mutableStateOf(false) }
     val myMine = items.first().mine
+    // v259: local status-media cache (StatusMediaCache) — the viewer
+    // reads deleted statuses from the prefetched file on this device.
+    val ctx = LocalContext.current
     // viewers sheet open → blur the status behind it (like the rest of the UI) and freeze playback
     val statusBlur by animateDpAsState(if (showViewers && st.mediaType != "video") 18.dp else 0.dp, label = "statusblur")
 
@@ -11023,8 +11026,12 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
             // show thumbnail instantly so the viewer is never blank/"…"
             if (bmp == null) bmp = decodeThumb(st.thumb)
             imgLoading = true
+            // v259: deleted statuses play from the local prefetch cache —
+            // the gateway copy is gone after a revoke, so the local file
+            // is the only copy left. Fall back to the gateway for live
+            // statuses whose media was never prefetched.
+            var full: ImageBitmap? = StatusMediaCache.localBitmap(ctx, name)?.asImageBitmap()
             // full media may still be downloading on the gateway (it re-downloads from the raw msg) — retry a few times
-            var full: ImageBitmap? = null
             var tries = 0
             while (full == null && tries < 5) {
                 val bytes = GatewayClient.mediaBytes(name)
@@ -11092,7 +11099,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
                             AyxIcon(Icons.Filled.GraphicEq, null, tint = Color.White, modifier = Modifier.size(56.dp))
                             Spacer(Modifier.height(18.dp))
-                            AudioPlayer(GatewayClient.mediaUrl(st.mediaName!!), Color.White, holdPause = held)
+                            AudioPlayer(StatusMediaCache.localUri(ctx, st.mediaName) ?: GatewayClient.mediaUrl(st.mediaName!!), Color.White, holdPause = held)
                         }
                     }
                 } else if (st.mediaType == "video" && st.mediaName != null) {
@@ -11103,7 +11110,7 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                         // player surface, playback untouched.
                         Box(Modifier.fillMaxSize().viewerGestures(zoom, doubleTap = false)) {
                             ExoVideoPlayer(
-                                uri = Uri.parse(GatewayClient.mediaUrl(st.mediaName!!)),
+                                uri = Uri.parse(StatusMediaCache.localUri(ctx, st.mediaName) ?: GatewayClient.mediaUrl(st.mediaName!!)),
                                 headers = buildMap { GatewayAuth.token()?.let { put("X-Api-Token", it) } },
                                 modifier = Modifier.fillMaxSize(),
                                 autoPlay = true,
