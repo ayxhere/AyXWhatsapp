@@ -11471,12 +11471,37 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
     }
     fun isFav(sg: GatewayClient.Song) = favourites.any { it.first == sg.title && it.second == sg.artist }
     fun toggleFav(sg: GatewayClient.Song) {
-        favourites = if (isFav(sg)) (favourites - (sg.title to sg.artist)).toMutableList()
+        val wasFav = isFav(sg)
+        favourites = if (wasFav) (favourites - (sg.title to sg.artist)).toMutableList()
             else (listOf(sg.title to sg.artist) + favourites).toMutableList()
         saveFavourites()
         // v192: debounced Drive upload of the saved-songs list
         // (silent when Drive is not signed in).
         SavedSongsDrive.onFavouritesChanged(ctx, favourites)
+        // v255: favouriting ALSO saves the song audio itself to Drive
+        // (AyX Backup folder, "Title - Artist.m4a"). Silent when
+        // Drive is not signed in or the audio can't be resolved.
+        if (!wasFav) {
+            scope.launch(Dispatchers.IO) {
+                val url = resolveFavAudio(sg)
+                if (!url.isNullOrBlank()) {
+                    runCatching { SavedSongsDrive.saveSongAudio(ctx, sg.title, sg.artist, url) }
+                }
+            }
+        }
+    }
+    // v255: effective audio URL for a favourited song — mirrors
+    // selectSong's resolution (JioSaavn rows already carry the full
+    // track; iTunes/Spotify resolve it through the JioSaavn matcher),
+    // falling back to the row's own URL (iTunes 30 s preview).
+    suspend fun resolveFavAudio(sg: GatewayClient.Song): String? {
+        val key = sg.title + "|" + sg.artist
+        resolvedSongs[key]?.url?.takeIf { it.isNotBlank() }?.let { return it }
+        if (provider == MusicProviders.SAAVN && sg.url.isNotBlank()) return sg.url
+        val r = if (provider == MusicProviders.SPOTIFY) MusicProviders.resolveSpotifyAudio(ctx, sg)
+            else if (provider == MusicProviders.ITUNES) MusicProviders.resolveItunesFullAudio(ctx, sg)
+            else MusicProviders.resolveFullAudio(ctx, sg)
+        return r?.url?.takeIf { it.isNotBlank() } ?: sg.url.takeIf { it.isNotBlank() }
     }
     // v192: Saved songs page state (own screen, opened from the icon
     // beside the Spotify chip).
@@ -11507,6 +11532,35 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
     // preview) is cached per song so preview + apply share one resolution.
     val resolvedSongs = remember { mutableStateMapOf<String, GatewayClient.Song>() }
     var resolvingKey by remember { mutableStateOf<String?>(null) }
+    // v255: cover-art cache for song rows (URL -> bitmap). No image
+    // library in the app — small hand-rolled loader following the
+    // dpCache pattern: IO download + decode, memory cache only.
+    val coverCache = remember { mutableStateMapOf<String, ImageBitmap?>() }
+    suspend fun loadCoverBitmap(url: String): ImageBitmap? = withContext(Dispatchers.IO) {
+        runCatching {
+            val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                connectTimeout = 10_000
+                readTimeout = 15_000
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+            }
+            if (conn.responseCode !in 200..299) return@runCatching null
+            val out = java.io.ByteArrayOutputStream()
+            val buf = ByteArray(16 * 1024)
+            var total = 0
+            conn.inputStream.use { input ->
+                while (true) {
+                    val n = input.read(buf)
+                    if (n <= 0) break
+                    total += n
+                    if (total > 2 * 1024 * 1024) return@runCatching null
+                    out.write(buf, 0, n)
+                }
+            }
+            val bytes = out.toByteArray()
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+        }.getOrNull()
+    }
     fun playPreview(url: String) {
         runCatching {
             player.reset(); player.setDataSource(url)
@@ -11594,12 +11648,35 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
         Row(Modifier.fillMaxWidth().clickable { onTap() }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             val sKey = sg.title + "|" + sg.artist
             val effUrl = (resolvedSongs[sKey] ?: sg).url
-            IconButton(onClick = { previewSong(sg) }, enabled = resolvingKey != sKey) {
-                if (resolvingKey == sKey) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = IOS_BLUE)
-                else AyxIcon(if (previewUrl != null && previewUrl == effUrl) Icons.Filled.Close else Icons.Filled.PlayArrow, "preview", tint = IOS_BLUE)
+            // v255: NO play/pause icon — the cover photo IS the
+            // play/pause control. Tap it to preview, tap again to
+            // pause. Playing row: blue border + blue title.
+            val isPlaying = previewUrl != null && previewUrl == effUrl
+            val coverUrl = sg.image
+            val coverBmp = coverUrl?.let { coverCache[it] }
+            if (!coverUrl.isNullOrBlank() && !coverCache.containsKey(coverUrl)) {
+                LaunchedEffect(coverUrl) { coverCache[coverUrl] = loadCoverBitmap(coverUrl) }
             }
+            Box(
+                Modifier.size(48.dp)
+                    .clip(uiShapeFor(8))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .then(if (isPlaying) Modifier.border(2.dp, IOS_BLUE, uiShapeFor(8)) else Modifier)
+                    .clickable { previewSong(sg) },
+                contentAlignment = Alignment.Center
+            ) {
+                if (coverBmp != null) {
+                    Image(coverBmp, contentDescription = "cover", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                } else {
+                    AyxIcon(Icons.Filled.MusicNote, "no cover", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (resolvingKey == sKey) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = IOS_BLUE)
+                }
+            }
+            Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text(sg.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(sg.title, maxLines = 1, overflow = TextOverflow.Ellipsis, color = if (isPlaying) IOS_BLUE else Color.Unspecified)
                 Text(sg.artist, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             if (showLyrics) {
@@ -11705,7 +11782,7 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text("Add music", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                                Text("tap ▶ to preview, tap song to use", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("tap cover to preview, tap song to use", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             IconButton(onClick = { runCatching { player.stop() }; onClose() }) { AyxIcon(Icons.Filled.Close, "close") }
                         }
@@ -11744,16 +11821,11 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
                     Spacer(Modifier.height(6.dp))
                     LazyColumn(Modifier.fillMaxSize()) {
                         if (q.trim().length < 2) {
-                            // v191: no query yet — Favourites pinned on
-                            // top (tap one, no search needed), then the
-                            // fixed Popular list. No network call here.
-                            if (favourites.isNotEmpty()) {
-                                item { Text("Favourites", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp, start = 2.dp)) }
-                                items(favourites) { fav ->
-                                    val sg = GatewayClient.Song(fav.first, fav.second, null, "", 0)
-                                    SongRow(sg, showLyrics = false, onTap = { selectCatalogSong(sg) })
-                                }
-                            }
+                            // v255: no query yet — fixed Popular list
+                            // only. Favourites are NOT pinned here
+                            // anymore; they live only in the Saved page
+                            // (bookmark icon beside the Spotify chip).
+                            // No network call here.
                             item { Text("Popular", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp, start = 2.dp)) }
                             items(PopularSongs.LIST) { entry ->
                                 val sg = GatewayClient.Song(entry.first, entry.second, null, "", 0)

@@ -84,6 +84,57 @@ object SavedSongsDrive {
         }
     }
 
+    /** v255: blocking download + Drive upload of one song's audio
+     * (call on IO). File: "Title - Artist.m4a" in the same
+     * "AyX Backup" folder (upsert by name, so re-favouriting just
+     * overwrites). Skips silently when Drive is not signed in;
+     * failures only log — the favourites list sync is unaffected. */
+    fun saveSongAudio(ctx: Context, title: String, artist: String, audioUrl: String) {
+        val appCtx = ctx.applicationContext
+        if (GoogleDriveAuth.signedInAccount(appCtx) == null) return
+        try {
+            val bytes = downloadAudioBytes(audioUrl) ?: return
+            val safe = sanitizeFileName("$title - $artist")
+            if (safe.isBlank()) return
+            val token = GoogleDriveAuth.accessToken(appCtx)
+            driveWrite(token, "$safe.m4a", "audio/mp4", bytes)
+        } catch (e: Exception) {
+            Log.w(TAG, "saved-song audio upload failed: ${e.message}")
+        }
+    }
+
+    private fun downloadAudioBytes(url: String): ByteArray? {
+        return try {
+            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 15_000
+                readTimeout = 60_000
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+            }
+            if (conn.responseCode !in 200..299) return null
+            val out = java.io.ByteArrayOutputStream()
+            val buf = ByteArray(16 * 1024)
+            var total = 0
+            conn.inputStream.use { input ->
+                while (true) {
+                    val n = input.read(buf)
+                    if (n <= 0) break
+                    total += n
+                    if (total > 32 * 1024 * 1024) return null
+                    out.write(buf, 0, n)
+                }
+            }
+            out.toByteArray().takeIf { it.isNotEmpty() }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun sanitizeFileName(name: String): String {
+        val cleaned = name.replace(Regex("[/\\\\:*?\"<>|\\p{Cntrl}]"), "-").trim().trim('.', ' ', '-')
+        return if (cleaned.length > 100) cleaned.take(100).trim().trim('.', ' ', '-') else cleaned
+    }
+
     // ---- minimal Drive v3 REST (same shapes as DriveBackup; separate
     // copy so that file stays untouched). No 401 retry here — a failed
     // debounced upload simply retries on the next favourites change,
