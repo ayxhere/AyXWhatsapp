@@ -8474,7 +8474,7 @@ private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, chats: List<Gatew
                         // (user order 2026-11-09) — tap opens the site in the browser.
                         if (query.contains("imayx", ignoreCase = true)) {
                             val ctx = LocalContext.current
-                            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, bottom = 6.dp)
+                            Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 6.dp)
                                 .clip(uiShapeFor(14))
                                 .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
                                 .clickable { runCatching { openUrl(ctx, "https://imayx.in") } }
