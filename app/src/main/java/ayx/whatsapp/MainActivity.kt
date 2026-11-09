@@ -8470,6 +8470,25 @@ private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, chats: List<Gatew
                                     modifier = Modifier.fillMaxWidth().focusRequester(homeSearchFocus))
                             }
                         }
+                        // v262: searching "imayx" recommends imayx.in directly
+                        // (user order 2026-11-09) — tap opens the site in the browser.
+                        if (query.contains("imayx", ignoreCase = true)) {
+                            val ctx = LocalContext.current
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, bottom = 6.dp)
+                                .clip(uiShapeFor(14))
+                                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
+                                .clickable { runCatching { openUrl(ctx, "https://imayx.in") } }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically) {
+                                AyxIcon(Icons.Filled.Language, null, tint = AYX_GREEN, modifier = Modifier.size(22.dp))
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text("IMAYX — Apps & Digital Experiences", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text("imayx.in — Visit website", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                AyxIcon(Icons.AutoMirrored.Filled.ArrowForward, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                            }
+                        }
                         Box(Modifier.weight(1f)) {
                             ChatList(messages, chats, dpCache, query, androidx.compose.foundation.layout.PaddingValues(top = 6.dp, bottom = 118.dp), ayxSnippet, onToggleChatReveal, onDelete, onOpen, chatListState, clearedUnread)
                         }
