@@ -396,10 +396,22 @@ function saveStatusDeletedDebounced() {
   _statusDelTimer = setTimeout(() => { _statusDelTimer = null; try { fs.writeFileSync(STATUS_DELETED_FILE, JSON.stringify(statusDeleted.slice(0, 120))) } catch (_) {} }, 1500)
 }
 // SD2: record a deleted status as a tombstone (idempotent by id).
+// v266: keep the MEDIA linkage on the tombstone (name/type/thumb from
+// the live entry). Without it the app could only keep a status it had
+// already seen live — a status posted and deleted between Status-tab
+// polls arrived as a bare shell and the viewer showed an empty teal
+// "…" screen. The media file itself survives in MEDIA_DIR (25h
+// protect) and /media/:name re-downloads from the kept raw message if
+// the file is gone, so the tombstone's media name is enough for the
+// app to fetch and keep playing the deleted status.
 function tombstoneStatus(entry) {
   if (!entry || !entry.id) return
   if (!statusDeleted.find(x => x.id === entry.id)) {
-    statusDeleted.unshift({ id: entry.id, sender: entry.sender, name: entry.name || '', ts: entry.ts, mine: !!entry.mine })
+    const mn = entry.mediaName || (entry.media && entry.media.name) || ''
+    const mt = entry.mediaType || (entry.media && entry.media.type) || ''
+    const th = entry.thumb || (entry.media && entry.media.thumb) || ''
+    statusDeleted.unshift({ id: entry.id, sender: entry.sender, name: entry.name || '', ts: entry.ts, mine: !!entry.mine,
+      ...(mn ? { mediaName: mn, mediaType: mt, ...(th ? { thumb: th } : {}) } : {}) })
     if (statusDeleted.length > 120) statusDeleted.length = 120
   }
   saveStatusDeletedDebounced()
@@ -1712,9 +1724,9 @@ function captureDelete(delId) {
     log('marked deleted:', JSON.stringify(orig.text))
   }
   // a REVOKE can also be for a STATUS — SD2: TOMBSTONE it instead of silently
-  // dropping it. The entry leaves the live list (media is gone for good) but a
-  // { id, sender, name, ts } shell stays, so the app renders "Status Deleted"
-  // next to the time instead of its union-merge resurrecting the cached copy
+  // dropping it. The entry leaves the live list but its media linkage rides
+  // on the tombstone (v266), so the app keeps playing the saved copy under
+  // "Status Deleted" instead of the union-merge resurrecting the cached copy
   // as if the status were still alive (the user's re-report).
   if (delId) {
     const stEntry = statuses.find(x => x.id === delId)
@@ -3783,7 +3795,12 @@ app.get('/statuses', (req, res) => {
   const liveIds = new Set(items.map(x => x.id))
   for (const d of statusDeleted) {
     if (!d || !d.id || liveIds.has(d.id) || !(d.ts > cutoff)) continue
-    items.push({ sender: d.sender, name: d.name || '', text: '', ts: d.ts, mine: !!d.mine, id: d.id, deleted: true })
+    // v266: carry the media linkage on the tombstone so the app can
+    // still play a status it never saw live (posted + deleted between
+    // Status-tab polls). Without the name the app had no way to fetch it.
+    const dOut = { sender: d.sender, name: d.name || '', text: '', ts: d.ts, mine: !!d.mine, id: d.id, deleted: true }
+    if (d.mediaName) dOut.media = { name: d.mediaName, type: d.mediaType || '', thumb: d.thumb || '' }
+    items.push(dOut)
   }
   res.json({ items })
 })

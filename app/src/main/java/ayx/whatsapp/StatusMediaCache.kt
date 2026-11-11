@@ -75,7 +75,10 @@ object StatusMediaCache {
                 val now = System.currentTimeMillis()
                 for (s in items) {
                     val name = s.mediaName ?: continue
-                    if (s.deleted) continue
+                    // v266: deleted items carry their media name now (the
+                    // gateway tombstone preserves it) — prefetch them too.
+                    // The gateway copy is gone after a revoke, so the file
+                    // downloaded here is the copy the viewer will play.
                     val f = fileFor(ctx, name)
                     live.add(f.name)
                     if (f.exists() && f.length() > 0) continue

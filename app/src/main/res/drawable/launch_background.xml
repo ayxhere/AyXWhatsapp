@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- v266: launch window matches the Compose splash's first frame (black
+     background + centered white AX logo) so app open never flashes the
+     default light-grey screen with the system launcher icon. The Compose
+     splash (black bg, same 92dp logo, name + dots fading in) takes over
+     seamlessly from this frame. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@android:color/black" />
+    <item
+        android:width="108dp"
+        android:height="108dp"
+        android:gravity="center">
+        <bitmap
+            android:src="@drawable/ic_launcher_white"
+            android:gravity="fill" />
+    </item>
+</layer-list>
