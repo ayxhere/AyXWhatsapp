@@ -696,15 +696,21 @@ class MainActivity : ComponentActivity() {
                     window.statusBarColor = android.graphics.Color.TRANSPARENT
                     WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !dark
                 }
+                // Smooth handoff: the main screen gently fades+settles in as the
+                // splash crossfades out (instead of appearing abruptly underneath).
+                var splashDone by remember { mutableStateOf(false) }
+                val contentAlpha by animateFloatAsState(if (splashDone) 1f else 0.92f,
+                    animationSpec = tween(600, easing = FastOutSlowInEasing), label = "contentIn")
+                val contentScale by animateFloatAsState(if (splashDone) 1f else 0.995f,
+                    animationSpec = tween(600, easing = FastOutSlowInEasing), label = "contentScaleIn")
                 Box(Modifier.fillMaxSize()) {
-                    Surface(Modifier.fillMaxSize()) {
+                    Surface(Modifier.fillMaxSize().graphicsLayer { alpha = contentAlpha; scaleX = contentScale; scaleY = contentScale }) {
                         val ctx = LocalContext.current
                         val prefs = remember { ctx.getSharedPreferences("wagw", Context.MODE_PRIVATE) }
                         var agreed by remember { mutableStateOf(prefs.getBoolean("privacy_agreed", false)) }
                         if (!agreed) PrivacyGate { prefs.edit().putBoolean("privacy_agreed", true).apply(); agreed = true }
                         else GatewayApp(updateBlur = pendingUpdateInfo.value != null)
                     }
-                    var splashDone by remember { mutableStateOf(false) }
                     if (!splashDone) SplashScreen(dark) { splashDone = true }
                     // v147: the update dialog wins over the crash dialog —
                     // a forced update locks the app until it is installed.
@@ -1259,19 +1265,32 @@ fun PrivacyGate(onAgree: () -> Unit) {
 private fun SplashScreen(dark: Boolean, onDone: () -> Unit) {
     var start by remember { mutableStateOf(false) }
     var gone by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(if (start) 1f else 0.70f, animationSpec = tween(620, easing = FastOutSlowInEasing), label = "splashScale")
-    val appear by animateFloatAsState(if (start) 1f else 0f, animationSpec = tween(520), label = "splashAppear")
-    val out by animateFloatAsState(if (gone) 0f else 1f, animationSpec = tween(440), label = "splashOut")
+    // SMOOTH ENTRANCE: soft spring settle (not a linear tween) + fade.
+    val scale by animateFloatAsState(if (start) 1f else 0.82f,
+        animationSpec = spring(dampingRatio = 0.72f, stiffness = 340f), label = "splashScale")
+    val appear by animateFloatAsState(if (start) 1f else 0f,
+        animationSpec = tween(560, easing = FastOutSlowInEasing), label = "splashAppear")
+    // App name + dots fade in a beat after the logo (staggered entrance).
+    val appearLate by animateFloatAsState(if (start) 1f else 0f,
+        animationSpec = tween(500, delayMillis = 180, easing = FastOutSlowInEasing), label = "splashAppearLate")
+    // SMOOTH END (staged exit): content shrinks+fades FIRST, background
+    // crossfades LAST — so the handoff to the main screen feels continuous.
+    val contentOut by animateFloatAsState(if (gone) 0f else 1f,
+        animationSpec = tween(480, easing = FastOutSlowInEasing), label = "splashContentOut")
+    val contentScale by animateFloatAsState(if (gone) 0.90f else 1f,
+        animationSpec = tween(520, easing = FastOutSlowInEasing), label = "splashContentScale")
+    val out by animateFloatAsState(if (gone) 0f else 1f,
+        animationSpec = tween(620, delayMillis = 120, easing = FastOutSlowInEasing), label = "splashOut")
     val inf = rememberInfiniteTransition(label = "splashGlow")
-    val glow by inf.animateFloat(0.30f, 0.85f, infiniteRepeatable(tween(1100, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "splashGlowV")
-    LaunchedEffect(Unit) { start = true; delay(1450); gone = true; delay(450); onDone() }
+    val glow by inf.animateFloat(0.25f, 0.75f, infiniteRepeatable(tween(1200, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "splashGlowV")
+    LaunchedEffect(Unit) { start = true; delay(1150); gone = true; delay(750); onDone() }
     val bg = if (dark) Color(0xFF000000) else Color(0xFFFFFFFF)
     Box(Modifier.fillMaxSize().graphicsLayer { alpha = out }.background(bg), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Box(contentAlignment = Alignment.Center) {
-                Box(Modifier.size(154.dp).graphicsLayer { alpha = glow * appear }
+                Box(Modifier.size(154.dp).graphicsLayer { alpha = glow * appear * contentOut }
                     .background(Brush.radialGradient(listOf(AYX_GREEN.copy(alpha = 0.55f), Color.Transparent)), CircleShape))
-                Box(Modifier.size(92.dp).graphicsLayer { scaleX = scale; scaleY = scale; alpha = appear }
+                Box(Modifier.size(92.dp).graphicsLayer { scaleX = scale * contentScale; scaleY = scale * contentScale; alpha = appear * contentOut }
                     .clip(uiShapeFor(28)).background(Brush.linearGradient(listOf(AYX_GREEN, IOS_BLUE))),
                     contentAlignment = Alignment.Center) {
                     Text("AyX", color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false, style = MaterialTheme.typography.headlineMedium)
@@ -1279,9 +1298,9 @@ private fun SplashScreen(dark: Boolean, onDone: () -> Unit) {
             }
             Spacer(Modifier.height(24.dp))
             Text(APP_NAME, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
-                color = if (dark) Color.White else Color(0xFF111111), modifier = Modifier.graphicsLayer { alpha = appear })
+                color = if (dark) Color.White else Color(0xFF111111), modifier = Modifier.graphicsLayer { alpha = appearLate * contentOut })
             Spacer(Modifier.height(18.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.graphicsLayer { alpha = appear }) {
+            Row(horizontalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.graphicsLayer { alpha = appearLate * contentOut }) {
                 repeat(3) { i ->
                     val d by inf.animateFloat(0.25f, 1f, infiniteRepeatable(tween(600, delayMillis = i * 150, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "splashDot$i")
                     Box(Modifier.size(8.dp).graphicsLayer { alpha = d }.clip(CircleShape).background(AYX_GREEN))
