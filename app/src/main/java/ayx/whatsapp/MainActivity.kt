@@ -1290,11 +1290,10 @@ private fun SplashScreen(dark: Boolean, onDone: () -> Unit) {
             Box(contentAlignment = Alignment.Center) {
                 Box(Modifier.size(154.dp).graphicsLayer { alpha = glow * appear * contentOut }
                     .background(Brush.radialGradient(listOf(AYX_GREEN.copy(alpha = 0.55f), Color.Transparent)), CircleShape))
-                Box(Modifier.size(92.dp).graphicsLayer { scaleX = scale * contentScale; scaleY = scale * contentScale; alpha = appear * contentOut }
-                    .clip(uiShapeFor(28)).background(Brush.linearGradient(listOf(AYX_GREEN, IOS_BLUE))),
-                    contentAlignment = Alignment.Center) {
-                    Text("AyX", color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false, style = MaterialTheme.typography.headlineMedium)
-                }
+                // v265: the white AX logo (user-sent) as the splash tile.
+                Image(painterResource(R.drawable.ic_launcher_white), "AyX",
+                    Modifier.size(92.dp).graphicsLayer { scaleX = scale * contentScale; scaleY = scale * contentScale; alpha = appear * contentOut },
+                    contentScale = ContentScale.Fit)
             }
             Spacer(Modifier.height(24.dp))
             Text(APP_NAME, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
@@ -3001,13 +3000,14 @@ private fun ChatList(messages: List<GatewayClient.Msg>, chats: List<GatewayClien
         .filter { ChatFlags.reveal || ChatFlags.hidden[it.jid] != true }
         .filter { query.isBlank() || chatTitleOfRow(it).contains(query, true) || it.jid.contains(query) }
         .sortedByDescending { it.lastTs }
-    // Home-screen entrance animation: the cascade key is PROCESS-STABLE
-    // (v178, see HomeCascadeKey) — a fresh key per mount replayed the
-    // cascade over a scrolled list on every Home re-entry, which felt
-    // like the scroll locking. Poll refreshes and scroll-back never
-    // re-animated (same key -> seen-set) and still don't.
+    // v265: NO entrance stagger on the home list. The index*35ms cascade
+    // (v178) left rows invisible for up to 350ms + 250ms fade while the
+    // user scrolled on open — the list read as locked/stuck on down/up
+    // scroll. The key stays PROCESS-STABLE (same key -> seen-set), so
+    // poll refreshes and scroll-back never re-animate; rows just render
+    // instantly now, and genuinely new chats still get the delay-free
+    // first-appearance fade (graphicsLayer-only, layout never moves).
     val homeMountKey = HomeCascadeKey.key
-    val homeMountAt = HomeCascadeKey.at
     // Fetch Baileys group subjects for groups that have none yet. Re-runs
     // when the poll brings new messages (messages.size in the key), but
     // getGroupName throttles to 1 attempt / 60s per group.
@@ -3039,13 +3039,11 @@ private fun ChatList(messages: List<GatewayClient.Msg>, chats: List<GatewayClien
             val rowCard = if (ui.isDefault) Modifier
                 else Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
                     .ayxStyled(androidx.compose.foundation.shape.RoundedCornerShape(ui.cardCorner), MaterialTheme.colorScheme.surfaceVariant)
-            // Staggered entrance cascade: rows fade+rise one after another
-            // (index * 35ms, capped at 350ms) — but ONLY inside the first
-            // ~900ms after this list mounted. Later compositions (poll
-            // refresh, scroll-back) get delay 0, so rows never pop in late
-            // while scrolling. graphicsLayer-only: layout size never changes.
-            val homeStaggerMs = if (ayx.whatsapp.ui.UiAnimationSettings.scrollAnimationEnabled.value && System.currentTimeMillis() - homeMountAt < 900) (itemIndex * 35).coerceAtMost(350) else 0
-            AyxFadeInListItem(key = "$homeMountKey:${entry.jid}", index = itemIndex, delayMs = homeStaggerMs) {
+            // v265: delay 0, always — the stagger made rows invisible
+            // while the user scrolled on open (scroll "lock"). First
+            // appearance still fades in (graphicsLayer-only, seen-set),
+            // but nothing ever waits before appearing.
+            AyxFadeInListItem(key = "$homeMountKey:${entry.jid}", index = itemIndex, delayMs = 0) {
             Row(Modifier.fillMaxWidth().then(rowCard).combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = { onOpen(entry.jid) }, onLongClick = { menuChat = entry.jid }).padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 Avatar(entry.jid, name, dpCache, 50.dp)
