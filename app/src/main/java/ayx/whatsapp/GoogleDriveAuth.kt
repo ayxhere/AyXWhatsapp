@@ -34,7 +34,7 @@ import java.io.IOException
  * persisted; the token cache is Google's own.
  */
 object GoogleDriveAuth {
-    const val SCOPE_DRIVE_FILE = "https://www.googleapis.com/auth/drive.file"
+    const val SCOPE_DRIVE_FILE = Env.DRIVE_SCOPE_FILE
 
     // Ready-to-show user messages (the section/status line displays these
     // verbatim — sign-in problems must never surface as raw exceptions).

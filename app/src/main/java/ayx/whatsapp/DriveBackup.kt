@@ -49,8 +49,8 @@ object DriveBackup {
 
     private const val FOLDER_NAME = "AyX Backup"
     private const val FOLDER_MIME = "application/vnd.google-apps.folder"
-    private const val DRIVE_API = "https://www.googleapis.com/drive/v3"
-    private const val DRIVE_UPLOAD = "https://www.googleapis.com/upload/drive/v3"
+    private const val DRIVE_API = Env.DRIVE_API
+    private const val DRIVE_UPLOAD = Env.DRIVE_UPLOAD
 
     private const val PREFS = "ayx_drive_backup"
     private const val P_ACCOUNT_EMAIL = "account_email"

@@ -131,9 +131,9 @@ object MusicProviders {
     }
 
     private fun searchSaavnPage(q: String, page: Int): List<GatewayClient.Song> {
-        val url = "https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=" +
+        val url = Env.JIOSAAVN_API + "?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=" +
             enc(q) + "&p=" + page + "&n=" + SEARCH_PAGE_SIZE
-        val body = httpText(url, headers = mapOf("Referer" to "https://www.jiosaavn.com/", "Accept" to "application/json"))
+        val body = httpText(url, headers = mapOf("Referer" to Env.JIOSAAVN_REFERER, "Accept" to "application/json"))
         val data = try { JSONObject(body) } catch (pe: Exception) { JSONObject(body.replace(Regex("^[^\\{\\[]*"), "")) }
         val results = data.optJSONArray("results") ?: return emptyList()
         val out = ArrayList<GatewayClient.Song>()
@@ -188,7 +188,7 @@ object MusicProviders {
     }
 
     private fun searchItunesPage(q: String, offset: Int): List<GatewayClient.Song> {
-        val url = "https://itunes.apple.com/search?term=" + enc(q) + "&media=music&entity=song&limit=" + SEARCH_PAGE_SIZE + "&offset=" + offset
+        val url = Env.ITUNES_SEARCH_API + "?term=" + enc(q) + "&media=music&entity=song&limit=" + SEARCH_PAGE_SIZE + "&offset=" + offset
         val data = JSONObject(httpText(url))
         val results = data.optJSONArray("results") ?: return emptyList()
         val out = ArrayList<GatewayClient.Song>()
@@ -215,7 +215,7 @@ object MusicProviders {
         runCatching {
             val q = (title + " " + artist).trim()
             if (q.isBlank()) return@runCatching null
-            val itUrl = "https://itunes.apple.com/search?term=" + enc(q) + "&media=music&entity=song&limit=1"
+            val itUrl = Env.ITUNES_SEARCH_API + "?term=" + enc(q) + "&media=music&entity=song&limit=1"
             val itData = JSONObject(httpText(itUrl))
             val itRes = itData.optJSONArray("results")
             if (itRes != null && itRes.length() > 0) {
@@ -233,8 +233,8 @@ object MusicProviders {
     // Same mapping as the search parser (decrypted audio, 500px art).
     suspend fun getTrendingSongs(): List<GatewayClient.Song> = withContext(Dispatchers.IO) {
         try {
-            val url = "https://www.jiosaavn.com/api.php?__call=content.getTrending&ctx=web6dot0&api_version=4&_format=json&_marker=0"
-            val body = httpText(url, headers = mapOf("Referer" to "https://www.jiosaavn.com/", "Accept" to "application/json"))
+            val url = Env.JIOSAAVN_API + "?__call=content.getTrending&ctx=web6dot0&api_version=4&_format=json&_marker=0"
+            val body = httpText(url, headers = mapOf("Referer" to Env.JIOSAAVN_REFERER, "Accept" to "application/json"))
             val arr = JSONArray(body)
             val out = ArrayList<GatewayClient.Song>()
             for (i in 0 until arr.length()) {
@@ -310,7 +310,7 @@ object MusicProviders {
 
     // The Web API search parse path for the anonymous token.
     private fun spotifySearchWithToken(token: String, q: String, offset: Int = 0): List<GatewayClient.Song> {
-        val url = "https://api.spotify.com/v1/search?q=" + enc(q) + "&type=track&limit=" + SEARCH_PAGE_SIZE + "&offset=" + offset
+        val url = Env.SPOTIFY_SEARCH_API + "?q=" + enc(q) + "&type=track&limit=" + SEARCH_PAGE_SIZE + "&offset=" + offset
         val data = JSONObject(httpText(url, headers = mapOf("Authorization" to "Bearer $token")))
         val items = data.optJSONObject("tracks")?.optJSONArray("items") ?: return emptyList()
         val out = ArrayList<GatewayClient.Song>()
@@ -405,7 +405,7 @@ object MusicProviders {
             // desktop browser UA the live verification used (it replaces
             // httpText's default UA via the headers map).
             val html = try {
-                httpText("https://open.spotify.com/embed/track/4uLU6hMCjMI75M1A2tKUQC",
+                httpText(Env.SPOTIFY_EMBED_TRACK,
                     headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"))
             } catch (e: java.io.IOException) {
                 throw java.io.IOException("Spotify token fetch failed — " + (e.message ?: "network error"))

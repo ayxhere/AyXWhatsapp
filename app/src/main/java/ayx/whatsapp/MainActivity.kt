@@ -3543,6 +3543,21 @@ private fun ChatDetail(
 
     // ===== In-chat message search + quote-tap jump (ONE shared scroll/highlight helper) =====
     val jumpScope = rememberCoroutineScope()
+    // v269 (user order): typing in the composer while scrolled up reading
+    // history smoothly brings the list back down to the latest message, and
+    // sending does the same so the sent bubble is visible. reverseLayout
+    // puts the newest message at index 0 (spacer), so scrolling to 0 is
+    // scrolling to the bottom. Incoming messages still never hijack the
+    // scroll (see the no-auto-scroll note above) — only the user's own
+    // typing/send does.
+    fun scrollChatToBottom() {
+        jumpScope.launch { listState.animateScrollToItem(0) }
+    }
+    var prevInputEmpty by remember(chat) { mutableStateOf(true) }
+    LaunchedEffect(input) {
+        if (input.isNotEmpty() && prevInputEmpty) scrollChatToBottom()
+        prevInputEmpty = input.isEmpty()
+    }
     var searchQuery by remember(chat) { mutableStateOf("") }
     var searchPos by remember(chat) { mutableStateOf(0) }
     var highlightId by remember(chat) { mutableStateOf<String?>(null) }
@@ -3854,6 +3869,9 @@ private fun ChatDetail(
                     if (rt?.id != null) onReplySend(input.trim(), rt.id!!, rt.text) else onSend(input.trim())
                     input = ""; replyTo = null
                 }
+                // v269: sending while scrolled up smoothly returns to the
+                // latest message so the sent bubble is visible.
+                scrollChatToBottom()
             }, enabled = (input.isNotBlank() || pendingMedia != null || pendingBatch.isNotEmpty()) && canSend,
                 modifier = Modifier.onGloballyPositioned { lc ->
                     textAnimBus.sendTargetWindow = lc.positionInWindow() + Offset(lc.size.width / 2f, lc.size.height / 2f)
@@ -6366,7 +6384,7 @@ private fun AiLyricsSettings(settings: GatewayClient.Settings, onToggle: (JSONOb
         if (!migrated && settings.aiLyricsApis.isEmpty() && settings.aiApiKey.isNotBlank()) {
             migrated = true
             val entry = GatewayClient.LyricApi("Groq",
-                settings.aiApiUrl.ifBlank { "https://api.groq.com/openai/v1/chat/completions" },
+                settings.aiApiUrl.ifBlank { Env.GROQ_CHAT_URL },
                 settings.aiApiKey, settings.aiModel.ifBlank { "openai/gpt-oss-20b" })
             val arr = org.json.JSONArray().put(lyricApiJson(entry))
             onToggle(JSONObject().put("aiLyricsApis", arr))
@@ -6407,9 +6425,9 @@ private fun AiLyricsSettings(settings: GatewayClient.Settings, onToggle: (JSONOb
     Spacer(Modifier.height(4.dp))
     // Quick-add with sensible defaults. Agent Router keeps an EMPTY url — the user fills in its endpoint.
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        AssistChip(onClick = { dlgPrefill = GatewayClient.LyricApi("Groq", "https://api.groq.com/openai/v1/chat/completions", "", "openai/gpt-oss-20b") },
+        AssistChip(onClick = { dlgPrefill = GatewayClient.LyricApi("Groq", Env.GROQ_CHAT_URL, "", "openai/gpt-oss-20b") },
             label = { Text("+ Groq") })
-        AssistChip(onClick = { dlgPrefill = GatewayClient.LyricApi("OpenRouter", "https://openrouter.ai/api/v1/chat/completions", "", "openai/gpt-oss-20b") },
+        AssistChip(onClick = { dlgPrefill = GatewayClient.LyricApi("OpenRouter", Env.OPENROUTER_CHAT_URL, "", "openai/gpt-oss-20b") },
             label = { Text("+ OpenRouter") })
         AssistChip(onClick = { dlgPrefill = GatewayClient.LyricApi("Agent Router", "", "", "") },
             label = { Text("+ Agent Router") })
@@ -6532,7 +6550,7 @@ private fun ImageAiSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
             Text("PROVIDER 1", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
             LinkRow(Icons.Filled.Language, Color(0xFF4DD07A), "Get Gemini key", "aistudio.google.com → tap to create key") { openUrl(ctx, "https://aistudio.google.com/apikey") }
             FilledTonalButton(onClick = {
-                visionUrl = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+                visionUrl = Env.GEMINI_CHAT_URL
                 vision = "gemini-flash-latest, gemini-3-flash, gemini-2.5-flash, gemini-2.0-flash"
                 Toast.makeText(ctx, "Gemini filled — paste your key and Save", Toast.LENGTH_LONG).show()
             }) { Text("Use Gemini (free)") }
@@ -6547,7 +6565,7 @@ private fun ImageAiSettings(settings: GatewayClient.Settings, onToggle: (JSONObj
             Text("PROVIDER 2 — fallback (jab pehla down ho)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
             LinkRow(Icons.Filled.Language, Color(0xFFFFB26B), "Get OpenRouter key", "openrouter.ai → tap to create key") { openUrl(ctx, "https://openrouter.ai/keys") }
             FilledTonalButton(onClick = {
-                vision2Url = "https://openrouter.ai/api/v1/chat/completions"
+                vision2Url = Env.OPENROUTER_CHAT_URL
                 vision2 = "google/gemini-2.0-flash-exp:free, qwen/qwen2.5-vl-72b-instruct:free, meta-llama/llama-3.2-11b-vision-instruct:free"
                 Toast.makeText(ctx, "OpenRouter filled — paste your key and Save", Toast.LENGTH_LONG).show()
             }) { Text("Use OpenRouter (free)") }
@@ -10276,7 +10294,7 @@ private fun AiLyricsTranslateSheet(songTitle: String, lyrics: List<Pair<Long, St
 @Composable
 private fun GroqKeyDialog(ctx: Context, onClose: () -> Unit) {
     val scope = rememberCoroutineScope()
-    var url by remember { mutableStateOf("https://api.groq.com/openai/v1/chat/completions") }
+    var url by remember { mutableStateOf(Env.GROQ_CHAT_URL) }
     var key by remember { mutableStateOf("") }
     var model by remember { mutableStateOf("openai/gpt-oss-20b") }
     var showKey by remember { mutableStateOf(false) }

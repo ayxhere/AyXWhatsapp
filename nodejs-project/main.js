@@ -118,7 +118,7 @@ let settings = {
   templateButtons: '[]',
   autoReplyRules: [],
   aiReplyEnabled: false,
-  aiApiUrl: 'https://api.groq.com/openai/v1/chat/completions',
+  aiApiUrl: process.env.AYX_GROQ_CHAT_URL || 'https://api.groq.com/openai/v1/chat/completions',
   aiApiKey: '',
   aiModel: 'openai/gpt-oss-20b',
   groupAiEnabled: false,
@@ -149,7 +149,7 @@ let settings = {
   // "How do I download AyX WhatsApp?" auto-answer. Always on (no toggle): whoever asks gets the link
   // directly in chat. The real values are pushed from the app's encrypted AyxHere store on connect;
   // this public releases URL is only a safe fallback so it works even before the first sync.
-  ayxDownloadUrl: 'https://github.com/ayxhere/AyXWhatsapp/releases/latest',
+  ayxDownloadUrl: process.env.AYX_DOWNLOAD_URL || 'https://github.com/ayxhere/AyXWhatsapp/releases/latest',
   ayxShareMsg: 'AyX WhatsApp — a smarter WhatsApp with on-device AI (auto-reply, voice notes, AI status). Download the latest APK here:',
 }
 
@@ -1080,7 +1080,7 @@ function splitModels(s, def) {
 // ordered list of vision providers to try: primary (e.g. Gemini) -> fallback (e.g. OpenRouter) -> main Groq API.
 // Each has {url, key, models[]}. "Out of service" on one automatically moves to the next.
 // Pollinations: free vision with no key (best-effort — they are moving to paid tiers, so may fail).
-const POLLINATIONS_VISION_URL = 'https://text.pollinations.ai/openai?referrer=ayxwhatsapp'
+const POLLINATIONS_VISION_URL = process.env.AYX_POLLINATIONS_VISION_URL || 'https://text.pollinations.ai/openai?referrer=ayxwhatsapp'
 const POLLINATIONS_VISION_MODELS = ['openai', 'gemini']
 function visionProviders() {
   const list = []
@@ -1295,7 +1295,7 @@ async function describeAsPrompt(name) {
 async function generateImage(prompt) {
   try {
     const seed = Math.floor(Math.random() * 1e6)
-    const url = 'https://image.pollinations.ai/prompt/' + encodeURIComponent(prompt) +
+    const url = (process.env.AYX_POLLINATIONS_IMAGE_URL || 'https://image.pollinations.ai/prompt/') + encodeURIComponent(prompt) +
       '?width=1024&height=1024&nologo=true&model=flux&seed=' + seed
     const ctrl = new AbortController()
     const to = setTimeout(() => ctrl.abort(), 70000)
@@ -1360,7 +1360,7 @@ async function edgeTtsOgg(text, voice) {
 async function streamElementsTts(text, voice) {
   try {
     const v = (voice && /^[A-Za-z]+$/.test(voice)) ? voice : 'Aditi'
-    const url = 'https://api.streamelements.com/kappa/v2/speech?voice=' + encodeURIComponent(v) + '&text=' + encodeURIComponent(text.slice(0, 480))
+    const url = (process.env.AYX_STREAMELEMENTS_TTS_URL || 'https://api.streamelements.com/kappa/v2/speech') + '?voice=' + encodeURIComponent(v) + '&text=' + encodeURIComponent(text.slice(0, 480))
     const ctrl = new AbortController(); const to = setTimeout(() => ctrl.abort(), 25000)
     const res = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'Mozilla/5.0' } }); clearTimeout(to)
     if (!res.ok) { log('se tts http', res.status); return null }
@@ -1372,7 +1372,7 @@ async function streamElementsTts(text, voice) {
 // Google Translate TTS fallback (free, no key) — MP3, short text only.
 async function googleTts(text) {
   try {
-    const url = 'https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=hi&q=' + encodeURIComponent(text.slice(0, 190))
+    const url = (process.env.AYX_GOOGLE_TTS_URL || 'https://translate.google.com/translate_tts') + '?ie=UTF-8&client=tw-ob&tl=hi&q=' + encodeURIComponent(text.slice(0, 190))
     const ctrl = new AbortController(); const to = setTimeout(() => ctrl.abort(), 15000)
     const res = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'Mozilla/5.0' } }); clearTimeout(to)
     if (!res.ok) return null
@@ -1426,7 +1426,7 @@ async function sarvamTts(text, speaker, lang, codec) {
   const body = { text: text.slice(0, 480), target_language_code: lang || 'hi-IN', speaker: sp, model: 'bulbul:v3', pace: 1.0, output_audio_codec: codec || 'mp3' }
   const ctrl = new AbortController(); const to = setTimeout(() => ctrl.abort(), 30000)
   try {
-    const res = await fetch('https://api.sarvam.ai/text-to-speech', {
+    const res = await fetch(process.env.AYX_SARVAM_TTS_URL || 'https://api.sarvam.ai/text-to-speech', {
       method: 'POST', signal: ctrl.signal,
       headers: { 'Content-Type': 'application/json', 'api-subscription-key': settings.aiSarvamKey },
       body: JSON.stringify(body),
@@ -2789,8 +2789,8 @@ app.get('/music/search', async (req, res) => {
     let items = []
     // JioSaavn official API (direct) + DES decrypt
     try {
-      const url = 'https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=' + encodeURIComponent(q) + '&p=1&n=30'
-      const body = await httpGet(url, { 'User-Agent': 'Mozilla/5.0 (Linux; Android 12)', 'Accept': 'application/json', 'Referer': 'https://www.jiosaavn.com/' })
+      const url = (process.env.AYX_JIOSAAVN_API || 'https://www.jiosaavn.com/api.php') + '?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=' + encodeURIComponent(q) + '&p=1&n=30'
+      const body = await httpGet(url, { 'User-Agent': 'Mozilla/5.0 (Linux; Android 12)', 'Accept': 'application/json', 'Referer': (process.env.AYX_JIOSAAVN_REFERER || 'https://www.jiosaavn.com/') })
       let data
       try { data = JSON.parse(body) } catch (pe) { data = JSON.parse(body.replace(/^[^{\[]*/, '')) }
       const results = (data && data.results) ? data.results : []
@@ -2863,7 +2863,7 @@ app.get('/music/lyrics', async (req, res) => {
     }
     let data = {}
     try {
-      const body = await httpGet('https://lrclib.net/api/get?track_name=' + encodeURIComponent(title) + '&artist_name=' + encodeURIComponent(firstArtist) + (wantDur > 0 ? '&duration=' + wantDur : ''), { 'User-Agent': 'AyXWhatsApp/1.0', 'Accept': 'application/json' })
+      const body = await httpGet((process.env.AYX_LRCLIB_API || 'https://lrclib.net/api/get') + '?track_name=' + encodeURIComponent(title) + '&artist_name=' + encodeURIComponent(firstArtist) + (wantDur > 0 ? '&duration=' + wantDur : ''), { 'User-Agent': 'AyXWhatsApp/1.0', 'Accept': 'application/json' })
       data = JSON.parse(body)
       // v176: /api/get can also return an approximate match — verify it
       // against the same gates before trusting it, else fall through to

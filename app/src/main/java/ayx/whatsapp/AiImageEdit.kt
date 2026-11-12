@@ -156,7 +156,7 @@ suspend fun openRouterImageEdit(key: String, model: String, jpegBytes: ByteArray
                     .put("content", JSONArray()
                         .put(JSONObject().put("type", "text").put("text", prompt))
                         .put(imgPart))))
-            val c = (URL("https://openrouter.ai/api/v1/chat/completions").openConnection() as HttpURLConnection).apply {
+            val c = (URL(Env.OPENROUTER_CHAT_URL).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"; doOutput = true
                 connectTimeout = 15000; readTimeout = 120000
                 setRequestProperty("Content-Type", "application/json")

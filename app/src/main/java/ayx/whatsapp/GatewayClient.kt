@@ -10,7 +10,7 @@ import java.net.URL
 
 /** Tiny REST client for the in-process node server on 127.0.0.1. */
 object GatewayClient {
-    private val base = "http://127.0.0.1:${NodeRuntime.PORT}"
+    private val base = Env.gatewayBase(NodeRuntime.PORT)
 
     data class Status(
         val connection: String = "?",
@@ -404,7 +404,7 @@ object GatewayClient {
         }
         if (legacyKey.isNotBlank()) return listOf(LyricApi(
             name = "Groq",
-            url = s.aiApiUrl.ifBlank { "https://api.groq.com/openai/v1/chat/completions" },
+            url = s.aiApiUrl.ifBlank { Env.GROQ_CHAT_URL },
             key = legacyKey,
             model = s.aiModel.ifBlank { "openai/gpt-oss-20b" }))
         return emptyList()

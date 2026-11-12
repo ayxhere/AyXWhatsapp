@@ -31,8 +31,8 @@ object SavedSongsDrive {
     private const val FILE_MIME = "application/json"
     private const val FOLDER_NAME = "AyX Backup"
     private const val FOLDER_MIME = "application/vnd.google-apps.folder"
-    private const val DRIVE_API = "https://www.googleapis.com/drive/v3"
-    private const val DRIVE_UPLOAD = "https://www.googleapis.com/upload/drive/v3"
+    private const val DRIVE_API = Env.DRIVE_API
+    private const val DRIVE_UPLOAD = Env.DRIVE_UPLOAD
     private const val DEBOUNCE_MS = 6_000L
 
     private val scheduler = Executors.newSingleThreadScheduledExecutor { r ->
