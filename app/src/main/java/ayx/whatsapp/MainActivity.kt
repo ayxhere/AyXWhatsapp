@@ -1897,11 +1897,13 @@ fun GatewayApp(updateBlur: Boolean = false) {
                             val bytes = if (rawBytes != null && !isJpeg(rawBytes)) {
                                 withContext(Dispatchers.IO) { convertToJpeg(rawBytes) } ?: rawBytes
                             } else rawBytes
-                            if (bytes != null) { notify("Uploading status…"); val res = GatewayClient.postStatus(t, Base64.encodeToString(bytes, Base64.NO_WRAP), caption, audience, recipients); notify((if (res.first) "✅ " else "❌ ") + res.second); if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) } }
+                            if (bytes != null) { notify("Uploading status…"); val res = GatewayClient.postStatusBytes(t, bytes, caption, audience, recipients); notify((if (res.first) "✅ " else "❌ ") + res.second); if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) } }
                         } else {
                             // Video, no song: trim + mute apply for real (no re-encode, sample copy).
                             // V1: NEVER silently skip — every failure path notifies the user explicitly.
-                            val bytes: ByteArray? = withContext(Dispatchers.IO) {
+                            // OOM fix: stream the video FILE — never readBytes() a whole
+                            // video into RAM (a ~96 MB file OOMed the 256 MB heap).
+                            val videoFile: java.io.File? = withContext(Dispatchers.IO) {
                                 try {
                                     if (vTrimActive || videoMuted) {
                                         val trimmed = File(ctx.cacheDir, "vtrim_${System.currentTimeMillis()}.mp4")
@@ -1910,19 +1912,25 @@ fun GatewayApp(updateBlur: Boolean = false) {
                                             // MediaMuxer writes moov at the END; stock WhatsApp needs it
                                             // at the FRONT (faststart) or the video shows as broken.
                                             val fast = File(ctx.cacheDir, "vfast_${System.currentTimeMillis()}.mp4")
-                                            val final = if (MediaTools.faststart(trimmed, fast) && MediaTools.isValidMp4(fast)) fast else trimmed
+                                            val final = if (MediaTools.faststart(trimmed, fast) && MediaTools.isValidMp4(fast)) {
+                                                runCatching { trimmed.delete() }
+                                                fast
+                                            } else {
+                                                runCatching { fast.delete() }
+                                                trimmed
+                                            }
                                             if (!final.exists() || final.length() == 0L) {
                                                 withContext(Dispatchers.Main) { notify("❌ Video processing produced an empty file") }
                                                 null
-                                            } else final.readBytes().also { runCatching { trimmed.delete() }; runCatching { fast.delete() } }
+                                            } else final
                                         }
                                         else {
                                             withContext(Dispatchers.Main) { notify("Video trim failed — posting original") }
-                                            ctx.contentResolver.openInputStream(u)?.use { it.readBytes() }
+                                            copyUriToTempFile(ctx, u)
                                                 ?: run { withContext(Dispatchers.Main) { notify("❌ Could not read video file") }; null }
                                         }
                                     } else {
-                                        ctx.contentResolver.openInputStream(u)?.use { it.readBytes() }
+                                        copyUriToTempFile(ctx, u)
                                             ?: run { withContext(Dispatchers.Main) { notify("❌ Could not read video file (permission lost?)") }; null }
                                     }
                                 } catch (e: Exception) {
@@ -1930,8 +1938,8 @@ fun GatewayApp(updateBlur: Boolean = false) {
                                     null
                                 }
                             }
-                            if (bytes != null && bytes.isNotEmpty()) { notify("Uploading status…"); val res = GatewayClient.postStatus(t, Base64.encodeToString(bytes, Base64.NO_WRAP), caption, audience, recipients); notify((if (res.first) "✅ " else "❌ ") + res.second); if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) } }
-                            else if (bytes != null) notify("❌ Video file is empty")
+                            if (videoFile != null && videoFile.exists() && videoFile.length() > 0L) { notify("Uploading status…"); val res = GatewayClient.postStatusFile(t, videoFile, caption, audience, recipients); runCatching { videoFile.delete() }; notify((if (res.first) "✅ " else "❌ ") + res.second); if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) } }
+                            else if (videoFile != null) notify("❌ Video file is empty")
                         }
                     } else {
                         notify("Creating status video…")
@@ -1995,8 +2003,9 @@ fun GatewayApp(updateBlur: Boolean = false) {
                         }
                         if (finalMp4 != null && finalMp4.exists()) {
                             notify("Uploading…")
-                            val bytes = withContext(Dispatchers.IO) { finalMp4.readBytes() }
-                            val res = GatewayClient.postStatus("video", Base64.encodeToString(bytes, Base64.NO_WRAP), caption, audience, recipients)
+                            // OOM fix: stream the file — never readBytes() a
+                            // whole video into RAM (a ~96 MB bake OOMed).
+                            val res = withContext(Dispatchers.IO) { GatewayClient.postStatusFile("video", finalMp4, caption, audience, recipients) }
                             notify((if (res.first) "✅ " else "❌ ") + res.second)
                             runCatching { finalMp4.delete() }
                             if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) }
@@ -2393,11 +2402,13 @@ fun GatewayApp(updateBlur: Boolean = false) {
                             val up = UploadingMedia(mjid, buri, btype)
                             uploading.add(up)
                             try {
-                                val bytes = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(buri)?.use { it.readBytes() } }
-                                if (bytes == null) { notify("can't read file") }
+                                // OOM fix: stream the file — never readBytes()
+                                // a whole video into RAM (128 MB alloc OOM).
+                                val input = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(buri) }
+                                if (input == null) { notify("can't read file") }
                                 else {
                                     // Caption rides on the FIRST item only (WhatsApp album style).
-                                    GatewayClient.sendMedia(mjid, Base64.encodeToString(bytes, Base64.NO_WRAP), btype, queryName(ctx, buri) ?: "file", if (idx == 0) caption else "", albumId, batch.size)
+                                    GatewayClient.sendMediaStream(mjid, input, btype, queryName(ctx, buri) ?: "file", if (idx == 0) caption else "", albumId, batch.size)
                                     sentAny = true
                                 }
                             } catch (e: Exception) { notify("send failed: " + e.message) }
@@ -2414,14 +2425,16 @@ fun GatewayApp(updateBlur: Boolean = false) {
                         pendingMedia = null
                         if (mjid != null) scope.launch {
                             try {
-                                val mbytes = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(muri)?.use { it.readBytes() } }
-                                if (mbytes == null) { notify("can't read file"); return@launch }
+                                // OOM fix: stream the file — never readBytes()
+                                // a whole video into RAM (128 MB alloc OOM).
+                                val input = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(muri) }
+                                if (input == null) { notify("can't read file"); return@launch }
                                 // S4: show uploading progress in chat (WhatsApp-style).
                                 val up = UploadingMedia(mjid, muri, mtypeSend)
                                 uploading.add(up)
                                 try {
                                     // images/videos go as real inline media (original bytes, no re-compression = high quality by default); other files as documents
-                                    GatewayClient.sendMedia(mjid, Base64.encodeToString(mbytes, Base64.NO_WRAP), mtypeSend, queryName(ctx, muri) ?: "file", mcap)
+                                    GatewayClient.sendMediaStream(mjid, input, mtypeSend, queryName(ctx, muri) ?: "file", mcap)
                                     notify("sent")
                                 } finally {
                                     uploading.remove(up)
@@ -12431,6 +12444,19 @@ private fun convertToJpeg(bytes: ByteArray): ByteArray? = runCatching {
     val out = java.io.ByteArrayOutputStream()
     bmp.compress(Bitmap.CompressFormat.JPEG, 92, out)
     out.toByteArray()
+}.getOrNull()
+
+/**
+ * OOM fix (2026-11-12): copy a content-URI to a cache temp file so the
+ * status upload can STREAM it instead of readBytes()ing a whole video
+ * into RAM. Returns the temp file, or null if it could not be read.
+ */
+private fun copyUriToTempFile(ctx: android.content.Context, uri: android.net.Uri): java.io.File? = runCatching {
+    val tmp = java.io.File(ctx.cacheDir, "vorig_${System.currentTimeMillis()}.mp4")
+    ctx.contentResolver.openInputStream(uri)?.use { input ->
+        java.io.FileOutputStream(tmp).use { out -> input.copyTo(out) }
+    } ?: return null
+    if (tmp.exists() && tmp.length() > 0L) tmp else null
 }.getOrNull()
 
 /**

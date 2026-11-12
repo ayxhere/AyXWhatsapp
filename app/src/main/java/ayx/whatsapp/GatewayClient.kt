@@ -308,6 +308,51 @@ object GatewayClient {
         throw RuntimeException("upload timed out after 5 min — video may still arrive")
     }
 
+    // Streaming chat-media send (same OOM fix as postStatusStream,
+    // 2026-11-12): a long video picked in a chat hit the same
+    // readBytes()+Base64 whole-file-in-RAM pattern. Streams the file
+    // through a Base64 encoder in 8 KB chunks; peak memory ~16 KB.
+    suspend fun sendMediaStream(jid: String, input: java.io.InputStream, type: String, filename: String, caption: String, albumId: String = "", albumCount: Int = 0): Boolean = withContext(Dispatchers.IO) {
+        val albumPart = if (albumId.isNotBlank()) {
+            ",\"albumId\":" + org.json.JSONObject.quote(albumId) + ",\"albumCount\":" + albumCount
+        } else ""
+        val prefix = "{\"jid\":" + org.json.JSONObject.quote(jid) +
+            ",\"type\":" + org.json.JSONObject.quote(type) + ",\"data\":\""
+        val suffix = "\",\"filename\":" + org.json.JSONObject.quote(filename) +
+            ",\"caption\":" + org.json.JSONObject.quote(caption) + albumPart + "}"
+        val c = (URL("$base/sendmedia").openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"; doOutput = true
+            connectTimeout = 3000; readTimeout = 60000
+            setChunkedStreamingMode(8192)
+            setRequestProperty("Content-Type", "application/json")
+            GatewayAuth.token()?.let { setRequestProperty("X-Api-Token", it) }
+        }
+        c.outputStream.use { rawOut ->
+            rawOut.write(prefix.toByteArray(Charsets.UTF_8))
+            val noClose = object : java.io.FilterOutputStream(rawOut) {
+                override fun close() { flush() }
+            }
+            val b64 = java.util.Base64.getEncoder().wrap(noClose)
+            input.use { it.copyTo(b64, 8192) }
+            b64.close()
+            rawOut.write(suffix.toByteArray(Charsets.UTF_8))
+            rawOut.flush()
+        }
+        val o = readJson(c)
+        if (!o.optBoolean("ok", false)) throw RuntimeException(o.optString("error", "send failed"))
+        val uploadId = o.optString("uploadId", "")
+        val deadline = System.currentTimeMillis() + 300_000L
+        while (System.currentTimeMillis() < deadline) {
+            delay(2000L)
+            val st = try { get("/sendmedia/status/$uploadId") } catch (_: Exception) { null } ?: continue
+            when (st.optString("state", "")) {
+                "done" -> return@withContext true
+                "error" -> throw RuntimeException(st.optString("error", "upload failed"))
+            }
+        }
+        throw RuntimeException("upload timed out after 5 min — video may still arrive")
+    }
+
     // .vv: gateway does text→speech and sends it as a voice note (the ".vv" text is never sent)
     suspend fun sendVoice(jid: String, text: String): Boolean = withContext(Dispatchers.IO) {
         val o = post("/sendvoice", JSONObject().put("jid", jid).put("text", text))
@@ -487,6 +532,55 @@ object GatewayClient {
                 GatewayAuth.token()?.let { setRequestProperty("X-Api-Token", it) }
             }
             c.outputStream.use { it.write(body.toByteArray()) }
+            val txt = (if (c.responseCode in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: "{}"
+            val o = JSONObject(txt)
+            o.optBoolean("ok", false) to (if (o.optBoolean("ok", false)) "Status uploaded" else (o.optString("error") + " | " + o.optString("diag")))
+        } catch (e: Exception) { false to (e.message ?: "connection error") }
+    }
+
+    // Streaming status upload (OOM fix, 2026-11-12): the old path did
+    // `file.readBytes()` + `Base64.encodeToString` + a full JSON string +
+    // `body.toByteArray()` — ~4x the file in RAM. A ~96 MB baked video
+    // OOMed the 256 MB heap (134 MB single alloc). These stream the file
+    // through a Base64 encoder in 8 KB chunks with chunked transfer, so
+    // peak memory is ~16 KB no matter how big the video is. The gateway
+    // receives the exact same JSON it already expects (express.json
+    // limit is 256mb), so NO gateway change is needed.
+    suspend fun postStatusFile(type: String, file: java.io.File, caption: String, audience: String, jids: List<String>): Pair<Boolean, String> =
+        postStatusStream(type, java.io.FileInputStream(file), caption, audience, jids)
+
+    suspend fun postStatusBytes(type: String, bytes: ByteArray, caption: String, audience: String, jids: List<String>): Pair<Boolean, String> =
+        postStatusStream(type, java.io.ByteArrayInputStream(bytes), caption, audience, jids)
+
+    suspend fun postStatusStream(type: String, input: java.io.InputStream, caption: String, audience: String, jids: List<String>): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        try {
+            val jidsJson = org.json.JSONArray().apply { jids.forEach { put(it) } }.toString()
+            val prefix = "{\"type\":\"$type\",\"data\":\""
+            val suffix = "\",\"caption\":" + org.json.JSONObject.quote(caption) +
+                ",\"audience\":" + org.json.JSONObject.quote(audience) +
+                ",\"jids\":" + jidsJson + "}"
+            val c = (URL("$base/status/post").openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"; doOutput = true; connectTimeout = 4000
+                readTimeout = 420000
+                // Chunked: never buffer the whole body in RAM.
+                setChunkedStreamingMode(8192)
+                setRequestProperty("Content-Type", "application/json")
+                GatewayAuth.token()?.let { setRequestProperty("X-Api-Token", it) }
+            }
+            c.outputStream.use { rawOut ->
+                rawOut.write(prefix.toByteArray(Charsets.UTF_8))
+                // No-close wrapper: closing the Base64 encoder must
+                // finalize padding WITHOUT closing the connection stream
+                // (the JSON suffix still has to be written after it).
+                val noClose = object : java.io.FilterOutputStream(rawOut) {
+                    override fun close() { flush() }
+                }
+                val b64 = java.util.Base64.getEncoder().wrap(noClose)
+                input.use { it.copyTo(b64, 8192) }
+                b64.close()
+                rawOut.write(suffix.toByteArray(Charsets.UTF_8))
+                rawOut.flush()
+            }
             val txt = (if (c.responseCode in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: "{}"
             val o = JSONObject(txt)
             o.optBoolean("ok", false) to (if (o.optBoolean("ok", false)) "Status uploaded" else (o.optString("error") + " | " + o.optString("diag")))
