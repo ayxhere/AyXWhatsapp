@@ -89,15 +89,23 @@ fun ayxDialogAlpha(baseAlpha: Float = 1f): Float =
 fun <T> AyxAnimatedScreen(
     targetState: T,
     isChat: Boolean = false,
+    // v268: when true for the incoming target, the switch is instant (no
+    // enter/exit animation, no motion blur). Used for returning to the
+    // home chat list from Settings/Profile: the full-screen scale+fade
+    // ran on every return and the list inside the animating container
+    // dropped the first scroll gestures — read as a scroll "lock".
+    instantWhenTarget: (T) -> Boolean = { false },
     content: @Composable (T) -> Unit,
 ) {
     val style = UiAnimationSettings.animationStyle.value
     val motionBlur = UiAnimationSettings.motionBlurEnabled.value && !isChat
+    val instant = instantWhenTarget(targetState)
     // Transient motion-blur: max radius at switch, decays to 0 over ~300ms.
-    // Skipped for chat screens (see isChat) and for non-Zoom styles.
-    var blurActive by remember(targetState) { mutableStateOf(motionBlur && style == AnimationStyle.ZOOM) }
+    // Skipped for chat screens (see isChat), for non-Zoom styles, and for
+    // instant targets (no transition = nothing to blur).
+    var blurActive by remember(targetState) { mutableStateOf(motionBlur && style == AnimationStyle.ZOOM && !instant) }
     LaunchedEffect(targetState) {
-        if (motionBlur && style == AnimationStyle.ZOOM) {
+        if (motionBlur && style == AnimationStyle.ZOOM && !instant) {
             blurActive = true
             delay(300)
             blurActive = false
@@ -107,7 +115,10 @@ fun <T> AyxAnimatedScreen(
     }
     AnimatedContent(
         targetState = targetState,
-        transitionSpec = { ayxTransitionFor(if (isChat) AnimationStyle.FADE else style) },
+        transitionSpec = {
+            if (instantWhenTarget(targetState)) EnterTransition.None togetherWith ExitTransition.None
+            else ayxTransitionFor(if (isChat) AnimationStyle.FADE else style)
+        },
         label = "ayxScreen",
     ) { slotState ->
         Box(
@@ -124,9 +135,10 @@ fun <T> AyxAnimatedScreen(
 fun AyxAnimatedScreen(
     screenKey: Any,
     isChat: Boolean = false,
+    instantWhenTarget: (Any) -> Boolean = { false },
     content: @Composable () -> Unit,
 ) {
-    AyxAnimatedScreen(targetState = screenKey, isChat = isChat) { content() }
+    AyxAnimatedScreen(targetState = screenKey, isChat = isChat, instantWhenTarget = instantWhenTarget) { content() }
 }
 
 private fun ayxTransitionFor(style: AnimationStyle) =

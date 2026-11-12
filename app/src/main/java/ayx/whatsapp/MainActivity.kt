@@ -1273,33 +1273,34 @@ private fun SplashScreen(dark: Boolean, onDone: () -> Unit) {
     // App name + dots fade in a beat after the logo (staggered entrance).
     val appearLate by animateFloatAsState(if (start) 1f else 0f,
         animationSpec = tween(500, delayMillis = 180, easing = FastOutSlowInEasing), label = "splashAppearLate")
-    // SMOOTH END (staged exit): content shrinks+fades FIRST, background
-    // crossfades LAST — so the handoff to the main screen feels continuous.
-    val contentOut by animateFloatAsState(if (gone) 0f else 1f,
-        animationSpec = tween(480, easing = FastOutSlowInEasing), label = "splashContentOut")
-    val contentScale by animateFloatAsState(if (gone) 0.90f else 1f,
-        animationSpec = tween(520, easing = FastOutSlowInEasing), label = "splashContentScale")
+    // v268 SMOOTH END (single unified fade): the whole splash — logo,
+    // name, dots AND background — fades out together in 280ms and the
+    // composable is removed the moment it hits 0. The old staged exit
+    // (content 480ms first, background 620ms+120ms last) left the white
+    // logo tile at a few % alpha floating over the already-visible chat
+    // list — a faint "ghost logo" after the splash ended. LinearEasing
+    // (no FastOutSlowIn slow tail) so the last few % don't linger.
     val out by animateFloatAsState(if (gone) 0f else 1f,
-        animationSpec = tween(620, delayMillis = 120, easing = FastOutSlowInEasing), label = "splashOut")
+        animationSpec = tween(280, easing = LinearEasing), label = "splashOut")
     val inf = rememberInfiniteTransition(label = "splashGlow")
     val glow by inf.animateFloat(0.25f, 0.75f, infiniteRepeatable(tween(1200, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "splashGlowV")
-    LaunchedEffect(Unit) { start = true; delay(1150); gone = true; delay(750); onDone() }
+    LaunchedEffect(Unit) { start = true; delay(1150); gone = true; delay(300); onDone() }
     val bg = if (dark) Color(0xFF000000) else Color(0xFFFFFFFF)
     Box(Modifier.fillMaxSize().graphicsLayer { alpha = out }.background(bg), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Box(contentAlignment = Alignment.Center) {
-                Box(Modifier.size(154.dp).graphicsLayer { alpha = glow * appear * contentOut }
+                Box(Modifier.size(154.dp).graphicsLayer { alpha = glow * appear }
                     .background(Brush.radialGradient(listOf(AYX_GREEN.copy(alpha = 0.55f), Color.Transparent)), CircleShape))
                 // v265: the white AX logo (user-sent) as the splash tile.
                 Image(painterResource(R.drawable.ic_launcher_white), "AyX",
-                    Modifier.size(92.dp).graphicsLayer { scaleX = scale * contentScale; scaleY = scale * contentScale; alpha = appear * contentOut },
+                    Modifier.size(92.dp).graphicsLayer { scaleX = scale; scaleY = scale; alpha = appear },
                     contentScale = ContentScale.Fit)
             }
             Spacer(Modifier.height(24.dp))
             Text(APP_NAME, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
-                color = if (dark) Color.White else Color(0xFF111111), modifier = Modifier.graphicsLayer { alpha = appearLate * contentOut })
+                color = if (dark) Color.White else Color(0xFF111111), modifier = Modifier.graphicsLayer { alpha = appearLate })
             Spacer(Modifier.height(18.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.graphicsLayer { alpha = appearLate * contentOut }) {
+            Row(horizontalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.graphicsLayer { alpha = appearLate }) {
                 repeat(3) { i ->
                     val d by inf.animateFloat(0.25f, 1f, infiniteRepeatable(tween(600, delayMillis = i * 150, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "splashDot$i")
                     Box(Modifier.size(8.dp).graphicsLayer { alpha = d }.clip(CircleShape).background(AYX_GREEN))
@@ -2589,7 +2590,12 @@ fun GatewayApp(updateBlur: Boolean = false) {
             // every pager swipe ALSO run a full-screen scale+fade
             // AnimatedContent transition on top — double animation =
             // flicker/jump on the Chats + Status lists.
-            AyxAnimatedScreen(screenKey = "$screen|$settingsPage") {
+            // v268: returning to the home chat list is instant — the
+            // full-screen scale+fade ran on every Settings/Profile back
+            // and the list inside the animating container dropped the
+            // first scroll gestures (scroll "lock"). Other screens still
+            // animate in normally.
+            AyxAnimatedScreen(screenKey = "$screen|$settingsPage", instantWhenTarget = { (it as? String)?.startsWith("chats|") == true }) {
             when {
                 // AyX Group system channel — independent of WhatsApp link state.
                 // v149: a paired session is saved on this device and the
@@ -3038,7 +3044,11 @@ private fun ChatList(messages: List<GatewayClient.Msg>, chats: List<GatewayClien
     var mutePick by remember { mutableStateOf<String?>(null) }
     val blurDp by animateDpAsState(if (menuChat != null || mutePick != null) 18.dp else 0.dp, label = "homeblur")
 
-    LazyColumn(state = listState, modifier = Modifier.fillMaxSize().blur(blurDp), contentPadding = contentPad) {
+    // v268: blur ONLY when actually blurring (long-press menu open).
+    // An unconditional .blur(0.dp) still routes the scrolling list
+    // through the blur render path on every remount — cheap insurance
+    // against the remount scroll stutter/lock after Settings/Profile back.
+    LazyColumn(state = listState, modifier = Modifier.fillMaxSize().then(if (blurDp > 0.dp) Modifier.blur(blurDp) else Modifier), contentPadding = contentPad) {
         if (groups.isEmpty() && hiddenCount == 0) {
             item {
                 Box(Modifier.fillMaxWidth().padding(top = 48.dp), contentAlignment = Alignment.Center) {
@@ -8446,7 +8456,9 @@ private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, chats: List<Gatew
     // the scroll "lock" feel. Keeping 1 adjacent page composed preserves
     // both lists' state across tab switches; content, order and poll
     // frequency are unchanged.
-    HorizontalPager(state = pager, beyondViewportPageCount = 1, modifier = Modifier.fillMaxSize().blur(updateBlurDp)) { pg ->
+    // v268: same as ChatList — blur the pager ONLY while the update
+    // dialog is up (updateBlurDp > 0), never on a plain remount.
+    HorizontalPager(state = pager, beyondViewportPageCount = 1, modifier = Modifier.fillMaxSize().then(if (updateBlurDp > 0.dp) Modifier.blur(updateBlurDp) else Modifier)) { pg ->
         // Tab-switch settle: the newly active page animates with the chosen
         // Animation Style (not just a fade) so the setting visibly applies
         // on the home tabs. graphicsLayer-only (no layout change), skipped

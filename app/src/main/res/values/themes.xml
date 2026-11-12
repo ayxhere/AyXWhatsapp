@@ -3,14 +3,17 @@
     <!-- Base theme; Compose drives the actual colors. Flat name + explicit parent
          (dot-notation style names trip AndroidIDE's AAPT2 parent inference). -->
     <style name="Theme.WAGateway" parent="android:Theme.Material.Light.NoActionBar">
-        <!-- v266: launch window = splash first frame (black + white AX logo).
-             Without this the system showed its default light-grey screen
-             with the launcher icon on cold start. windowBackground covers
-             pre-31; the windowSplashScreen* attrs cover Android 12+. -->
+        <!-- v268: launch = Telegram/Nagram XF way (Theme.TMessages.Start):
+             the system splash shows windowSplashScreenAnimatedIcon BIG and
+             centred the instant the process starts — no Compose needed.
+             v266 wired these attrs but ic_launcher_white in the repo was
+             base64 TEXT, not a PNG, so the system fell back to a tiny dim
+             icon; the drawable is now the real PNG again. Duration 500ms,
+             same as Nagram's splash_screen_duration. -->
         <item name="android:windowBackground">@drawable/launch_background</item>
         <item name="android:windowSplashScreenBackground">@android:color/black</item>
         <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_white</item>
-        <item name="android:windowSplashScreenAnimationDuration">1000</item>
+        <item name="android:windowSplashScreenAnimationDuration">500</item>
         <item name="android:windowSplashScreenIconBackgroundColor">@android:color/black</item>
     </style>
 </resources>
