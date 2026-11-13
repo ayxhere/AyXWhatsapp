@@ -84,6 +84,7 @@ import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.StrokeCap
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withTimeout
@@ -99,6 +100,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.graphicsLayer
@@ -1307,30 +1309,39 @@ fun PrivacyGate(onAgree: () -> Unit) {
  *  tap point, washing the new theme over the old one. The theme change
  *  itself is applied only once the circle covers the screen, so there is
  *  no visible pop. */
+// v273: Paytm-style theme reveal — the new theme applies IMMEDIATELY and
+// is revealed through an expanding circular window from the tap point.
+// The overlay is the OLD background with a hole punched in it (EvenOdd
+// path), so the screen NEVER flashes a solid full-screen color the way
+// the old growing-blob reveal did.
 private object AyxThemeReveal {
-    class Reveal(val center: Offset, val color: Color, val onCovered: () -> Unit)
+    class Reveal(val center: Offset, val oldColor: Color)
     val current = mutableStateOf<Reveal?>(null)
-    fun show(center: Offset, color: Color, onCovered: () -> Unit) {
-        // A tap during a running reveal applies the pending change first —
-        // no tap is ever swallowed.
-        current.value?.onCovered?.invoke()
-        current.value = Reveal(center, color, onCovered)
+    fun show(center: Offset, oldColor: Color, onCovered: () -> Unit) {
+        // Apply the theme change at once — the overlay hole reveals it.
+        // A tap during a running reveal just restarts the window.
+        onCovered()
+        current.value = Reveal(center, oldColor)
     }
 }
 
 @Composable
 private fun AyxThemeRevealOverlay() {
     val reveal = AyxThemeReveal.current.value ?: return
-    val progress = remember { Animatable(0f) }
+    val progress = remember(reveal) { Animatable(0f) }
     LaunchedEffect(reveal) {
-        progress.snapTo(0f)
         progress.animateTo(1f, tween(550, easing = FastOutSlowInEasing))
-        reveal.onCovered()
         AyxThemeReveal.current.value = null
     }
     Canvas(Modifier.fillMaxSize()) {
         val maxR = kotlin.math.hypot(size.width, size.height)
-        drawCircle(reveal.color, radius = (maxR * progress.value).coerceAtLeast(1f), center = reveal.center)
+        val r = (maxR * progress.value).coerceAtLeast(1f)
+        val path = Path().apply {
+            addRect(Rect(Offset.Zero, size))
+            addOval(Rect(reveal.center - Offset(r, r), reveal.center + Offset(r, r)))
+            fillType = PathFillType.EvenOdd
+        }
+        drawPath(path, reveal.oldColor)
     }
 }
 
@@ -1386,8 +1397,9 @@ private fun SplashScreen(onDone: () -> Unit) {
             popBlob = true; popLogo = true; popName = true; popDot0 = true; popDot1 = true; popDot2 = true
             delay(700); gone = true; delay(160); onDone()
         } else {
-            popBlob = true
-            delay(270); popLogo = true
+            // v273: logo pops WITH the blob at launch — no 270ms lag where
+            // the blob shows alone.
+            popBlob = true; popLogo = true
             delay(108); popName = true
             delay(108); popDot0 = true
             delay(99); popDot1 = true
@@ -1403,9 +1415,10 @@ private fun SplashScreen(onDone: () -> Unit) {
                 Canvas(Modifier.size(190.dp).graphicsLayer { scaleX = blobScale; scaleY = blobScale; rotationZ = blobRot; alpha = blobScale }) {
                     drawPath(ayxCookiePath(size.minDimension), cs.primary.copy(alpha = 0.22f))
                 }
-                // v265: the white AX logo (user-sent) as the splash tile.
-                Image(painterResource(R.drawable.ic_launcher_white), "AyX",
-                    Modifier.size(92.dp).graphicsLayer { scaleX = logoPop; scaleY = logoPop; alpha = logoPop },
+                // v273: the user's new teal AX emblem (black background
+                // removed to transparent locally) as the splash logo.
+                Image(painterResource(R.drawable.ic_splash_logo), "AyX",
+                    Modifier.size(110.dp).graphicsLayer { scaleX = logoPop; scaleY = logoPop; alpha = logoPop },
                     contentScale = ContentScale.Fit)
             }
             Spacer(Modifier.height(24.dp))
@@ -6881,6 +6894,23 @@ private fun ChatSettings(onOpenWallpaper: () -> Unit) {
     }
 
     SettingsGroup("Chat header blur") {
+        // v273: mini header preview — the frosted pill over a wallpaper
+        // gradient, so the blur + pill read at a glance.
+        Box(Modifier.fillMaxWidth().padding(top = 10.dp).clip(RoundedCornerShape(16.dp)).background(
+            Brush.linearGradient(listOf(Color(0xFF2E7D6B), Color(0xFF1B3A5C), Color(0xFF6B3FA0)))
+        ).padding(12.dp)) {
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Color.Black.copy(alpha = 0.35f)).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(34.dp).clip(CircleShape).background(Color(0xFF128C7E)), contentAlignment = Alignment.Center) {
+                    Text("R", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                }
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Raju", color = Color.White, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                    Text(if (ChatStyle.headerBlurDp.value == 0) "blur off" else "blur ${ChatStyle.headerBlurDp.value}dp", color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelSmall)
+                }
+                Box(Modifier.size(8.dp).clip(CircleShape).background(Color(0xFF4ADE80)))
+            }
+        }
         Column(Modifier.padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             ChatStyle.blurSteps.chunked(4).forEach { row ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -6919,30 +6949,32 @@ private fun ChatSettings(onOpenWallpaper: () -> Unit) {
     }
 }
 
-// horizontal swatch picker; first swatch (0) = follow the bubble-style default
+// v273: all 15 swatches visible at once in a grid — no hidden colors,
+// no clipped last swatch, no scroll hunting.
 @Composable
 private fun BubbleColorRow(selected: Int, onPick: (Int) -> Unit) {
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ChatStyle.bubblePalette.forEach { argb ->
-            val isSel = selected == argb
-            val ring = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)
-            // v272: selected swatch pops (v271 overshoot spring); 44dp
-            // targets; trailing spacer stops the last swatch being
-            // clipped half off-screen (the user's screenshot).
-            val pop by animateFloatAsState(if (isSel) 1.12f else 1f,
-                animationSpec = spring(dampingRatio = 0.55f, stiffness = 320f), label = "bubbleSwatchPop")
-            Box(
-                Modifier.size(44.dp).graphicsLayer { scaleX = pop; scaleY = pop }.clip(CircleShape)
-                    .background(if (argb == 0) MaterialTheme.colorScheme.surfaceVariant else Color(argb))
-                    .border(if (isSel) 3.dp else 1.dp, ring, CircleShape)
-                    .clickable { onPick(argb) },
-                contentAlignment = Alignment.Center
-            ) {
-                if (argb == 0) Text("A", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                else if (isSel) AyxIcon(Icons.Filled.Done, "selected", tint = ChatStyle.textOn(argb), modifier = Modifier.size(18.dp))
+    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        ChatStyle.bubblePalette.chunked(6).forEach { row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                row.forEach { argb ->
+                    val isSel = selected == argb
+                    val ring = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)
+                    val pop by animateFloatAsState(if (isSel) 1.12f else 1f,
+                        animationSpec = spring(dampingRatio = 0.55f, stiffness = 320f), label = "bubbleSwatchPop")
+                    Box(
+                        Modifier.size(44.dp).graphicsLayer { scaleX = pop; scaleY = pop }.clip(CircleShape)
+                            .background(if (argb == 0) MaterialTheme.colorScheme.surfaceVariant else Color(argb))
+                            .border(if (isSel) 3.dp else 1.dp, ring, CircleShape)
+                            .clickable { onPick(argb) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (argb == 0) Text("A", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        else if (isSel) AyxIcon(Icons.Filled.Done, "selected", tint = ChatStyle.textOn(argb), modifier = Modifier.size(18.dp))
+                    }
+                }
+                repeat(6 - row.size) { Spacer(Modifier.size(44.dp)) }
             }
         }
-        Spacer(Modifier.width(16.dp))
     }
 }
 
@@ -7014,7 +7046,7 @@ private fun LookFeelScreen(onOpenFont: () -> Unit) {
                                 .background(scheme.surfaceContainer)
                                 .border(if (sel) 3.dp else 1.dp, if (sel) scheme.primary else scheme.outline.copy(alpha = 0.4f), RoundedCornerShape(radius))
                                 .then(tapMod)
-                                .clickable { lookFeelHaptic(view); AyxThemeReveal.show(tapCenter(), scheme.background) { ThemeStore.setMode(key) } }
+                                .clickable { lookFeelHaptic(view); AyxThemeReveal.show(tapCenter(), MaterialTheme.colorScheme.background) { ThemeStore.setMode(key) } }
                                 .padding(8.dp),
                         ) {
                             // Live miniature drawn from the real scheme.
@@ -7070,7 +7102,7 @@ private fun LookFeelScreen(onOpenFont: () -> Unit) {
                         Box(Modifier.size(60.dp).clip(CircleShape).background(roles.primary)
                             .graphicsLayer { scaleX = selPop; scaleY = selPop }
                             .then(tapMod)
-                            .clickable { lookFeelHaptic(view); AyxThemeReveal.show(tapCenter(), newBg) { LookFeelStore.setPalette(p.id) } }
+                            .clickable { lookFeelHaptic(view); AyxThemeReveal.show(tapCenter(), MaterialTheme.colorScheme.background) { LookFeelStore.setPalette(p.id) } }
                         ) {
                             // 3-field swatch: primary top, container bottom-left, tertiary bottom-right.
                             Column(Modifier.fillMaxSize()) {
@@ -12441,7 +12473,9 @@ private fun AudioTrimmer(song: GatewayClient.Song, initialStart: Long = 0L, init
     val karaokeLyrics = remember(lyrics, startMs) { reanchorUntimedLyrics(lyrics, startMs) }
     val curLyric = karaokeLyrics.indexOfLast { it.first <= posMs }
     Dialog(onDismissRequest = onCancel, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.fillMaxSize(), color = Color(0xFF0A0A0A)) {
+        // v273: the trimmer sits on a soft vertical gradient instead of a
+        // flat black slab.
+        Surface(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF1C1C22), Color(0xFF0A0A0A), Color(0xFF0A0A0A)))), color = Color.Transparent) {
             Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(16.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onCancel) { AyxIcon(Icons.Filled.Close, "close", tint = Color.White) }
