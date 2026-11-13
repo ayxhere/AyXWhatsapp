@@ -2435,16 +2435,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
                                 if (sub.isNotEmpty()) Text(sub, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
-                    } else Row(verticalAlignment = Alignment.CenterVertically) {
-                        // v274: the new teal AX emblem next to the home
-                        // title — the transparent logo, shown once the
-                        // splash is done. Long-press on the title still
-                        // reveals hidden chats (unchanged, on the Text).
-                        if (title == APP_NAME) {
-                            Image(painterResource(R.drawable.ic_splash_logo), "AyX", Modifier.size(28.dp))
-                            Spacer(Modifier.width(8.dp))
-                        }
-                        Text(title, fontWeight = FontWeight.Bold, modifier = Modifier.combinedClickable(
+                    } else Text(title, fontWeight = FontWeight.Bold, modifier = Modifier.combinedClickable(
                         interactionSource = remember { MutableInteractionSource() }, indication = null,
                         onClick = {},
                         // Long-press the WhatsAyX title to reveal hidden items — Status tab reveals hidden statuses, Home reveals hidden chats.
@@ -2465,7 +2456,6 @@ fun GatewayApp(updateBlur: Boolean = false) {
                                 }
                             }
                         }))
-                    }
                 },
                 navigationIcon = {
                     if (openChat != null || screen == "settings" || screen == "newchat" || screen == "profile")
@@ -6911,8 +6901,18 @@ private fun ChatSettings(onOpenWallpaper: () -> Unit) {
 
     SettingsGroup("Bubble color") {
         Text("Sent (right side)", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 10.dp, start = 2.dp))
+        // v275: live bubble preview — the picked color as a real bubble
+        // in the current style, right where you pick it.
+        Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.End) {
+            val spec = bubbleSpec(true, dark)
+            Surface(color = spec.first, shape = spec.third) { Text("Hi", color = spec.second, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) }
+        }
         BubbleColorRow(ChatStyle.sentColor.value) { ChatStyle.setSentColor(it) }
         Text("Received (left side)", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 10.dp, start = 2.dp))
+        Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.Start) {
+            val spec = bubbleSpec(false, dark)
+            Surface(color = spec.first, shape = spec.third) { Text("Hey", color = spec.second, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) }
+        }
         BubbleColorRow(ChatStyle.recvColor.value) { ChatStyle.setRecvColor(it) }
         Spacer(Modifier.height(4.dp))
     }
@@ -6922,9 +6922,10 @@ private fun ChatSettings(onOpenWallpaper: () -> Unit) {
         // from ChatStyle.headerAlpha(), so tapping 0→40dp visibly lets
         // more of the text show through. That is how much blur each
         // value gives.
-        Box(Modifier.fillMaxWidth().padding(top = 10.dp).clip(RoundedCornerShape(16.dp)).background(
-            Brush.linearGradient(listOf(Color(0xFF2E7D6B), Color(0xFF1B3A5C), Color(0xFF6B3FA0)))
-        )) {
+        // v275: no more rainbow gradient behind the preview — a plain
+        // dark chat background, so the frost + demo text read like the
+        // real chat.
+        Box(Modifier.fillMaxWidth().padding(top = 10.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFF111B21))) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Hey, kya haal hai?", color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.bodyMedium)
                 Text("Kal 5 baje milte hain", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodyMedium)
@@ -6982,12 +6983,12 @@ private fun ChatSettings(onOpenWallpaper: () -> Unit) {
     }
 }
 
-// v273: all 15 swatches visible at once in a grid — no hidden colors,
-// no clipped last swatch, no scroll hunting.
+// v275: 5 per row — 3 even rows, no ragged last row with empty slots.
+// The live bubble preview sits above each grid (at the call site).
 @Composable
 private fun BubbleColorRow(selected: Int, onPick: (Int) -> Unit) {
     Column(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        ChatStyle.bubblePalette.chunked(6).forEach { row ->
+        ChatStyle.bubblePalette.chunked(5).forEach { row ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 row.forEach { argb ->
                     val isSel = selected == argb
@@ -7005,7 +7006,7 @@ private fun BubbleColorRow(selected: Int, onPick: (Int) -> Unit) {
                         else if (isSel) AyxIcon(Icons.Filled.Done, "selected", tint = ChatStyle.textOn(argb), modifier = Modifier.size(18.dp))
                     }
                 }
-                repeat(6 - row.size) { Spacer(Modifier.size(44.dp)) }
+                repeat(5 - row.size) { Spacer(Modifier.size(44.dp)) }
             }
         }
     }
