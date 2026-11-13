@@ -84,7 +84,7 @@ import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.StrokeCap
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withTimeout
@@ -1333,15 +1333,21 @@ private fun AyxThemeRevealOverlay() {
         progress.animateTo(1f, tween(550, easing = FastOutSlowInEasing))
         AyxThemeReveal.current.value = null
     }
-    Canvas(Modifier.fillMaxSize()) {
-        val maxR = kotlin.math.hypot(size.width, size.height)
-        val r = (maxR * progress.value).coerceAtLeast(1f)
-        val path = Path().apply {
-            addRect(Rect(Offset.Zero, size))
-            addOval(Rect(reveal.center - Offset(r, r), reveal.center + Offset(r, r)))
-            fillType = PathFillType.EvenOdd
-        }
-        drawPath(path, reveal.oldColor)
+    // v274: GPU-only circular reveal — the old background lives in a
+    // circle that scales up from the tap point (RenderNode transform,
+    // no redraw). The old per-frame EvenOdd path fill over the full
+    // screen dropped frames on theme change.
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val density = LocalDensity.current
+        val maxRpx = with(density) { kotlin.math.hypot(maxWidth.toPx(), maxHeight.toPx()) }
+        val dia = with(density) { (maxRpx * 2).toDp() }
+        val scale = progress.value.coerceAtLeast(0.001f)
+        Box(Modifier
+            .size(dia)
+            .offset { IntOffset((reveal.center.x - maxRpx).roundToInt(), (reveal.center.y - maxRpx).roundToInt()) }
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(CircleShape)
+            .background(reveal.oldColor))
     }
 }
 
@@ -1374,8 +1380,11 @@ private fun SplashScreen(onDone: () -> Unit) {
     // Blob: springs open 0.2 -> 1 (overshoot) while turning -120° -> 0.
     val blobScale by animateFloatAsState(if (popBlob) 1f else if (calm) 1f else 0.2f,
         animationSpec = if (calm) tween(0) else overshoot, label = "splashBlobScale")
-    val blobRot by animateFloatAsState(if (popBlob) 0f else if (calm) 0f else -120f,
-        animationSpec = if (calm) tween(0) else tween(810, easing = FastOutSlowInEasing), label = "splashBlobRot")
+    // v274: the blob spins continuously while the splash is up. The old
+    // -120°→0 turn was invisible — the 9-lobed cookie maps onto itself
+    // every 120°, so start and end looked identical.
+    val blobSpin by rememberInfiniteTransition(label = "splashBlobSpin")
+        .animateFloat(0f, 360f, infiniteRepeatable(tween(1800, easing = LinearEasing)), label = "splashBlobSpinAngle")
     val logoPop by animateFloatAsState(if (popLogo) 1f else if (calm) 1f else 0f,
         animationSpec = if (calm) tween(0) else overshoot, label = "splashLogoPop")
     val namePop by animateFloatAsState(if (popName) 1f else if (calm) 1f else 0f,
@@ -1411,10 +1420,15 @@ private fun SplashScreen(onDone: () -> Unit) {
     Box(Modifier.fillMaxSize().graphicsLayer { alpha = out; scaleX = exitScale; scaleY = exitScale }.background(bg), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Box(contentAlignment = Alignment.Center) {
-                // Cookie blob in the palette primary — springs open while turning.
-                Canvas(Modifier.size(190.dp).graphicsLayer { scaleX = blobScale; scaleY = blobScale; rotationZ = blobRot; alpha = blobScale }) {
-                    drawPath(ayxCookiePath(size.minDimension), cs.primary.copy(alpha = 0.22f))
-                }
+                // Cookie blob in the palette primary — springs open while
+                // spinning. Path built once per size (drawWithCache) so
+                // the splash doesn't rebuild it every frame.
+                Box(Modifier.size(190.dp).graphicsLayer { scaleX = blobScale; scaleY = blobScale; rotationZ = if (calm) 0f else blobSpin; alpha = blobScale }
+                    .drawWithCache {
+                        val path = ayxCookiePath(size.minDimension)
+                        val fill = cs.primary.copy(alpha = 0.22f)
+                        onDrawBehind { drawPath(path, fill) }
+                    })
                 // v273: the user's new teal AX emblem (black background
                 // removed to transparent locally) as the splash logo.
                 Image(painterResource(R.drawable.ic_splash_logo), "AyX",
@@ -2421,7 +2435,16 @@ fun GatewayApp(updateBlur: Boolean = false) {
                                 if (sub.isNotEmpty()) Text(sub, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
-                    } else Text(title, fontWeight = FontWeight.Bold, modifier = Modifier.combinedClickable(
+                    } else Row(verticalAlignment = Alignment.CenterVertically) {
+                        // v274: the new teal AX emblem next to the home
+                        // title — the transparent logo, shown once the
+                        // splash is done. Long-press on the title still
+                        // reveals hidden chats (unchanged, on the Text).
+                        if (title == APP_NAME) {
+                            Image(painterResource(R.drawable.ic_splash_logo), "AyX", Modifier.size(28.dp))
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text(title, fontWeight = FontWeight.Bold, modifier = Modifier.combinedClickable(
                         interactionSource = remember { MutableInteractionSource() }, indication = null,
                         onClick = {},
                         // Long-press the WhatsAyX title to reveal hidden items — Status tab reveals hidden statuses, Home reveals hidden chats.
@@ -2442,6 +2465,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
                                 }
                             }
                         }))
+                    }
                 },
                 navigationIcon = {
                     if (openChat != null || screen == "settings" || screen == "newchat" || screen == "profile")
@@ -6894,12 +6918,20 @@ private fun ChatSettings(onOpenWallpaper: () -> Unit) {
     }
 
     SettingsGroup("Chat header blur") {
-        // v273: mini header preview — the frosted pill over a wallpaper
-        // gradient, so the blur + pill read at a glance.
+        // v274: demo chat text behind the pill — the pill's frost comes
+        // from ChatStyle.headerAlpha(), so tapping 0→40dp visibly lets
+        // more of the text show through. That is how much blur each
+        // value gives.
         Box(Modifier.fillMaxWidth().padding(top = 10.dp).clip(RoundedCornerShape(16.dp)).background(
             Brush.linearGradient(listOf(Color(0xFF2E7D6B), Color(0xFF1B3A5C), Color(0xFF6B3FA0)))
-        ).padding(12.dp)) {
-            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Color.Black.copy(alpha = 0.35f)).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        )) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Hey, kya haal hai?", color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.bodyMedium)
+                Text("Kal 5 baje milte hain", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodyMedium)
+                Text("Photo bhej diya maine", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.bodyMedium)
+                Text("Ok, done", color = Color.White.copy(alpha = 0.45f), style = MaterialTheme.typography.bodyMedium)
+            }
+            Row(Modifier.fillMaxWidth().padding(12.dp).clip(RoundedCornerShape(24.dp)).background(Color.Black.copy(alpha = ChatStyle.headerAlpha())).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(34.dp).clip(CircleShape).background(Color(0xFF128C7E)), contentAlignment = Alignment.Center) {
                     Text("R", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
                 }
@@ -6911,6 +6943,7 @@ private fun ChatSettings(onOpenWallpaper: () -> Unit) {
                 Box(Modifier.size(8.dp).clip(CircleShape).background(Color(0xFF4ADE80)))
             }
         }
+        Text("Peeche ka demo text — jitna blur, utna text dikhega", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 4.dp, top = 6.dp))
         Column(Modifier.padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             ChatStyle.blurSteps.chunked(4).forEach { row ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

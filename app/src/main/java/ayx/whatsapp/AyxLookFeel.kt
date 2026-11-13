@@ -5,6 +5,8 @@ import android.content.Context
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.view.HapticFeedbackConstants
 import android.view.View
 import android.widget.Toast
@@ -343,10 +345,26 @@ fun ayxCookiePath(size: Float): androidx.compose.ui.graphics.Path {
 
 // ── Haptics ──────────────────────────────────────────────────────────────
 
-/** Small tap tick, only when Haptic feedback is on. */
+/**
+ * Small tap tick, only when Haptic feedback is on.
+ * v274: the old View.performHapticFeedback(KEYBOARD_TAP) was too weak to
+ * feel (and depends on the view + the system touch-vibration setting),
+ * so this now drives the Vibrator directly — EFFECT_CLICK is clearly
+ * felt. Falls back to performHapticFeedback when no vibrator exists.
+ */
 fun lookFeelHaptic(view: View?) {
     if (!LookFeelStore.haptic.value) return
-    view?.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+    val vibrator = view?.context?.getSystemService(Vibrator::class.java)
+    if (vibrator != null && vibrator.hasVibrator()) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK))
+        } else {
+            @Suppress("DEPRECATION")
+            vibrator.vibrate(15)
+        }
+        return
+    }
+    view?.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
 }
 
 // ── Space Grotesk font (downloaded once) ────────────────────────────────
