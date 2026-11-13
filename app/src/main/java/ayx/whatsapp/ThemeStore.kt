@@ -15,9 +15,13 @@ import androidx.compose.ui.graphics.Color
  * UiStyleStore.
  */
 object ThemeStore {
-    // system | light | amoled  ("dark" was removed — stored values migrate to amoled in init)
+    // system | light | dusk | dark | amoled
+    // (v270 Look & feel: Dusk = tinted dark, Dark = standard dark, OLED =
+    // pure black. The old "dark"->"amoled" migration is gone — "dark" is a
+    // real mode again.)
     val mode = mutableStateOf("system")
-    // key into [accents]
+    // key into [accents]; "palette" = the Look & feel palette's primary
+    // (resolved in accentColor() via LookFeelStore).
     val accent = mutableStateOf("purple")
     // status viewer top progress style: default | wavy | squiggly
     // (Settings → Appearance → Status style). Default stays "squiggly" so
@@ -66,15 +70,8 @@ object ThemeStore {
         if (prefs != null) return
         prefs = ctx.getSharedPreferences("theme", Context.MODE_PRIVATE)
         mode.value = prefs!!.getString("mode", "system") ?: "system"
-        // The standalone "Dark" theme option was removed (user request,
-        // 2026-10-21): a stored "dark" now means AMOLED. Migrate the stored
-        // value itself so no selector ever has to display a mode that no
-        // longer exists; rendering of any leftover "dark" is also mapped
-        // to AMOLED at the theme-resolution site as a safety net.
-        if (mode.value == "dark") {
-            mode.value = "amoled"
-            prefs!!.edit().putString("mode", "amoled").apply()
-        }
+        // v270: "dark" is a selectable mode again (Look & feel) — no more
+        // migration to AMOLED. A stored "dark" now stays "dark".
         accent.value = prefs!!.getString("accent", "purple") ?: "purple"
         statusProgressStyle.value = prefs!!.getString("status_progress_style", "squiggly") ?: "squiggly"
         voiceNoteStyle.value = prefs!!.getString("voice_note_style", "default") ?: "default"
@@ -86,8 +83,13 @@ object ThemeStore {
         }
     }
 
-    fun accentColor(): Color =
-        accents.firstOrNull { it.first == accent.value }?.second ?: Color(0xFFB69DF8)
+    fun accentColor(): Color {
+        // "palette" = the Look & feel palette's primary. The dark primary
+        // (a light tone) reads as an accent in both themes, matching how
+        // the old purple accent behaved.
+        if (accent.value == "palette") return LookFeelStore.currentPalette().dark.primary
+        return accents.firstOrNull { it.first == accent.value }?.second ?: Color(0xFFB69DF8)
+    }
 
     fun setMode(m: String) {
         mode.value = m

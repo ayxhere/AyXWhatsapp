@@ -66,9 +66,35 @@ object FontStore {
         appFont = p.getString("app", "Default") ?: "Default"
         val names = p.getStringSet("custom", emptySet()) ?: emptySet()
         for (n in names) { val f = File(userDir(ctx), sanitize(n) + ".ttf"); if (f.exists()) custom[n] = f.absolutePath }
+        // v270 Look & feel: Space Grotesk is the app font now. A stored
+        // "Default" means the user never picked a font — migrate to Space
+        // Grotesk (downloaded once in the background; system font until
+        // it lands). Users who picked any other font keep theirs.
+        if (appFont == "Default") {
+            appFont = SpaceGroteskFont.NAME
+            prefs?.edit()?.putString("app", appFont)?.apply()
+            SpaceGroteskFont.ensure(ctx)
+        } else if (appFont == SpaceGroteskFont.NAME) {
+            SpaceGroteskFont.ensure(ctx)
+        }
     }
 
     fun chooseFont(name: String) { appFont = name; prefs?.edit()?.putString("app", name)?.apply() }
+
+    /**
+     * Register a font file that was downloaded by the app (e.g. Space
+     * Grotesk) — same storage as user fonts, no re-copy. Safe to call
+     * repeatedly; a no-op when the name is already registered to this file.
+     */
+    fun registerDownloadedFont(ctx: Context, name: String, file: File) {
+        if (!file.exists() || file.length() == 0L) return
+        if (custom[name] == file.absolutePath) return
+        custom[name] = file.absolutePath
+        val cur = prefs?.getStringSet("custom", emptySet())?.toMutableSet() ?: mutableSetOf()
+        if (cur.add(name)) prefs?.edit()?.putStringSet("custom", cur)?.apply()
+        cache.remove(name)
+        comboCache.keys.removeAll { it.startsWith(name + "|") }
+    }
 
     private fun userDir(ctx: Context) = File(ctx.filesDir, "userfonts").apply { mkdirs() }
     private fun sanitize(n: String) = n.replace(Regex("[^A-Za-z0-9_ -]"), "_").trim().ifBlank { "font" }

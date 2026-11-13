@@ -76,6 +76,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.Animatable
@@ -142,6 +143,10 @@ import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.FontDownload
+import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.MotionPhotosOff
+import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Search
@@ -667,24 +672,33 @@ class MainActivity : ComponentActivity() {
         TranslateStore.init(applicationContext)
         FontStore.init(applicationContext)
         EmojiStore.init(applicationContext)
+        LookFeelStore.init(applicationContext)
         setContent {
             val sysDark = isSystemInDarkTheme()
             val mode = ThemeStore.mode.value
-            // "dark" is no longer a selectable mode (stored values are
-            // migrated to AMOLED in ThemeStore.init) — map it to AMOLED
-            // rendering here too, as a safety net.
-            val amoled = mode == "amoled" || mode == "dark"
-            val dark = when (mode) { "light" -> false; "dark", "amoled" -> true; else -> sysDark }
-            val accent = ThemeStore.accentColor()
-            val base = if (dark) darkColorScheme() else lightColorScheme()
-            val scheme = base.copy(
-                primary = accent,
-                secondary = accent,
-                tertiary = accent,
-                background = if (amoled) Color(0xFF000000) else base.background,
-                surface = if (amoled) Color(0xFF0B090D) else base.surface,
-                surfaceVariant = if (amoled) Color(0xFF161318) else base.surfaceVariant,
+            // v270 Look & feel: theme = light | dusk | dark | oled, or
+            // "system" (follows the OS). "dark" is a real mode again.
+            val theme = when (mode) {
+                "light", "dusk", "dark", "oled" -> mode
+                else -> if (sysDark) "dark" else "light"
+            }
+            val dark = theme != "light"
+            val appCtx = LocalContext.current
+            val palette = LookFeelStore.currentPalette()
+            val accent = if (ThemeStore.accent.value == "palette")
+                LookFeelStore.palettePrimary(dark) else ThemeStore.accentColor()
+            val scheme = lookFeelScheme(
+                theme = theme,
+                palette = palette,
+                materialYou = LookFeelStore.materialYou.value,
+                accent = accent,
+                ctx = appCtx,
+                dark = dark,
             )
+            // v270: Boost / Smooth motion prefers the display's max refresh
+            // rate; reading these states here subscribes the root so the
+            // SideEffect below re-runs when they change.
+            val perfHigh = LookFeelStore.resolvedPerf(appCtx) == "boost" || LookFeelStore.smoothMotion.value
             val appTypo = FontStore.typographyFor(FontStore.appFamily(LocalContext.current))
             CompositionLocalProvider(LocalUiStyle provides rememberUiStyle()) {
                 MaterialTheme(colorScheme = scheme, typography = appTypo, shapes = rememberUiShapes()) {
@@ -695,6 +709,16 @@ class MainActivity : ComponentActivity() {
                     WindowCompat.setDecorFitsSystemWindows(window, false)
                     window.statusBarColor = android.graphics.Color.TRANSPARENT
                     WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !dark
+                    // v270 Look & feel: Boost / Smooth motion prefers the
+                    // display's max refresh rate; 0 = no preference.
+                    try {
+                        val attrs = window.attributes
+                        attrs.preferredRefreshRate = if (perfHigh) {
+                            val dm = view.context.getSystemService(Context.DISPLAY_SERVICE) as? android.hardware.display.DisplayManager
+                            dm?.getDisplay(android.view.Display.DEFAULT_DISPLAY)?.supportedModes?.maxOfOrNull { it.refreshRate } ?: 0f
+                        } else 0f
+                        window.attributes = attrs
+                    } catch (_: Exception) { }
                 }
                 // Smooth handoff: the main screen gently fades+settles in as the
                 // splash crossfades out (instead of appearing abruptly underneath).
@@ -711,7 +735,7 @@ class MainActivity : ComponentActivity() {
                         if (!agreed) PrivacyGate { prefs.edit().putBoolean("privacy_agreed", true).apply(); agreed = true }
                         else GatewayApp(updateBlur = pendingUpdateInfo.value != null)
                     }
-                    if (!splashDone) SplashScreen(dark) { splashDone = true }
+                    if (!splashDone) SplashScreen { splashDone = true }
                     // v147: the update dialog wins over the crash dialog —
                     // a forced update locks the app until it is installed.
                     val upd = pendingUpdateInfo.value
@@ -1262,47 +1286,53 @@ fun PrivacyGate(onAgree: () -> Unit) {
 
 // Smooth launch splash: gradient logo scales in over a soft breathing glow, name + three-dot pulse, then fades out.
 @Composable
-private fun SplashScreen(dark: Boolean, onDone: () -> Unit) {
+// v270 Look & feel (Orion-style splash, AX mark): staged pop-in — the
+// logo springs in with overshoot, name + dots fade a beat later — then a
+// 320ms exit where the logo scales to 1.6x while the whole splash fades
+// (emphasized-accelerate easing, same curve Orion uses). Calm mode
+// (Lite / Disable animations) skips the glow and snaps in/out.
+private fun SplashScreen(onDone: () -> Unit) {
+    val ctx = LocalContext.current
+    val calm = LookFeelStore.isCalm(ctx)
     var start by remember { mutableStateOf(false) }
     var gone by remember { mutableStateOf(false) }
     // SMOOTH ENTRANCE: soft spring settle (not a linear tween) + fade.
-    val scale by animateFloatAsState(if (start) 1f else 0.82f,
-        animationSpec = spring(dampingRatio = 0.72f, stiffness = 340f), label = "splashScale")
-    val appear by animateFloatAsState(if (start) 1f else 0f,
-        animationSpec = tween(560, easing = FastOutSlowInEasing), label = "splashAppear")
+    val scale by animateFloatAsState(if (start) 1f else if (calm) 1f else 0.82f,
+        animationSpec = if (calm) tween(0) else spring(dampingRatio = 0.72f, stiffness = 340f), label = "splashScale")
+    val appear by animateFloatAsState(if (start) 1f else if (calm) 1f else 0f,
+        animationSpec = if (calm) tween(0) else tween(560, easing = FastOutSlowInEasing), label = "splashAppear")
     // App name + dots fade in a beat after the logo (staggered entrance).
-    val appearLate by animateFloatAsState(if (start) 1f else 0f,
-        animationSpec = tween(500, delayMillis = 180, easing = FastOutSlowInEasing), label = "splashAppearLate")
-    // v268 SMOOTH END (single unified fade): the whole splash — logo,
-    // name, dots AND background — fades out together in 280ms and the
-    // composable is removed the moment it hits 0. The old staged exit
-    // (content 480ms first, background 620ms+120ms last) left the white
-    // logo tile at a few % alpha floating over the already-visible chat
-    // list — a faint "ghost logo" after the splash ended. LinearEasing
-    // (no FastOutSlowIn slow tail) so the last few % don't linger.
+    val appearLate by animateFloatAsState(if (start) 1f else if (calm) 1f else 0f,
+        animationSpec = if (calm) tween(0) else tween(500, delayMillis = 240, easing = FastOutSlowInEasing), label = "splashAppearLate")
+    // Orion exit: icon grows to 1.6x as the view fades, 320ms.
+    val exitEase = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)
     val out by animateFloatAsState(if (gone) 0f else 1f,
-        animationSpec = tween(280, easing = LinearEasing), label = "splashOut")
+        animationSpec = tween(if (calm) 160 else 320, easing = if (calm) LinearEasing else exitEase), label = "splashOut")
+    val exitScale by animateFloatAsState(if (gone) 1.6f else 1f,
+        animationSpec = tween(if (calm) 160 else 320, easing = if (calm) LinearEasing else exitEase), label = "splashExitScale")
     val inf = rememberInfiniteTransition(label = "splashGlow")
     val glow by inf.animateFloat(0.25f, 0.75f, infiniteRepeatable(tween(1200, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "splashGlowV")
-    LaunchedEffect(Unit) { start = true; delay(1150); gone = true; delay(300); onDone() }
-    val bg = if (dark) Color(0xFF000000) else Color(0xFFFFFFFF)
+    LaunchedEffect(Unit) { start = true; delay(if (calm) 700 else 1150); gone = true; delay(if (calm) 160 else 320); onDone() }
+    val bg = MaterialTheme.colorScheme.background
     Box(Modifier.fillMaxSize().graphicsLayer { alpha = out }.background(bg), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Box(contentAlignment = Alignment.Center) {
-                Box(Modifier.size(154.dp).graphicsLayer { alpha = glow * appear }
-                    .background(Brush.radialGradient(listOf(AYX_GREEN.copy(alpha = 0.55f), Color.Transparent)), CircleShape))
+                if (!calm) {
+                    Box(Modifier.size(154.dp).graphicsLayer { alpha = glow * appear }
+                        .background(Brush.radialGradient(listOf(AYX_GREEN.copy(alpha = 0.55f), Color.Transparent)), CircleShape))
+                }
                 // v265: the white AX logo (user-sent) as the splash tile.
                 Image(painterResource(R.drawable.ic_launcher_white), "AyX",
-                    Modifier.size(92.dp).graphicsLayer { scaleX = scale; scaleY = scale; alpha = appear },
+                    Modifier.size(92.dp).graphicsLayer { scaleX = scale * exitScale; scaleY = scale * exitScale; alpha = appear },
                     contentScale = ContentScale.Fit)
             }
             Spacer(Modifier.height(24.dp))
             Text(APP_NAME, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
-                color = if (dark) Color.White else Color(0xFF111111), modifier = Modifier.graphicsLayer { alpha = appearLate })
+                color = MaterialTheme.colorScheme.onBackground, modifier = Modifier.graphicsLayer { alpha = appearLate })
             Spacer(Modifier.height(18.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.graphicsLayer { alpha = appearLate }) {
                 repeat(3) { i ->
-                    val d by inf.animateFloat(0.25f, 1f, infiniteRepeatable(tween(600, delayMillis = i * 150, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "splashDot$i")
+                    val d by inf.animateFloat(if (calm) 1f else 0.25f, 1f, infiniteRepeatable(tween(600, delayMillis = i * 150, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "splashDot$i")
                     Box(Modifier.size(8.dp).graphicsLayer { alpha = d }.clip(CircleShape).background(AYX_GREEN))
                 }
             }
@@ -5259,7 +5289,8 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
             "voice" -> VoicePickerScreen(settings, onToggle, ctx)
             "chat" -> SettingsSubPage { ChatSettings(onOpenWallpaper = { onPage("wallpaper") }) }
             "wallpaper" -> SettingsSubPage { WallpaperSettings(ctx, wallpaperVersion, onPickWallpaper, onRemoveWallpaper) }
-            "appearance" -> SettingsSubPage { AppearanceSettings(onOpenTextAnim = { onPage("textanim") }, onOpenMsgMotion = { onPage("msgmotion") }, onOpenIconStyle = { onPage("iconstyle") }, onOpenAccentColor = { onPage("accent") }, onOpenBlurAnim = { onPage("bluranim") }, onOpenFont = { onPage("font") }, onOpenEmoji = { onPage("emoji") }) }
+            "appearance" -> SettingsSubPage { AppearanceSettings(onOpenTextAnim = { onPage("textanim") }, onOpenMsgMotion = { onPage("msgmotion") }, onOpenIconStyle = { onPage("iconstyle") }, onOpenAccentColor = { onPage("accent") }, onOpenBlurAnim = { onPage("bluranim") }, onOpenFont = { onPage("font") }, onOpenEmoji = { onPage("emoji") }, onOpenLookFeel = { onPage("lookfeel") }) }
+            "lookfeel" -> SettingsSubPage { LookFeelScreen(onOpenFont = { onPage("font") }) }
             "accent" -> SettingsSubPage { AccentColorSettingsPage() }
             "bluranim" -> SettingsSubPage { BlurAnimationSettingsPage() }
             "textanim" -> SettingsSubPage { TextAnimationSettings() }
@@ -5387,10 +5418,12 @@ private fun SettingsSubPage(content: @Composable ColumnScope.() -> Unit) {
 
 @Composable
 private fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    // v270: Compact mode (Look & feel) tightens settings spacing.
+    val compact = LookFeelStore.compactMode.value
+    Column(verticalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 6.dp)) {
         Text(title.uppercase(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp, bottom = 2.dp))
         StyledSurface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(vertical = 4.dp, horizontal = 12.dp), content = content)
+            Column(Modifier.padding(vertical = if (compact) 2.dp else 4.dp, horizontal = 12.dp), content = content)
         }
     }
 }
@@ -5428,6 +5461,19 @@ private fun FontSettings(ctx: Context) {
         }
     }
     SettingsGroup("App font") {
+        // v270: Space Grotesk (Orion's default font) — downloads once.
+        if (SpaceGroteskFont.NAME !in FontStore.fonts) {
+            val dlState = SpaceGroteskFont.state.value
+            Row(Modifier.fillMaxWidth().clip(uiShapeFor(12)).clickable {
+                if (dlState != "downloading") {
+                    SpaceGroteskFont.ensure(ctx) { ok -> if (ok) { FontStore.chooseFont(SpaceGroteskFont.NAME); current = SpaceGroteskFont.NAME } }
+                }
+            }.padding(horizontal = 6.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(SpaceGroteskFont.NAME, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                Text(when (dlState) { "downloading" -> "Downloading…"; "failed" -> "Tap to retry"; else -> "Tap to download" },
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
         FontStore.fonts.keys.forEach { name ->
             val fam = FontStore.family(ctx, name)
             Row(Modifier.fillMaxWidth().clip(uiShapeFor(12)).clickable { FontStore.chooseFont(name); current = name }.padding(horizontal = 6.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -6723,13 +6769,12 @@ private fun BubbleColorRow(selected: Int, onPick: (Int) -> Unit) {
     }
 }
 
-// Theme mode options. The standalone "Dark" option was removed (user
-// request, 2026-10-21) — a stored "dark" value migrates to AMOLED in
-// ThemeStore.init, so this list never has to render it. Shared by the
-// Appearance page and the Accent Color page so the two selectors can
-// never drift apart.
+// Theme mode options. v270 Look & feel added Dusk (tinted dark) and
+// Dark (standard dark) back — "dark" is a real mode again, no longer
+// migrated to AMOLED. Shared by the Appearance page and the Accent Color
+// page so the two selectors can never drift apart.
 private val THEME_MODES = listOf(
-    "system" to "System", "light" to "Light", "amoled" to "AMOLED"
+    "system" to "System", "light" to "Light", "dusk" to "Dusk", "dark" to "Dark", "amoled" to "OLED"
 )
 
 @Composable
@@ -6768,6 +6813,186 @@ private fun ThemeModeGrid() {
 private fun accentDisplayName(key: String): String = when (key) {
     "deeppurple" -> "Deep Purple"
     else -> key.replaceFirstChar { it.uppercase() }
+}
+
+private fun themeModeLabel(mode: String): String = when (mode) {
+    "system" -> "System"
+    "light" -> "Light"
+    "dusk" -> "Dusk"
+    "dark" -> "Dark"
+    "amoled" -> "OLED"
+    else -> mode.replaceFirstChar { it.uppercase() }
+}
+
+// v270 Look & feel — Orion-style settings page (original Compose code;
+// design values reimplemented from Orion's public design, no Orion code).
+// Theme cards with live mini previews, palette swatches, Material You,
+// font, performance modes, motion & feel toggles.
+@Composable
+private fun LookFeelScreen(onOpenFont: () -> Unit) {
+    val ctx = LocalContext.current
+    val view = LocalView.current
+    val sysDark = isSystemInDarkTheme()
+    val mode = ThemeStore.mode.value
+    val palette = LookFeelStore.currentPalette()
+    val calm = LookFeelStore.isCalm(ctx)
+    val namedAccent = ThemeStore.accent.value != "palette"
+    // Effective theme (system resolves to the OS theme for highlighting).
+    val effectiveTheme = if (mode == "system") (if (sysDark) "dark" else "light") else mode
+
+    fun schemeFor(themeKey: String): ColorScheme {
+        val dark = themeKey != "light"
+        val acc = if (namedAccent) ThemeStore.accentColor()
+        else (if (dark) palette.dark else palette.light).primary
+        return lookFeelScheme(themeKey, palette, false, acc, ctx, dark)
+    }
+
+    // Hero: slow-spinning decorative ring + title.
+    val inf = rememberInfiniteTransition(label = "lookfeelHero")
+    val spin by inf.animateFloat(0f, 360f, infiniteRepeatable(tween(40000, easing = LinearEasing), RepeatMode.Restart), label = "lookfeelSpin")
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(64.dp)) {
+                Box(Modifier.size(56.dp).graphicsLayer { rotationZ = spin }
+                    .border(2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f), CircleShape))
+                AyxIcon(Icons.Filled.Palette, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(30.dp))
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Look & feel", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text("Theme, palette, font, motion and performance", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+
+        SettingsGroup("Theme") {
+            // 4 live-preview cards (Orion's Light / Dusk / Dark / OLED).
+            Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("light" to "Light", "dusk" to "Dusk", "dark" to "Dark", "oled" to "OLED").forEach { (key, label) ->
+                    val sel = effectiveTheme == key
+                    val scheme = schemeFor(key)
+                    val radius by animateDpAsState(if (sel) 24.dp else 14.dp, label = "themeCardRadius")
+                    Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Box(
+                            Modifier.fillMaxWidth().aspectRatio(0.62)
+                                .clip(RoundedCornerShape(radius))
+                                .background(scheme.surfaceContainer)
+                                .border(if (sel) 3.dp else 1.dp, if (sel) scheme.primary else scheme.outline.copy(alpha = 0.4f), RoundedCornerShape(radius))
+                                .clickable { lookFeelHaptic(view); ThemeStore.setMode(key) }
+                                .padding(8.dp),
+                        ) {
+                            // Live miniature drawn from the real scheme.
+                            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Box(Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(4.dp)).background(scheme.surfaceContainerHigh))
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Box(Modifier.size(16.dp).clip(RoundedCornerShape(4.dp)).background(scheme.primaryContainer))
+                                    Box(Modifier.size(16.dp).clip(RoundedCornerShape(4.dp)).background(scheme.tertiaryContainer))
+                                }
+                                Box(Modifier.fillMaxWidth(0.7f).height(6.dp).clip(RoundedCornerShape(3.dp)).background(scheme.onSurface.copy(alpha = 0.5f)))
+                                Box(Modifier.fillMaxWidth(0.5f).height(6.dp).clip(RoundedCornerShape(3.dp)).background(scheme.onSurface.copy(alpha = 0.3f)))
+                                Spacer(Modifier.weight(1f))
+                                Box(Modifier.fillMaxWidth().height(14.dp).clip(RoundedCornerShape(7.dp)).background(scheme.primary))
+                            }
+                            if (sel) {
+                                Box(Modifier.size(18.dp).align(Alignment.TopEnd).clip(CircleShape).background(scheme.primary), contentAlignment = Alignment.Center) {
+                                    AyxIcon(Icons.Filled.Check, "selected", tint = scheme.onPrimary, modifier = Modifier.size(12.dp))
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text(label, style = MaterialTheme.typography.labelLarge,
+                            fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal,
+                            color = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            SettingRow(Icons.Filled.AutoAwesome, Color(0xFFA855F7), "Follow system", "Match the phone's light / dark setting", mode == "system") {
+                if (it) ThemeStore.setMode("system") else ThemeStore.setMode(if (sysDark) "dark" else "light")
+            }
+        }
+
+        SettingsGroup("Palette") {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                AYX_PALETTES.forEach { p ->
+                    val sel = palette.id == p.id
+                    val roles = p.dark
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Box(Modifier.size(60.dp).clip(CircleShape).background(roles.primary)
+                            .border(if (sel) 3.dp else 0.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                            .clickable { lookFeelHaptic(view); LookFeelStore.setPalette(p.id) }
+                        ) {
+                            // 3-field swatch: primary top, container bottom-left, tertiary bottom-right.
+                            Column(Modifier.fillMaxSize()) {
+                                Spacer(Modifier.weight(1f))
+                                Row(Modifier.fillMaxWidth().weight(1f)) {
+                                    Box(Modifier.weight(1f).fillMaxHeight().background(roles.primaryContainer))
+                                    Box(Modifier.weight(1f).fillMaxHeight().background(roles.tertiary))
+                                }
+                            }
+                            if (sel) {
+                                Box(Modifier.size(24.dp).align(Alignment.BottomEnd).clip(CircleShape).background(MaterialTheme.colorScheme.surface), contentAlignment = Alignment.Center) {
+                                    AyxIcon(Icons.Filled.Check, "selected", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text(p.name, style = MaterialTheme.typography.labelLarge,
+                            fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal,
+                            color = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            Text("Picking a palette turns Material You off.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 6.dp))
+        }
+
+        SettingsGroup("Color & type") {
+            SettingRow(Icons.Filled.AutoAwesome, Color(0xFFA855F7), "Material You", "Dynamic wallpaper colors (Android 12+)", LookFeelStore.materialYou.value) {
+                if (it && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                    Toast.makeText(ctx, "Material You needs Android 12+", Toast.LENGTH_SHORT).show()
+                } else LookFeelStore.setMaterialYou(it)
+            }
+            UiDivider()
+            UiNavRow(
+                icon = Icons.Filled.FontDownload,
+                tint = Color(0xFF82AAFF),
+                title = "Font",
+                desc = "Applies across the whole app",
+                value = if (FontStore.appFont == SpaceGroteskFont.NAME && SpaceGroteskFont.state.value == "downloading") "Downloading…" else FontStore.appFont,
+                onClick = onOpenFont,
+            )
+        }
+
+        SettingsGroup("Performance") {
+            val perf = LookFeelStore.perfMode.value
+            val resolved = LookFeelStore.resolvedPerf(ctx)
+            Text(
+                if (perf == "auto") "Auto picks ${resolved.replaceFirstChar { it.uppercase() }} for this phone. Lite stops decorative motion, Boost keeps more images ready."
+                else "Lite stops decorative motion, Boost keeps more images ready. Image changes apply after a restart.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(vertical = 4.dp),
+            )
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                listOf("auto" to "Auto", "lite" to "Lite", "balanced" to "Balanced", "boost" to "Boost").forEachIndexed { i, (id, label) ->
+                    SegmentedButton(
+                        selected = perf == id,
+                        onClick = { lookFeelHaptic(view); LookFeelStore.setPerfMode(id) },
+                        shape = SegmentedButtonDefaults.itemShape(index = i, count = 4),
+                        label = { Text(label, maxLines = 1) },
+                    )
+                }
+            }
+        }
+
+        SettingsGroup("Motion & feel") {
+            SettingRow(Icons.Filled.TouchApp, Color(0xFF4DD0C4), "Haptic feedback", "Tactile taps on buttons and toggles", LookFeelStore.haptic.value) { LookFeelStore.setHaptic(it) }
+            UiDivider()
+            SettingRow(Icons.Filled.Speed, Color(0xFF82AAFF), "Smooth motion", "Prefer high refresh rate scrolling", LookFeelStore.smoothMotion.value) { LookFeelStore.setSmoothMotion(it) }
+            UiDivider()
+            SettingRow(Icons.Filled.MotionPhotosOff, Color(0xFFFF7EB6), "Disable animations", "Every transition snaps instantly", LookFeelStore.disableAnimations.value) { LookFeelStore.setDisableAnimations(it) }
+            UiDivider()
+            SettingRow(Icons.Filled.Compress, Color(0xFFFFB26B), "Compact mode", "Smaller rows with denser spacing", LookFeelStore.compactMode.value) { LookFeelStore.setCompactMode(it) }
+        }
+        Spacer(Modifier.height(16.dp))
+    }
 }
 
 // Settings → Appearance → Status style: renderer for the status viewer's
@@ -6849,12 +7074,22 @@ private fun VoiceNoteStyleGrid() {
 }
 
 @Composable
-private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -> Unit, onOpenIconStyle: () -> Unit, onOpenAccentColor: () -> Unit, onOpenBlurAnim: () -> Unit, onOpenFont: () -> Unit, onOpenEmoji: () -> Unit) {
+private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -> Unit, onOpenIconStyle: () -> Unit, onOpenAccentColor: () -> Unit, onOpenBlurAnim: () -> Unit, onOpenFont: () -> Unit, onOpenEmoji: () -> Unit, onOpenLookFeel: () -> Unit) {
     val ctx = LocalContext.current
     val accent = ThemeStore.accent.value
     val accentPair = ThemeStore.accents.firstOrNull { it.first == accent }
-    SettingsGroup("Theme") {
-        ThemeModeGrid()
+    // v270: theme + palette live on the Look & feel page now (Orion-style
+    // cards); this row opens it. The old ThemeModeGrid is gone from here
+    // so the two pickers can never drift apart.
+    SettingsGroup("Look & feel") {
+        UiNavRow(
+            icon = Icons.Filled.Palette,
+            tint = Color(0xFFA855F7),
+            title = "Look & feel",
+            desc = "Theme, palette, font, motion and performance",
+            value = "${LookFeelStore.currentPalette().name} · ${themeModeLabel(ThemeStore.mode.value)}",
+            onClick = onOpenLookFeel,
+        )
     }
     SettingsGroup("Accent color") {
         // The picker itself lives on its own page now (same pattern as
@@ -6879,7 +7114,7 @@ private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -
                 )
             }
             Text(
-                accentPair?.first?.let { accentDisplayName(it) } ?: "",
+                if (accent == "palette") "Palette: ${LookFeelStore.currentPalette().name}" else accentPair?.first?.let { accentDisplayName(it) } ?: "",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
