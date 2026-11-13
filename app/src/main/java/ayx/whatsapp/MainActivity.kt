@@ -12271,7 +12271,6 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
     if (showSaved) SavedSongsPage()
 }
 
-@Composable
 // v272: REAL waveform amplitudes — decodes the audio file (MediaExtractor
 // + MediaCodec) and returns RMS per bucket, normalized to 0.18..1. Runs
 // off the UI thread with a 20s guard; ANY failure returns null and the
@@ -12351,6 +12350,7 @@ private suspend fun ayxWaveformBars(url: String, count: Int): FloatArray? = with
     }
 }
 
+@Composable
 private fun AudioTrimmer(song: GatewayClient.Song, initialStart: Long = 0L, initialEnd: Long = 0L, onDone: (Long, Long, List<Pair<Long, String>>) -> Unit, onCancel: () -> Unit) {
     val player = remember { MediaPlayer() }
     val scope = rememberCoroutineScope()
