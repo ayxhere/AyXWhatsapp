@@ -6873,7 +6873,7 @@ private fun LookFeelScreen(onOpenFont: () -> Unit) {
                     val radius by animateDpAsState(if (sel) 24.dp else 14.dp, label = "themeCardRadius")
                     Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                         Box(
-                            Modifier.fillMaxWidth().aspectRatio(0.62)
+                            Modifier.fillMaxWidth().aspectRatio(0.62f)
                                 .clip(RoundedCornerShape(radius))
                                 .background(scheme.surfaceContainer)
                                 .border(if (sel) 3.dp else 1.dp, if (sel) scheme.primary else scheme.outline.copy(alpha = 0.4f), RoundedCornerShape(radius))
