@@ -4499,8 +4499,11 @@ private fun ChatGlassHeader(
                             Column(Modifier.weight(1f).clickable { onInfo() }) {
                                 Text(name, maxLines = 1, fontWeight = FontWeight.Bold, color = onBar,
                                     style = MaterialTheme.typography.titleMedium, modifier = Modifier.basicMarquee())
-                                val sub = presence?.let { pr -> if (pr.online) "online" else if (pr.lastSeen > 0) "last seen " + fmt(pr.lastSeen * 1000) else "" } ?: ""
-                                if (sub.isNotEmpty()) Text(sub, style = MaterialTheme.typography.labelSmall, color = onBar.copy(alpha = 0.7f), maxLines = 1)
+                                // v277: typing/recording in the REAL chat header — v276 put this
+                                // in the home top bar, which never renders during a chat (dead code).
+                                val sub = presence?.let { pr -> when (pr.state) { "composing" -> "typing..."; "recording" -> "recording..."; else -> if (pr.online) "online" else if (pr.lastSeen > 0) "last seen " + fmt(pr.lastSeen * 1000) else "" } } ?: ""
+                                val subColor = if (presence?.state == "composing" || presence?.state == "recording") AYX_GREEN else onBar.copy(alpha = 0.7f)
+                                if (sub.isNotEmpty()) Text(sub, style = MaterialTheme.typography.labelSmall, color = subColor, maxLines = 1)
                             }
                             Box {
                                 IconButton(onClick = { menu = true }) { AyxIcon(Icons.Filled.MoreVert, "menu", tint = onBar) }
@@ -4521,8 +4524,10 @@ private fun ChatGlassHeader(
                     Column(Modifier.weight(1f).clickable { onInfo() }) {
                         Text(name, maxLines = 1, fontWeight = FontWeight.Bold, color = onBar,
                             style = MaterialTheme.typography.titleMedium, modifier = Modifier.basicMarquee())
-                        val sub = presence?.let { pr -> if (pr.online) "online" else if (pr.lastSeen > 0) "last seen " + fmt(pr.lastSeen * 1000) else "" } ?: ""
-                        if (sub.isNotEmpty()) Text(sub, style = MaterialTheme.typography.labelSmall, color = onBar.copy(alpha = 0.7f), maxLines = 1)
+                        // v277: typing/recording in the REAL chat header (see pill branch above).
+                        val sub = presence?.let { pr -> when (pr.state) { "composing" -> "typing..."; "recording" -> "recording..."; else -> if (pr.online) "online" else if (pr.lastSeen > 0) "last seen " + fmt(pr.lastSeen * 1000) else "" } } ?: ""
+                        val subColor = if (presence?.state == "composing" || presence?.state == "recording") AYX_GREEN else onBar.copy(alpha = 0.7f)
+                        if (sub.isNotEmpty()) Text(sub, style = MaterialTheme.typography.labelSmall, color = subColor, maxLines = 1)
                     }
                     Box {
                         IconButton(onClick = { menu = true }) { AyxIcon(Icons.Filled.MoreVert, "menu", tint = onBar) }
