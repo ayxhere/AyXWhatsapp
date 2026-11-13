@@ -736,6 +736,9 @@ class MainActivity : ComponentActivity() {
                         else GatewayApp(updateBlur = pendingUpdateInfo.value != null)
                     }
                     if (!splashDone) SplashScreen { splashDone = true }
+                    // v271 Orion ThemeReveal — washes the new theme in from
+                    // the tap point on theme / palette changes.
+                    AyxThemeRevealOverlay()
                     // v147: the update dialog wins over the crash dialog —
                     // a forced update locks the app until it is installed.
                     val upd = pendingUpdateInfo.value
@@ -1291,49 +1294,126 @@ fun PrivacyGate(onAgree: () -> Unit) {
 // 320ms exit where the logo scales to 1.6x while the whole splash fades
 // (emphasized-accelerate easing, same curve Orion uses). Calm mode
 // (Lite / Disable animations) skips the glow and snaps in/out.
+// v271 NEW splash (user: old splash hatao, Orion ka animation A to Z
+// copy karo). Orion's splash mark is 5 elements popping in staggered
+// with overshoot over 900ms — the cookie blob springs open while turning
+// (-120°), then the logo, the name and the dots pop one after another.
+// Same fractions as Orion's animated vector (0 / .30 / .42 / .54 of
+// 900ms), same 320ms exit (whole splash grows 1.6x + fades, emphasized
+// accelerate). The old splash (logo spring + name/dots fade + infinite
+// glow pulse) is gone — no infinite motion here at all.
+/** v271 Orion ThemeReveal (original code): tapping a theme card or a
+ *  palette swatch grows a circle of the NEW theme's background from the
+ *  tap point, washing the new theme over the old one. The theme change
+ *  itself is applied only once the circle covers the screen, so there is
+ *  no visible pop. */
+private object AyxThemeReveal {
+    class Reveal(val center: Offset, val color: Color, val onCovered: () -> Unit)
+    val current = mutableStateOf<Reveal?>(null)
+    fun show(center: Offset, color: Color, onCovered: () -> Unit) {
+        // A tap during a running reveal applies the pending change first —
+        // no tap is ever swallowed.
+        current.value?.onCovered?.invoke()
+        current.value = Reveal(center, color, onCovered)
+    }
+}
+
+@Composable
+private fun AyxThemeRevealOverlay() {
+    val reveal = AyxThemeReveal.current.value ?: return
+    val progress = remember { Animatable(0f) }
+    LaunchedEffect(reveal) {
+        progress.snapTo(0f)
+        progress.animateTo(1f, tween(550, easing = FastOutSlowInEasing))
+        reveal.onCovered()
+        AyxThemeReveal.current.value = null
+    }
+    Canvas(Modifier.fillMaxSize()) {
+        val maxR = kotlin.math.hypot(size.width, size.height)
+        drawCircle(reveal.color, radius = (maxR * progress.value).coerceAtLeast(1f), center = reveal.center)
+    }
+}
+
+/** Captures the center of the element (window coordinates) for the
+ *  ThemeReveal. Returns the modifier to attach + a lambda reading the
+ *  latest center at tap time. */
+@Composable
+private fun rememberAyxTapCenter(): Pair<Modifier, () -> Offset> {
+    var center by remember { mutableStateOf(Offset.Zero) }
+    val modifier = Modifier.onGloballyPositioned { coords ->
+        val size = coords.size
+        center = coords.localToWindow(Offset(size.width / 2f, size.height / 2f))
+    }
+    return modifier to { center }
+}
+
 private fun SplashScreen(onDone: () -> Unit) {
     val ctx = LocalContext.current
     val calm = LookFeelStore.isCalm(ctx)
-    var start by remember { mutableStateOf(false) }
+    val cs = MaterialTheme.colorScheme
+    var popBlob by remember { mutableStateOf(false) }
+    var popLogo by remember { mutableStateOf(false) }
+    var popName by remember { mutableStateOf(false) }
+    var popDot0 by remember { mutableStateOf(false) }
+    var popDot1 by remember { mutableStateOf(false) }
+    var popDot2 by remember { mutableStateOf(false) }
     var gone by remember { mutableStateOf(false) }
-    // SMOOTH ENTRANCE: soft spring settle (not a linear tween) + fade.
-    val scale by animateFloatAsState(if (start) 1f else if (calm) 1f else 0.82f,
-        animationSpec = if (calm) tween(0) else spring(dampingRatio = 0.72f, stiffness = 340f), label = "splashScale")
-    val appear by animateFloatAsState(if (start) 1f else if (calm) 1f else 0f,
-        animationSpec = if (calm) tween(0) else tween(560, easing = FastOutSlowInEasing), label = "splashAppear")
-    // App name + dots fade in a beat after the logo (staggered entrance).
-    val appearLate by animateFloatAsState(if (start) 1f else if (calm) 1f else 0f,
-        animationSpec = if (calm) tween(0) else tween(500, delayMillis = 240, easing = FastOutSlowInEasing), label = "splashAppearLate")
-    // Orion exit: icon grows to 1.6x as the view fades, 320ms.
+    val overshoot = spring<Float>(dampingRatio = 0.55f, stiffness = 320f)
+    // Blob: springs open 0.2 -> 1 (overshoot) while turning -120° -> 0.
+    val blobScale by animateFloatAsState(if (popBlob) 1f else if (calm) 1f else 0.2f,
+        animationSpec = if (calm) tween(0) else overshoot, label = "splashBlobScale")
+    val blobRot by animateFloatAsState(if (popBlob) 0f else if (calm) 0f else -120f,
+        animationSpec = if (calm) tween(0) else tween(810, easing = FastOutSlowInEasing), label = "splashBlobRot")
+    val logoPop by animateFloatAsState(if (popLogo) 1f else if (calm) 1f else 0f,
+        animationSpec = if (calm) tween(0) else overshoot, label = "splashLogoPop")
+    val namePop by animateFloatAsState(if (popName) 1f else if (calm) 1f else 0f,
+        animationSpec = if (calm) tween(0) else overshoot, label = "splashNamePop")
+    val dot0 by animateFloatAsState(if (popDot0) 1f else if (calm) 1f else 0f,
+        animationSpec = if (calm) tween(0) else overshoot, label = "splashDot0")
+    val dot1 by animateFloatAsState(if (popDot1) 1f else if (calm) 1f else 0f,
+        animationSpec = if (calm) tween(0) else overshoot, label = "splashDot1")
+    val dot2 by animateFloatAsState(if (popDot2) 1f else if (calm) 1f else 0f,
+        animationSpec = if (calm) tween(0) else overshoot, label = "splashDot2")
+    // Orion exit: everything grows to 1.6x as the view fades, 320ms.
     val exitEase = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)
     val out by animateFloatAsState(if (gone) 0f else 1f,
         animationSpec = tween(if (calm) 160 else 320, easing = if (calm) LinearEasing else exitEase), label = "splashOut")
     val exitScale by animateFloatAsState(if (gone) 1.6f else 1f,
         animationSpec = tween(if (calm) 160 else 320, easing = if (calm) LinearEasing else exitEase), label = "splashExitScale")
-    val inf = rememberInfiniteTransition(label = "splashGlow")
-    val glow by inf.animateFloat(0.25f, 0.75f, infiniteRepeatable(tween(1200, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "splashGlowV")
-    LaunchedEffect(Unit) { start = true; delay(if (calm) 700 else 1150); gone = true; delay(if (calm) 160 else 320); onDone() }
-    val bg = MaterialTheme.colorScheme.background
-    Box(Modifier.fillMaxSize().graphicsLayer { alpha = out }.background(bg), contentAlignment = Alignment.Center) {
+    LaunchedEffect(Unit) {
+        if (calm) {
+            popBlob = true; popLogo = true; popName = true; popDot0 = true; popDot1 = true; popDot2 = true
+            delay(700); gone = true; delay(160); onDone()
+        } else {
+            popBlob = true
+            delay(270); popLogo = true
+            delay(108); popName = true
+            delay(108); popDot0 = true
+            delay(99); popDot1 = true
+            delay(108); popDot2 = true
+            delay(457); gone = true; delay(320); onDone()
+        }
+    }
+    val bg = cs.background
+    Box(Modifier.fillMaxSize().graphicsLayer { alpha = out; scaleX = exitScale; scaleY = exitScale }.background(bg), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Box(contentAlignment = Alignment.Center) {
-                if (!calm) {
-                    Box(Modifier.size(154.dp).graphicsLayer { alpha = glow * appear }
-                        .background(Brush.radialGradient(listOf(AYX_GREEN.copy(alpha = 0.55f), Color.Transparent)), CircleShape))
+                // Cookie blob in the palette primary — springs open while turning.
+                Canvas(Modifier.size(190.dp).graphicsLayer { scaleX = blobScale; scaleY = blobScale; rotationZ = blobRot; alpha = blobScale }) {
+                    drawPath(ayxCookiePath(size.minDimension), cs.primary.copy(alpha = 0.22f))
                 }
                 // v265: the white AX logo (user-sent) as the splash tile.
                 Image(painterResource(R.drawable.ic_launcher_white), "AyX",
-                    Modifier.size(92.dp).graphicsLayer { scaleX = scale * exitScale; scaleY = scale * exitScale; alpha = appear },
+                    Modifier.size(92.dp).graphicsLayer { scaleX = logoPop; scaleY = logoPop; alpha = logoPop },
                     contentScale = ContentScale.Fit)
             }
             Spacer(Modifier.height(24.dp))
             Text(APP_NAME, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onBackground, modifier = Modifier.graphicsLayer { alpha = appearLate })
+                color = cs.onBackground, modifier = Modifier.graphicsLayer { scaleX = namePop; scaleY = namePop; alpha = namePop })
             Spacer(Modifier.height(18.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.graphicsLayer { alpha = appearLate }) {
-                repeat(3) { i ->
-                    val d by inf.animateFloat(if (calm) 1f else 0.25f, 1f, infiniteRepeatable(tween(600, delayMillis = i * 150, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "splashDot$i")
-                    Box(Modifier.size(8.dp).graphicsLayer { alpha = d }.clip(CircleShape).background(AYX_GREEN))
+            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                listOf(dot0, dot1, dot2).forEach { d ->
+                    Box(Modifier.size(8.dp).graphicsLayer { scaleX = d; scaleY = d; alpha = d }.clip(CircleShape).background(cs.primary))
                 }
             }
         }
@@ -2398,13 +2478,19 @@ fun GatewayApp(updateBlur: Boolean = false) {
         }
     ) { pad ->
         val homeBlur by animateDpAsState(if (statusFabMenu || textStatusDlg || showSetName) 16.dp else 0.dp, label = "homeblur")
-        Box(Modifier.fillMaxSize().blur(homeBlur)) {
+        // v271: blur ONLY while a dialog is actually up — an unconditional
+        // .blur(0.dp) still routes the home content through the blur
+        // render path on every remount (same class as the v268 fixes).
+        Box(Modifier.fillMaxSize().then(if (homeBlur > 0.dp) Modifier.blur(homeBlur) else Modifier)) {
         if (openChat != null && status.registered) {
             // ===== Edge-to-edge chat: wallpaper + messages full-bleed, floating glass header on top =====
-            val ocChat = openChat!!
             // isChat = fade-only: a scale transition here lays old + new
             // chat out together (overlapping bubbles, ghost input text).
-            AyxAnimatedScreen(screenKey = "chat|$ocChat", isChat = true) {
+            // v271: same slot-state hazard as the home list — render from
+            // the slot's chat id, not the live openChat, so a direct chat
+            // switch never double-attaches one chat's list state.
+            AyxAnimatedScreen<String>(targetState = "chat|${openChat!!}", isChat = true) { slot ->
+            val ocChat = slot.removePrefix("chat|")
             ChatDetail(
                 chat = ocChat,
                 messages = messages.filter { it.chat == ocChat } + vvLocal.filter { it.chat == ocChat },
@@ -2625,7 +2711,29 @@ fun GatewayApp(updateBlur: Boolean = false) {
             // and the list inside the animating container dropped the
             // first scroll gestures (scroll "lock"). Other screens still
             // animate in normally.
-            AyxAnimatedScreen(screenKey = "$screen|$settingsPage", instantWhenTarget = { (it as? String)?.startsWith("chats|") == true }) {
+            // v271 ROOT CAUSE (user: Profile/Settings back ke baad home
+            // list scroll nahi hoti; chat open+back se fix ho jati hai):
+            // this call used the () -> Unit overload, whose lambda IGNORED
+            // the AnimatedContent slot state and read the LIVE `screen`.
+            // AnimatedContent composes BOTH slots during a target change,
+            // so both rendered ChatsWithStatus — TWO ChatList LazyColumns
+            // attached to the one hoisted homeChatListState, which is
+            // unsupported: the outgoing layout's detach left the shared
+            // state's scroll machinery bound to a dead layout (drags dead,
+            // taps alive). Render from the SLOT state instead: each slot
+            // draws only its own screen, so exactly one ChatList is ever
+            // attached. The key also carries the link state, so the
+            // restoring/link -> home flip gets its own slot too.
+            val linkState = when {
+                !status.registered && localPaired && !status.needRelogin && !restoreTimedOut -> "restoring"
+                !status.registered -> "link"
+                else -> "main"
+            }
+            AyxAnimatedScreen<String>(targetState = "$screen|$settingsPage|$linkState", instantWhenTarget = { it.startsWith("chats|") }) { slot ->
+            val slotParts = slot.split("|")
+            val slotScreen = slotParts.getOrNull(0) ?: "chats"
+            val slotPage = slotParts.getOrNull(1) ?: "home"
+            val slotLink = slotParts.getOrNull(2) ?: "main"
             when {
                 // AyX Group system channel — independent of WhatsApp link state.
                 // v149: a paired session is saved on this device and the
@@ -2636,7 +2744,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
                 // v175: unless that restoring drags past ~90s — then the
                 // session is a zombie (restoreTimedOut) and the link screen
                 // below is the honest outcome after all.
-                !status.registered && localPaired && !status.needRelogin && !restoreTimedOut -> Box(Modifier.padding(pad)) { RestoringScreen(
+                slotLink == "restoring" -> Box(Modifier.padding(pad)) { RestoringScreen(
                     onReset = { scope.launch { GatewayClient.logout(); SessionMigration.purgePublic(ctx); notify("reset") } },
                     gatewayDown = gatewayDownLong,
                     lastError = status.lastError,
@@ -2645,7 +2753,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
                 // portal screen; otherwise the default in-app QR. The existing
                 // status poll flips status.registered on pair and the whole
                 // branch unmounts to Home — no extra navigation needed.
-                !status.registered -> if (webPairOpen) Box(Modifier.padding(pad)) { WebsitePairScreen(
+                slotLink == "link" -> if (webPairOpen) Box(Modifier.padding(pad)) { WebsitePairScreen(
                     token = ayxInstallPrefs(ctx, "ayx_install").getString("access_token", null),
                     prefillNumber = ayxOwnPhoneE164() ?: "",
                     doPost = { p, b -> ayxInstallPost(p, ayxInstallPrefs(ctx, "ayx_install").getString("access_token", null), b) },
@@ -2658,7 +2766,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
                     onPair = { n -> scope.launch { try { notify("code: " + GatewayClient.pair(n)) } catch (e: Exception) { notify("pair error: ${e.message}") } } },
                     onReset = { scope.launch { GatewayClient.logout(); SessionMigration.purgePublic(ctx); notify("reset") } },
                     onWebsitePair = { webPairOpen = true }) }
-                screen == "settings" -> Box(Modifier.padding(pad)) { SettingsScreen(status, settings, page = settingsPage, onPage = { settingsPage = it }, wallpaperVersion = wallpaperVersion,
+                slotScreen == "settings" -> Box(Modifier.padding(pad)) { SettingsScreen(status, settings, page = slotPage, onPage = { settingsPage = it }, wallpaperVersion = wallpaperVersion,
                     onToggle = { patch -> scope.launch { settings = GatewayClient.patchSettings(patch) } },
                     onRules = { r -> scope.launch { settings = GatewayClient.setRules(r) } },
                     onLogout = { scope.launch { GatewayClient.logout(); SessionMigration.purgePublic(ctx); notify("logged out") } }, ctx = ctx,
@@ -2668,9 +2776,9 @@ fun GatewayApp(updateBlur: Boolean = false) {
                     onSaveName = { n -> scope.launch { runCatching { GatewayClient.setProfileName(n) }.onSuccess { notify("name updated") }.onFailure { notify("name: ${it.message}") } } },
                     dpCache = dpCache,
                     messages = messages) }
-                screen == "newchat" -> Box(Modifier.padding(pad)) { NewChatScreen(deviceContacts, contactsLoading, dpCache,
+                slotScreen == "newchat" -> Box(Modifier.padding(pad)) { NewChatScreen(deviceContacts, contactsLoading, dpCache,
                     onPickNumber = { num -> openChat = num + "@s.whatsapp.net"; screen = "chats" }) }
-                screen == "profile" -> Box(Modifier.padding(pad)) { ProfileScreen(myJid, dpCache,
+                slotScreen == "profile" -> Box(Modifier.padding(pad)) { ProfileScreen(myJid, dpCache,
                     onPickPhoto = { profilePicPicker.launch("image/*") },
                     onSaveName = { n -> scope.launch { runCatching { GatewayClient.setProfileName(n) }.onSuccess { notify("name updated") }.onFailure { notify("name: ${it.message}") } } }) }
                 else -> ChatsWithStatus(messages, chats, statuses, dpCache, searchQuery, chatsPage, topInset = pad.calculateTopPadding(),
@@ -5262,10 +5370,10 @@ private fun AlbumBubble(
 private fun settingsTitle(page: String): String = when (page) {
     "general" -> "General"; "autoreply" -> "Auto-reply"; "ai" -> "AI Assistant"; "chat" -> "Chat Settings"
     "imageai" -> "Image AI"; "aimemory" -> "AI Memory"; "voice" -> "AI Voice"; "font" -> "App font"; "emoji" -> "Emoji"
-    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "accent" -> "Accent Color"; "bluranim" -> "Blur & Animation"; "textanim" -> "Text Animation"; "msgmotion" -> "Message Motion"; "iconstyle" -> "Icon Style"; "about" -> "About"; "sync" -> "Sync"; "support" -> "Support Development"; "broadcast" -> "Broadcast"; else -> "Settings"
+    "wallpaper" -> "Chat Wallpaper"; "appearance" -> "Appearance"; "bluranim" -> "Blur & Animation"; "textanim" -> "Text Animation"; "msgmotion" -> "Message Motion"; "iconstyle" -> "Icon Style"; "about" -> "About"; "sync" -> "Sync"; "support" -> "Support Development"; "broadcast" -> "Broadcast"; else -> "Settings"
 }
-// parent page for nested back (Wallpaper under Chat Settings; Image AI / AI Memory / Voice under AI Assistant; Font / Emoji / Text Animation / Message Motion / Icon Style / Accent / Blur & Animation under Appearance)
-private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "appearance"; "emoji" -> "appearance"; "textanim" -> "appearance"; "msgmotion" -> "appearance"; "iconstyle" -> "appearance"; "accent" -> "appearance"; "bluranim" -> "appearance"; else -> "home" }
+// parent page for nested back (Wallpaper under Chat Settings; Image AI / AI Memory / Voice under AI Assistant; Font / Emoji / Text Animation / Message Motion / Icon Style / Blur & Animation under Appearance)
+private fun settingsParent(page: String): String = when (page) { "wallpaper" -> "chat"; "imageai" -> "ai"; "aimemory" -> "ai"; "font" -> "appearance"; "emoji" -> "appearance"; "textanim" -> "appearance"; "msgmotion" -> "appearance"; "iconstyle" -> "appearance"; "bluranim" -> "appearance"; else -> "home" }
 
 @Composable
 private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient.Settings, page: String, onPage: (String) -> Unit, wallpaperVersion: Int,
@@ -5289,9 +5397,8 @@ private fun SettingsScreen(status: GatewayClient.Status, settings: GatewayClient
             "voice" -> VoicePickerScreen(settings, onToggle, ctx)
             "chat" -> SettingsSubPage { ChatSettings(onOpenWallpaper = { onPage("wallpaper") }) }
             "wallpaper" -> SettingsSubPage { WallpaperSettings(ctx, wallpaperVersion, onPickWallpaper, onRemoveWallpaper) }
-            "appearance" -> SettingsSubPage { AppearanceSettings(onOpenTextAnim = { onPage("textanim") }, onOpenMsgMotion = { onPage("msgmotion") }, onOpenIconStyle = { onPage("iconstyle") }, onOpenAccentColor = { onPage("accent") }, onOpenBlurAnim = { onPage("bluranim") }, onOpenFont = { onPage("font") }, onOpenEmoji = { onPage("emoji") }, onOpenLookFeel = { onPage("lookfeel") }) }
+            "appearance" -> SettingsSubPage { AppearanceSettings(onOpenTextAnim = { onPage("textanim") }, onOpenMsgMotion = { onPage("msgmotion") }, onOpenIconStyle = { onPage("iconstyle") }, onOpenBlurAnim = { onPage("bluranim") }, onOpenFont = { onPage("font") }, onOpenEmoji = { onPage("emoji") }, onOpenLookFeel = { onPage("lookfeel") }) }
             "lookfeel" -> SettingsSubPage { LookFeelScreen(onOpenFont = { onPage("font") }) }
-            "accent" -> SettingsSubPage { AccentColorSettingsPage() }
             "bluranim" -> SettingsSubPage { BlurAnimationSettingsPage() }
             "textanim" -> SettingsSubPage { TextAnimationSettings() }
             "msgmotion" -> SettingsSubPage { MessageMotionSettingsPage() }
@@ -5317,21 +5424,63 @@ private val ERR_RED = Color(0xFFFF5A5A)
 
 @Composable
 private fun SettingsHome(status: GatewayClient.Status, onOpen: (String) -> Unit) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    // v271 Orion-style home: big hero title + one section of icon rows
+    // (Orion's settings home), instead of ten separate cards.
+    // The page glides in (fade + 16dp rise) on open.
+    val density = LocalDensity.current
+    val enter = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { enter.animateTo(1f, tween(350, easing = FastOutSlowInEasing)) }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).graphicsLayer { alpha = enter.value; translationY = (1f - enter.value) * with(density) { 16.dp.toPx() } }, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Spacer(Modifier.height(4.dp))
+        Row(Modifier.fillMaxWidth().padding(start = 8.dp, top = 16.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(72.dp).clip(RoundedCornerShape(24.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)), contentAlignment = Alignment.Center) {
+                AyxIcon(Icons.Filled.Settings, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(36.dp))
+            }
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Settings", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                Text("Everything about AyX, in one place", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
         StatusCard(status)
         Spacer(Modifier.height(2.dp))
-        CategoryCard(Icons.Filled.Tune, CAT_GENERAL, "General", "Online, privacy and messages") { onOpen("general") }
-        CategoryCard(Icons.Filled.QuestionAnswer, CAT_AUTOREPLY, "Auto-reply", "Keyword rules and automatic replies") { onOpen("autoreply") }
-        CategoryCard(Icons.Filled.AutoAwesome, CAT_AI, "AI Assistant", "AI replies, groups and language") { onOpen("ai") }
-        CategoryCard(Icons.Filled.GraphicEq, Color(0xFF4DD0C4), "AI Voice", "Voice reply, voice notes & voice artists") { onOpen("voice") }
-        CategoryCard(Icons.Filled.Chat, CAT_WALLPAPER, "Chat", "Wallpaper, bubble style and header") { onOpen("chat") }
-        CategoryCard(Icons.Filled.Palette, CAT_APPEARANCE, "Appearance", "Theme and accent color") { onOpen("appearance") }
-        CategoryCard(Icons.Filled.Sync, CAT_AI, "Sync", "Drive backup of API keys & prompts") { onOpen("sync") }
-        CategoryCard(Icons.Filled.Share, CAT_AUTOREPLY, "Broadcast", "Send bulk messages via JSON with timer") { onOpen("broadcast") }
-        CategoryCard(Icons.Filled.Info, CAT_ABOUT, "About", "App information and reset") { onOpen("about") }
-        CategoryCard(Icons.Filled.Favorite, CAT_SUPPORT, "Support Development", "Donate via UPI or crypto to support AyX") { onOpen("support") }
+        StyledSurface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(vertical = 4.dp, horizontal = 12.dp)) {
+                SettingsHomeRow(Icons.Filled.Tune, CAT_GENERAL, "General", "Online, privacy and messages") { onOpen("general") }
+                UiDivider()
+                SettingsHomeRow(Icons.Filled.QuestionAnswer, CAT_AUTOREPLY, "Auto-reply", "Keyword rules and automatic replies") { onOpen("autoreply") }
+                UiDivider()
+                SettingsHomeRow(Icons.Filled.AutoAwesome, CAT_AI, "AI Assistant", "AI replies, groups and language") { onOpen("ai") }
+                UiDivider()
+                SettingsHomeRow(Icons.Filled.GraphicEq, Color(0xFF4DD0C4), "AI Voice", "Voice reply, voice notes & voice artists") { onOpen("voice") }
+                UiDivider()
+                SettingsHomeRow(Icons.Filled.Chat, CAT_WALLPAPER, "Chat", "Wallpaper, bubble style and header") { onOpen("chat") }
+                UiDivider()
+                SettingsHomeRow(Icons.Filled.Palette, CAT_APPEARANCE, "Appearance", "Theme, palette and font") { onOpen("appearance") }
+                UiDivider()
+                SettingsHomeRow(Icons.Filled.Sync, CAT_AI, "Sync", "Drive backup of API keys & prompts") { onOpen("sync") }
+                UiDivider()
+                SettingsHomeRow(Icons.Filled.Share, CAT_AUTOREPLY, "Broadcast", "Send bulk messages via JSON with timer") { onOpen("broadcast") }
+                UiDivider()
+                SettingsHomeRow(Icons.Filled.Info, CAT_ABOUT, "About", "App information and reset") { onOpen("about") }
+                UiDivider()
+                SettingsHomeRow(Icons.Filled.Favorite, CAT_SUPPORT, "Support Development", "Donate via UPI or crypto to support AyX") { onOpen("support") }
+            }
+        }
         Spacer(Modifier.height(16.dp))
+    }
+}
+
+@Composable
+private fun SettingsHomeRow(icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color, title: String, desc: String, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clip(uiShapeFor(12)).clickable(onClick = onClick).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconChip(icon, tint)
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+            Text(desc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        AyxIcon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -5342,7 +5491,7 @@ private fun StatusCard(status: GatewayClient.Status) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var reconnecting by remember { mutableStateOf(false) }
-    StyledSurface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f), modifier = Modifier.fillMaxWidth()) {
+    StyledSurface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             PulseDot(dot)
             Spacer(Modifier.width(12.dp))
@@ -5385,24 +5534,10 @@ private fun PulseDot(color: Color) {
 }
 
 @Composable
-private fun CategoryCard(icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color, title: String, desc: String, onClick: () -> Unit) {
-    StyledSurface(onClick = onClick, shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.padding(14.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            IconChip(icon, tint)
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-                Text(desc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            AyxIcon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-}
-
-@Composable
 private fun IconChip(icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color) {
-    Box(Modifier.size(40.dp).clip(uiShapeFor(12)).background(tint.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
-        AyxIcon(icon, null, tint = tint, modifier = Modifier.size(21.dp))
+    // v271 Orion row icon: 44dp box, 24dp icon.
+    Box(Modifier.size(44.dp).clip(uiShapeFor(12)).background(tint.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
+        AyxIcon(icon, null, tint = tint, modifier = Modifier.size(24.dp))
     }
 }
 
@@ -5418,11 +5553,14 @@ private fun SettingsSubPage(content: @Composable ColumnScope.() -> Unit) {
 
 @Composable
 private fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
-    // v270: Compact mode (Look & feel) tightens settings spacing.
+    // v271 Orion-style section: 28dp container, solid surfaceContainer,
+    // title in titleSmall semibold (not uppercase) in the accent tone.
+    // One edit here upgrades every settings page at once.
     val compact = LookFeelStore.compactMode.value
     Column(verticalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 6.dp)) {
-        Text(title.uppercase(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 6.dp, bottom = 2.dp))
-        StyledSurface(shape = uiShapeFor(20), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f), modifier = Modifier.fillMaxWidth()) {
+        Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp))
+        StyledSurface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(vertical = if (compact) 2.dp else 4.dp, horizontal = 12.dp), content = content)
         }
     }
@@ -6769,52 +6907,6 @@ private fun BubbleColorRow(selected: Int, onPick: (Int) -> Unit) {
     }
 }
 
-// Theme mode options. v270 Look & feel added Dusk (tinted dark) and
-// Dark (standard dark) back — "dark" is a real mode again, no longer
-// migrated to AMOLED. Shared by the Appearance page and the Accent Color
-// page so the two selectors can never drift apart.
-private val THEME_MODES = listOf(
-    "system" to "System", "light" to "Light", "dusk" to "Dusk", "dark" to "Dark", "amoled" to "OLED"
-)
-
-@Composable
-private fun ThemeModeGrid() {
-    val mode = ThemeStore.mode.value
-    Column(Modifier.padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        // grid of theme options — cleaner than a cramped chip row.
-        for (row in THEME_MODES.chunked(2)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                for ((k, lbl) in row) {
-                    val sel = mode == k
-                    StyledSurface(
-                        onClick = { ThemeStore.setMode(k) },
-                        shape = uiShapeFor(16),
-                        color = if (sel) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
-                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.size(10.dp).clip(CircleShape)
-                                .background(if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)))
-                            Spacer(Modifier.width(10.dp))
-                            Text(lbl, style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal,
-                                color = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
-                        }
-                    }
-                }
-                // Keep the grid aligned when the row has one item.
-                if (row.size == 1) Spacer(Modifier.weight(1f))
-            }
-        }
-    }
-}
-
-private fun accentDisplayName(key: String): String = when (key) {
-    "deeppurple" -> "Deep Purple"
-    else -> key.replaceFirstChar { it.uppercase() }
-}
-
 private fun themeModeLabel(mode: String): String = when (mode) {
     "system" -> "System"
     "light" -> "Light"
@@ -6832,6 +6924,10 @@ private fun themeModeLabel(mode: String): String = when (mode) {
 private fun LookFeelScreen(onOpenFont: () -> Unit) {
     val ctx = LocalContext.current
     val view = LocalView.current
+    // v271 Orion: the page glides in (fade + 16dp rise) on open.
+    val density = LocalDensity.current
+    val enter = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { enter.animateTo(1f, tween(350, easing = FastOutSlowInEasing)) }
     val sysDark = isSystemInDarkTheme()
     val mode = ThemeStore.mode.value
     val palette = LookFeelStore.currentPalette()
@@ -6850,7 +6946,7 @@ private fun LookFeelScreen(onOpenFont: () -> Unit) {
     // Hero: slow-spinning decorative ring + title.
     val inf = rememberInfiniteTransition(label = "lookfeelHero")
     val spin by inf.animateFloat(0f, 360f, infiniteRepeatable(tween(40000, easing = LinearEasing), RepeatMode.Restart), label = "lookfeelSpin")
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(Modifier.fillMaxWidth().graphicsLayer { alpha = enter.value; translationY = (1f - enter.value) * with(density) { 16.dp.toPx() } }, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(contentAlignment = Alignment.Center, modifier = Modifier.size(64.dp)) {
                 Box(Modifier.size(56.dp).graphicsLayer { rotationZ = spin }
@@ -6870,6 +6966,7 @@ private fun LookFeelScreen(onOpenFont: () -> Unit) {
                 listOf("light" to "Light", "dusk" to "Dusk", "dark" to "Dark", "oled" to "OLED").forEach { (key, label) ->
                     val sel = effectiveTheme == key
                     val scheme = schemeFor(key)
+                    val (tapMod, tapCenter) = rememberAyxTapCenter()
                     val radius by animateDpAsState(if (sel) 24.dp else 14.dp, label = "themeCardRadius")
                     Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                         Box(
@@ -6877,7 +6974,8 @@ private fun LookFeelScreen(onOpenFont: () -> Unit) {
                                 .clip(RoundedCornerShape(radius))
                                 .background(scheme.surfaceContainer)
                                 .border(if (sel) 3.dp else 1.dp, if (sel) scheme.primary else scheme.outline.copy(alpha = 0.4f), RoundedCornerShape(radius))
-                                .clickable { lookFeelHaptic(view); ThemeStore.setMode(key) }
+                                .then(tapMod)
+                                .clickable { lookFeelHaptic(view); AyxThemeReveal.show(tapCenter(), scheme.background) { ThemeStore.setMode(key) } }
                                 .padding(8.dp),
                         ) {
                             // Live miniature drawn from the real scheme.
@@ -6915,10 +7013,25 @@ private fun LookFeelScreen(onOpenFont: () -> Unit) {
                 AYX_PALETTES.forEach { p ->
                     val sel = palette.id == p.id
                     val roles = p.dark
+                    val (tapMod, tapCenter) = rememberAyxTapCenter()
+                    // v271 Orion: the selected swatch morphs toward the
+                    // 9-sided cookie (scale pop + cookie outline) instead
+                    // of just gaining a border; the check badge pops in.
+                    val selPop by animateFloatAsState(if (sel) 1.08f else 1f,
+                        animationSpec = spring(dampingRatio = 0.55f, stiffness = 320f), label = "paletteSelPop")
+                    val badgePop by animateFloatAsState(if (sel) 1f else 0f,
+                        animationSpec = spring(dampingRatio = 0.55f, stiffness = 320f), label = "paletteBadgePop")
+                    val newBg = when (effectiveTheme) {
+                        "light" -> p.light.background
+                        "dusk" -> p.duskBackground
+                        "oled" -> Color.Black
+                        else -> p.dark.background
+                    }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Box(Modifier.size(60.dp).clip(CircleShape).background(roles.primary)
-                            .border(if (sel) 3.dp else 0.dp, MaterialTheme.colorScheme.primary, CircleShape)
-                            .clickable { lookFeelHaptic(view); LookFeelStore.setPalette(p.id) }
+                            .graphicsLayer { scaleX = selPop; scaleY = selPop }
+                            .then(tapMod)
+                            .clickable { lookFeelHaptic(view); AyxThemeReveal.show(tapCenter(), newBg) { LookFeelStore.setPalette(p.id) } }
                         ) {
                             // 3-field swatch: primary top, container bottom-left, tertiary bottom-right.
                             Column(Modifier.fillMaxSize()) {
@@ -6929,7 +7042,15 @@ private fun LookFeelScreen(onOpenFont: () -> Unit) {
                                 }
                             }
                             if (sel) {
-                                Box(Modifier.size(24.dp).align(Alignment.BottomEnd).clip(CircleShape).background(MaterialTheme.colorScheme.surface), contentAlignment = Alignment.Center) {
+                                Canvas(Modifier.matchParentSize()) {
+                                    val s = size.minDimension - 6.dp.toPx()
+                                    translate(3.dp.toPx(), 3.dp.toPx()) {
+                                        drawPath(ayxCookiePath(s), color = MaterialTheme.colorScheme.primary,
+                                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx()))
+                                    }
+                                }
+                                Box(Modifier.size(24.dp).align(Alignment.BottomEnd).clip(CircleShape).background(MaterialTheme.colorScheme.surface)
+                                    .graphicsLayer { scaleX = badgePop; scaleY = badgePop }, contentAlignment = Alignment.Center) {
                                     AyxIcon(Icons.Filled.Check, "selected", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
                                 }
                             }
@@ -7074,13 +7195,11 @@ private fun VoiceNoteStyleGrid() {
 }
 
 @Composable
-private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -> Unit, onOpenIconStyle: () -> Unit, onOpenAccentColor: () -> Unit, onOpenBlurAnim: () -> Unit, onOpenFont: () -> Unit, onOpenEmoji: () -> Unit, onOpenLookFeel: () -> Unit) {
+private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -> Unit, onOpenIconStyle: () -> Unit, onOpenBlurAnim: () -> Unit, onOpenFont: () -> Unit, onOpenEmoji: () -> Unit, onOpenLookFeel: () -> Unit) {
     val ctx = LocalContext.current
-    val accent = ThemeStore.accent.value
-    val accentPair = ThemeStore.accents.firstOrNull { it.first == accent }
-    // v270: theme + palette live on the Look & feel page now (Orion-style
-    // cards); this row opens it. The old ThemeModeGrid is gone from here
-    // so the two pickers can never drift apart.
+    // v271 (user): the old Accent Color page is gone — palettes on the
+    // Look & feel page are the only accent now. Theme + palette live on
+    // the Look & feel page (Orion-style cards); this row opens it.
     SettingsGroup("Look & feel") {
         UiNavRow(
             icon = Icons.Filled.Palette,
@@ -7090,40 +7209,6 @@ private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -
             value = "${LookFeelStore.currentPalette().name} · ${themeModeLabel(ThemeStore.mode.value)}",
             onClick = onOpenLookFeel,
         )
-    }
-    SettingsGroup("Accent color") {
-        // The picker itself lives on its own page now (same pattern as
-        // Icon Style / Message Motion); this row shows the current color.
-        Row(
-            Modifier.fillMaxWidth().clip(uiShapeFor(12)).clickable { onOpenAccentColor() }
-                .padding(vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                Modifier.size(40.dp).clip(CircleShape)
-                    .background(accentPair?.second ?: MaterialTheme.colorScheme.primary)
-                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f), CircleShape)
-            )
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text("Accent Color", style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    "Theme and accent apply instantly across the whole app",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Text(
-                if (accent == "palette") "Palette: ${LookFeelStore.currentPalette().name}" else accentPair?.first?.let { accentDisplayName(it) } ?: "",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.width(6.dp))
-            AyxIcon(
-                Icons.AutoMirrored.Filled.KeyboardArrowRight, null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
     }
     SettingsGroup("Effects") {
         UiNavRow(
@@ -7216,90 +7301,6 @@ private fun AppearanceSettings(onOpenTextAnim: () -> Unit, onOpenMsgMotion: () -
         VoiceNoteStyleGrid()
     }
 
-}
-
-// Settings → Appearance → Accent Color (opened from the Appearance page).
-// Overhauled 2026-10-21 (user: the old single swatch row clipped at the
-// right edge — last circle half-cut — and the page was nearly empty):
-// the theme-mode selector also lives here now (same ThemeStore prefs),
-// the swatches are a proper grid with names so nothing can clip, and a
-// live preview shows the accent on sample chat UI. Accent changes still
-// apply instantly via ThemeStore.setAccent, exactly as before.
-@Composable
-private fun AccentColorSettingsPage() {
-    val accent = ThemeStore.accent.value
-    SettingsGroup("Theme") {
-        ThemeModeGrid()
-    }
-    SettingsGroup("Accent color") {
-        Column(Modifier.padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            ThemeStore.accents.chunked(5).forEach { rowAccents ->
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    rowAccents.forEach { (key, color) ->
-                        AccentSwatch(key, color, selected = accent == key) { ThemeStore.setAccent(key) }
-                    }
-                }
-            }
-        }
-    }
-    SettingsGroup("Preview") {
-        AccentPreview()
-    }
-    Text("Theme and accent apply instantly across the whole app.", style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp, top = 2.dp))
-}
-
-@Composable
-private fun AccentSwatch(key: String, color: Color, selected: Boolean, onClick: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(Modifier.size(48.dp).clip(CircleShape).background(color)
-            .border(if (selected) 3.dp else 1.dp,
-                if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
-                CircleShape)
-            .clickable { onClick() },
-            contentAlignment = Alignment.Center) {
-            if (selected) AyxIcon(Icons.Filled.Check, "selected", tint = Color.White, modifier = Modifier.size(22.dp))
-        }
-        Spacer(Modifier.height(5.dp))
-        Text(accentDisplayName(key), style = MaterialTheme.typography.labelSmall,
-            color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1)
-    }
-}
-
-/** Live preview: sample chat UI rendered in the current accent (the
- *  app's colorScheme primary IS the accent, so this updates the moment
- *  a swatch is tapped — no apply step, same as everywhere else). */
-@Composable
-private fun AccentPreview() {
-    val scheme = MaterialTheme.colorScheme
-    Column(Modifier.padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
-            Surface(color = scheme.surfaceVariant, shape = uiShapeFor(16)) {
-                Text("This accent looks good!", color = scheme.onSurface, style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
-            }
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            Surface(color = scheme.primary, shape = uiShapeFor(16)) {
-                Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Trying it right now", color = scheme.onPrimary, style = MaterialTheme.typography.bodyMedium)
-                    Spacer(Modifier.width(6.dp))
-                    AyxIcon(Icons.Filled.DoneAll, "read", tint = scheme.onPrimary, modifier = Modifier.size(16.dp))
-                }
-            }
-        }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = scheme.primary, contentColor = scheme.onPrimary)) {
-                Text("Button")
-            }
-            Spacer(Modifier.weight(1f))
-            Text("Switch", style = MaterialTheme.typography.bodyMedium, color = scheme.onSurface)
-            Spacer(Modifier.width(8.dp))
-            Switch(checked = true, onCheckedChange = null,
-                colors = SwitchDefaults.colors(checkedTrackColor = scheme.primary, checkedThumbColor = scheme.onPrimary, checkedBorderColor = scheme.primary))
-        }
-    }
 }
 
 // Settings → Appearance → Blur & Animation (opened from the Appearance
@@ -7913,11 +7914,11 @@ private fun UiToggleRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
-            Modifier.size(40.dp).clip(uiShapeFor(12))
+            Modifier.size(44.dp).clip(uiShapeFor(12))
                 .background(tint.copy(alpha = 0.16f)),
             contentAlignment = Alignment.Center,
         ) {
-            AyxIcon(icon, null, tint = tint, modifier = Modifier.size(21.dp))
+            AyxIcon(icon, null, tint = tint, modifier = Modifier.size(24.dp))
         }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
@@ -7943,11 +7944,11 @@ private fun UiNavRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
-            Modifier.size(40.dp).clip(uiShapeFor(12))
+            Modifier.size(44.dp).clip(uiShapeFor(12))
                 .background(tint.copy(alpha = 0.16f)),
             contentAlignment = Alignment.Center,
         ) {
-            AyxIcon(icon, null, tint = tint, modifier = Modifier.size(21.dp))
+            AyxIcon(icon, null, tint = tint, modifier = Modifier.size(24.dp))
         }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
@@ -7967,11 +7968,8 @@ private fun UiNavRow(
 
 @Composable
 private fun UiDivider() {
-    Spacer(Modifier.height(2.dp))
-    Box(
-        Modifier.fillMaxWidth().height(1.dp)
-            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)),
-    )
+    // v271 Orion: no hairlines between settings rows — rows are
+    // separated by a 2dp gap of the section container behind them.
     Spacer(Modifier.height(2.dp))
 }
 
