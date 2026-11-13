@@ -10112,8 +10112,12 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                     // v276: music sticker preview — what viewers will see
                     // (top, under the header; lyrics default to 18% height,
                     // so the two never overlap at rest).
-                    if (song != null) {
-                        MusicStickerChip(song.title, song.artist, Modifier.align(Alignment.TopCenter).padding(top = 104.dp))
+                    // v276: capture to a local val — `song` is a delegated
+                    // state property, so Kotlin can't smart-cast it after
+                    // the null check (build #641 failed on this).
+                    val sng = song
+                    if (sng != null) {
+                        MusicStickerChip(sng.title, sng.artist, Modifier.align(Alignment.TopCenter).padding(top = 104.dp))
                     }
                 }   // media layer (full-bleed) done
                 // ---- Top bar overlay: rounded bar, CLEAN (v191b) ----
@@ -11365,7 +11369,6 @@ private fun statusTimeLabel(ts: Long): String {
     }
 }
 
-@Composable
 // v276: official-WhatsApp-style music sticker — ♪ title — artist chip
 // over the status media. Same chip in the editor preview (what viewers
 // will see) and in the viewer. Tap in the viewer just names the song
@@ -11389,6 +11392,7 @@ private fun MusicStickerChip(title: String, artist: String, modifier: Modifier =
     }
 }
 
+@Composable
 private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: String, dpCache: MutableMap<String, ImageBitmap?>, onDownload: (GatewayClient.StatusItem) -> Unit, onDeleteStatus: (String) -> Unit, onReply: (String, String) -> Unit, onSeen: (GatewayClient.StatusItem) -> Unit, onForwardStatus: (String) -> Unit = {}, onClose: () -> Unit) {
     val groups = remember(statuses) {
         statuses.groupBy { it.sender }.entries
