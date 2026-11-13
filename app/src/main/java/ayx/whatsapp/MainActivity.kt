@@ -7037,6 +7037,10 @@ private fun LookFeelScreen(onOpenFont: () -> Unit) {
                 listOf("light" to "Light", "dusk" to "Dusk", "dark" to "Dark", "oled" to "OLED").forEach { (key, label) ->
                     val sel = effectiveTheme == key
                     val scheme = schemeFor(key)
+                    // v273 fix: old background read in @Composable scope —
+                    // MaterialTheme.colorScheme inside the clickable lambda
+                    // is a @Composable call outside @Composable context.
+                    val oldBg = MaterialTheme.colorScheme.background
                     val (tapMod, tapCenter) = rememberAyxTapCenter()
                     val radius by animateDpAsState(if (sel) 24.dp else 14.dp, label = "themeCardRadius")
                     Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -7046,7 +7050,7 @@ private fun LookFeelScreen(onOpenFont: () -> Unit) {
                                 .background(scheme.surfaceContainer)
                                 .border(if (sel) 3.dp else 1.dp, if (sel) scheme.primary else scheme.outline.copy(alpha = 0.4f), RoundedCornerShape(radius))
                                 .then(tapMod)
-                                .clickable { lookFeelHaptic(view); AyxThemeReveal.show(tapCenter(), MaterialTheme.colorScheme.background) { ThemeStore.setMode(key) } }
+                                .clickable { lookFeelHaptic(view); AyxThemeReveal.show(tapCenter(), oldBg) { ThemeStore.setMode(key) } }
                                 .padding(8.dp),
                         ) {
                             // Live miniature drawn from the real scheme.
@@ -7098,11 +7102,14 @@ private fun LookFeelScreen(onOpenFont: () -> Unit) {
                         "oled" -> Color.Black
                         else -> p.dark.background
                     }
+                    // v273 fix: same as the theme cards — old background
+                    // captured here, not inside the clickable lambda.
+                    val oldBg = MaterialTheme.colorScheme.background
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Box(Modifier.size(60.dp).clip(CircleShape).background(roles.primary)
                             .graphicsLayer { scaleX = selPop; scaleY = selPop }
                             .then(tapMod)
-                            .clickable { lookFeelHaptic(view); AyxThemeReveal.show(tapCenter(), MaterialTheme.colorScheme.background) { LookFeelStore.setPalette(p.id) } }
+                            .clickable { lookFeelHaptic(view); AyxThemeReveal.show(tapCenter(), oldBg) { LookFeelStore.setPalette(p.id) } }
                         ) {
                             // 3-field swatch: primary top, container bottom-left, tertiary bottom-right.
                             Column(Modifier.fillMaxSize()) {
