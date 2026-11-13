@@ -1869,7 +1869,9 @@ fun GatewayApp(updateBlur: Boolean = false) {
         chatPresence = null
         val c = openChat
         if (c != null && c.endsWith("@s.whatsapp.net")) {
-            while (openChat == c) { chatPresence = GatewayClient.getPresence(c); delay(5000) }
+            // v276: 2 s, not 5 s — typing bursts last ~5–10 s, a 5 s poll
+            // could miss one entirely or show it long after it stopped.
+            while (openChat == c) { chatPresence = GatewayClient.getPresence(c); delay(2000) }
         }
     }
     // apply a pending deep-link/notification chat ONLY once WhatsApp is registered,
@@ -2144,7 +2146,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
                             notify("Uploading…")
                             // OOM fix: stream the file — never readBytes() a
                             // whole video into RAM (a ~96 MB bake OOMed).
-                            val res = withContext(Dispatchers.IO) { GatewayClient.postStatusFile("video", finalMp4, caption, audience, recipients) }
+                            val res = withContext(Dispatchers.IO) { GatewayClient.postStatusFile("video", finalMp4, caption, audience, recipients, song?.title ?: "", song?.artist ?: "") }
                             notify((if (res.first) "✅ " else "❌ ") + res.second)
                             runCatching { finalMp4.delete() }
                             if (res.first) { delay(1200); statuses = StatusData.merge(GatewayClient.getStatuses()) }
@@ -2431,8 +2433,16 @@ fun GatewayApp(updateBlur: Boolean = false) {
                             Spacer(Modifier.width(9.dp))
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(title, maxLines = 1, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium, modifier = Modifier.widthIn(max = 190.dp).basicMarquee())
-                                val sub = chatPresence?.let { pr -> if (pr.online) "online" else if (pr.lastSeen > 0) "last seen " + fmt(pr.lastSeen * 1000) else "" } ?: ""
-                                if (sub.isNotEmpty()) Text(sub, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                val sub = chatPresence?.let { pr ->
+                                    when (pr.state) {
+                                        "composing" -> "typing..."
+                                        "recording" -> "recording..."
+                                        else -> if (pr.online) "online" else if (pr.lastSeen > 0) "last seen " + fmt(pr.lastSeen * 1000) else ""
+                                    }
+                                } ?: ""
+                                // v276: typing/recording shows in green, like official WhatsApp.
+                                val subColor = if (chatPresence?.state == "composing" || chatPresence?.state == "recording") AYX_GREEN else MaterialTheme.colorScheme.onSurfaceVariant
+                                if (sub.isNotEmpty()) Text(sub, style = MaterialTheme.typography.labelSmall, color = subColor)
                             }
                         }
                     } else Text(title, fontWeight = FontWeight.Bold, modifier = Modifier.combinedClickable(
@@ -9122,13 +9132,21 @@ private fun LinkText(text: String, color: Color, onPhoneClick: ((String) -> Unit
 private fun StyledLyricLine(text: String, lineStart: Long, posMs: Long, style: Int, scale: Float, modifier: Modifier = Modifier, lineEndMs: Long = 0L) {
     val posAnim = remember(lineStart, text) { Animatable(posMs.toFloat()) }
     LaunchedEffect(posMs) {
-        if (posAnim.value != posMs.toFloat()) posAnim.animateTo(posMs.toFloat(), tween(durationMillis = 170, easing = LinearOutSlowInEasing))
+        // v276: 170 ms → 60 ms. The smoothing made the lyric clock trail
+        // the audio by up to ~170 ms; with the 450 ms reveal on top, lines
+        // read ~420 ms late. 60 ms still glides between 90 ms polls.
+        if (posAnim.value != posMs.toFloat()) posAnim.animateTo(posMs.toFloat(), tween(durationMillis = 60, easing = LinearOutSlowInEasing))
     }
     val dPos = posAnim.value
     val lyricColor = Color(LyricsStyleStore.activeColorArgb())
     val words = text.trim().uppercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
     if (words.isEmpty()) return
-    val ph = ((dPos - lineStart) / 450f).coerceIn(0f, 1f)
+    // v276: 450 ms → 200 ms entrance. The line now finishes revealing
+    // ~200 ms after its sung moment, which the +200 ms lookahead at the
+    // active-line pick cancels out — fully readable right on the beat.
+    // The bake (MediaTools) uses the same 200 ms window, so preview ==
+    // posted stays true.
+    val ph = ((dPos - lineStart) / 200f).coerceIn(0f, 1f)
     if (style == LyricsStyleStore.LETTERS) {
         // Letters: visible character count = progress through the
         // line's window (lineStart → lineEndMs) × the line's letter
@@ -9728,7 +9746,7 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
     // at a made-up pace unrelated to the video. Song removed → the remove
     // handler clears songLyrics, the overlay unmounts, and no driver is
     // left with anything to advance.
-    LaunchedEffect(videoPos, mediaType, song, playing) {
+    LaunchedEffect(videoPos, mediaType, song, playing, trimStart, trimEnd) {
         if (mediaType != "video" || song == null || playing) return@LaunchedEffect
         previewPos = (trimStart + (videoPos - vTrimStart)).coerceIn(trimStart, maxOf(trimStart, trimEnd))
     }
@@ -10091,6 +10109,12 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
                                 modifier = Modifier.align(Alignment.TopCenter).padding(top = 6.dp))
                         }
                     }
+                    // v276: music sticker preview — what viewers will see
+                    // (top, under the header; lyrics default to 18% height,
+                    // so the two never overlap at rest).
+                    if (song != null) {
+                        MusicStickerChip(song.title, song.artist, Modifier.align(Alignment.TopCenter).padding(top = 104.dp))
+                    }
                 }   // media layer (full-bleed) done
                 // ---- Top bar overlay: rounded bar, CLEAN (v191b) ----
                 // 28dp rounding on the free (bottom) edge, a dark
@@ -10396,7 +10420,12 @@ private fun StatusEditor(uri: Uri, type: String, contacts: List<DeviceContact>, 
         onCancel = { translateOpen = false },
         onOpenApiSettings = { translateOpen = false; showGroqDlg = true })
     songToTrim?.let { sng ->
-        AudioTrimmer(sng, initialStart = trimStart, initialEnd = trimEnd, onDone = { st, en, ly -> song = sng; trimStart = st; trimEnd = en; songLyrics = ly; translatedLyrics = null; translatedActive = false; showTranslateRow = false; songToTrim = null }, onCancel = { songToTrim = null; musicOpen = true })
+        AudioTrimmer(sng, initialStart = trimStart, initialEnd = trimEnd, onDone = { st, en, ly -> song = sng; trimStart = st; trimEnd = en; songLyrics = ly; translatedLyrics = null; translatedActive = false; showTranslateRow = false; songToTrim = null
+            // v276: the lyrics clock (previewPos) must jump to the new
+            // trim start — it used to stay at 0 (or the old position),
+            // so the overlay kept showing the FIRST lyric line after a
+            // trim until the user pressed play.
+            previewPos = st }, onCancel = { songToTrim = null; musicOpen = true })
     }
 }
 /**
@@ -11337,6 +11366,29 @@ private fun statusTimeLabel(ts: Long): String {
 }
 
 @Composable
+// v276: official-WhatsApp-style music sticker — ♪ title — artist chip
+// over the status media. Same chip in the editor preview (what viewers
+// will see) and in the viewer. Tap in the viewer just names the song
+// (v1 — no in-viewer audio player yet).
+@Composable
+private fun MusicStickerChip(title: String, artist: String, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
+    Row(
+        modifier.clip(RoundedCornerShape(20.dp)).background(Color.Black.copy(alpha = 0.55f))
+            .then(if (onClick != null) Modifier.clickable(
+                interactionSource = remember { MutableInteractionSource() }, indication = null
+            ) { onClick() } else Modifier)
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        AyxIcon(Icons.Filled.MusicNote, "music", tint = Color.White, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(
+            (title + if (artist.isNotBlank()) " — " + artist else "").trim(),
+            color = Color.White, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
 private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: String, dpCache: MutableMap<String, ImageBitmap?>, onDownload: (GatewayClient.StatusItem) -> Unit, onDeleteStatus: (String) -> Unit, onReply: (String, String) -> Unit, onSeen: (GatewayClient.StatusItem) -> Unit, onForwardStatus: (String) -> Unit = {}, onClose: () -> Unit) {
     val groups = remember(statuses) {
         statuses.groupBy { it.sender }.entries
@@ -11766,6 +11818,13 @@ private fun StatusViewer(statuses: List<GatewayClient.StatusItem>, startSender: 
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    // v276: music sticker — above the caption, like official WhatsApp.
+                    if (st.songTitle.isNotBlank()) {
+                        MusicStickerChip(st.songTitle, st.songArtist, Modifier.padding(horizontal = 6.dp)) {
+                            Toast.makeText(ctx, "♪ " + st.songTitle + if (st.songArtist.isNotBlank()) " — " + st.songArtist else "", Toast.LENGTH_SHORT).show()
+                        }
+                        Spacer(Modifier.height(10.dp))
+                    }
                     if (st.text.isNotBlank() && st.mediaType != null) {
                         Box(
                             Modifier.fillMaxWidth().padding(horizontal = 6.dp)
@@ -11999,14 +12058,14 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
     // which broke the build (unresolved references).
     // v255: effective audio URL for a favourited song — mirrors
     // selectSong's resolution (JioSaavn rows already carry the full
-    // track; iTunes/Spotify resolve it through the JioSaavn matcher),
-    // falling back to the row's own URL (iTunes 30 s preview).
+    // track; Spotify resolves it through the JioSaavn matcher),
+    // falling back to the row's own URL.
+    // v276: iTunes is gone — no more resolveItunesFullAudio branch.
     suspend fun resolveFavAudio(sg: GatewayClient.Song): String? {
         val key = sg.title + "|" + sg.artist
         resolvedSongs[key]?.url?.takeIf { it.isNotBlank() }?.let { return it }
         if (provider == MusicProviders.SAAVN && sg.url.isNotBlank()) return sg.url
         val r = if (provider == MusicProviders.SPOTIFY) MusicProviders.resolveSpotifyAudio(ctx, sg)
-            else if (provider == MusicProviders.ITUNES) MusicProviders.resolveItunesFullAudio(ctx, sg)
             else MusicProviders.resolveFullAudio(ctx, sg)
         return r?.url?.takeIf { it.isNotBlank() } ?: sg.url.takeIf { it.isNotBlank() }
     }
@@ -12040,14 +12099,6 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
     }
     fun previewSong(sg: GatewayClient.Song) {
         val key = sg.title + "|" + sg.artist
-        // v192: iTunes rows always preview their OWN 30 s preview — never
-        // a cached resolution. A cached full track (resolved for another
-        // same-title row) could play a different recording than the row
-        // the user just tapped.
-        if (provider == MusicProviders.ITUNES && sg.url.isNotBlank()) {
-            if (previewUrl == sg.url) { runCatching { player.pause() }; previewUrl = null } else playPreview(sg.url)
-            return
-        }
         val eff = resolvedSongs[key] ?: sg
         if (eff.url.isNotBlank()) {
             if (previewUrl == eff.url) { runCatching { player.pause() }; previewUrl = null } else playPreview(eff.url)
@@ -12071,18 +12122,12 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
         if (resolvingKey != null) return
         resolvingKey = key
         scope.launch {
-            // Spotify rows have no audio URL at all; iTunes rows
-            // only the 30 s preview. Both resolve the FULL song on
-            // JioSaavn before applying (v160). iTunes falls back
-            // to its own preview when JioSaavn has no match; Spotify
-            // keeps its "couldn't find audio" toast.
-            // v192: iTunes rows use STRICT resolution (exact title +
-            // agreeing artist) — the loose matcher could apply a
-            // different artist's same-title track, so the trimmer
-            // played another song. Null still falls back to the
-            // row's own preview below.
+            // Spotify rows have no audio URL at all; they resolve the
+            // FULL song on JioSaavn before applying (v160). Spotify
+            // keeps its "couldn't find audio" toast; other rows fall
+            // back to applying themselves.
+            // v276: iTunes is gone — no more resolveItunesFullAudio.
             val r = if (provider == MusicProviders.SPOTIFY) MusicProviders.resolveSpotifyAudio(ctx, sg)
-                    else if (provider == MusicProviders.ITUNES) MusicProviders.resolveItunesFullAudio(ctx, sg)
                     else MusicProviders.resolveFullAudio(ctx, sg)
             resolvingKey = null
             if (r != null) { resolvedSongs[key] = r; runCatching { player.stop() }; onSelect(r) }

@@ -515,10 +515,10 @@ object GatewayClient {
         } catch (e: Exception) { emptyList<Song>() to (e.message ?: "connection error") }
     }
 
-    suspend fun postStatus(type: String, dataB64: String, caption: String, audience: String, jids: List<String>): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+    suspend fun postStatus(type: String, dataB64: String, caption: String, audience: String, jids: List<String>, songTitle: String = "", songArtist: String = ""): Pair<Boolean, String> = withContext(Dispatchers.IO) {
         try {
             val arr = org.json.JSONArray(); jids.forEach { arr.put(it) }
-            val body = JSONObject().put("type", type).put("data", dataB64).put("caption", caption).put("audience", audience).put("jids", arr).toString()
+            val body = JSONObject().put("type", type).put("data", dataB64).put("caption", caption).put("audience", audience).put("jids", arr).put("songTitle", songTitle).put("songArtist", songArtist).toString()
             val c = (URL("$base/status/post").openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"; doOutput = true; connectTimeout = 4000
                 // 7 min, NOT the old 3: the gateway's worst case is a
@@ -546,19 +546,21 @@ object GatewayClient {
     // peak memory is ~16 KB no matter how big the video is. The gateway
     // receives the exact same JSON it already expects (express.json
     // limit is 256mb), so NO gateway change is needed.
-    suspend fun postStatusFile(type: String, file: java.io.File, caption: String, audience: String, jids: List<String>): Pair<Boolean, String> =
-        postStatusStream(type, java.io.FileInputStream(file), caption, audience, jids)
+    suspend fun postStatusFile(type: String, file: java.io.File, caption: String, audience: String, jids: List<String>, songTitle: String = "", songArtist: String = ""): Pair<Boolean, String> =
+        postStatusStream(type, java.io.FileInputStream(file), caption, audience, jids, songTitle, songArtist)
 
-    suspend fun postStatusBytes(type: String, bytes: ByteArray, caption: String, audience: String, jids: List<String>): Pair<Boolean, String> =
-        postStatusStream(type, java.io.ByteArrayInputStream(bytes), caption, audience, jids)
+    suspend fun postStatusBytes(type: String, bytes: ByteArray, caption: String, audience: String, jids: List<String>, songTitle: String = "", songArtist: String = ""): Pair<Boolean, String> =
+        postStatusStream(type, java.io.ByteArrayInputStream(bytes), caption, audience, jids, songTitle, songArtist)
 
-    suspend fun postStatusStream(type: String, input: java.io.InputStream, caption: String, audience: String, jids: List<String>): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+    suspend fun postStatusStream(type: String, input: java.io.InputStream, caption: String, audience: String, jids: List<String>, songTitle: String = "", songArtist: String = ""): Pair<Boolean, String> = withContext(Dispatchers.IO) {
         try {
             val jidsJson = org.json.JSONArray().apply { jids.forEach { put(it) } }.toString()
             val prefix = "{\"type\":\"$type\",\"data\":\""
             val suffix = "\",\"caption\":" + org.json.JSONObject.quote(caption) +
                 ",\"audience\":" + org.json.JSONObject.quote(audience) +
-                ",\"jids\":" + jidsJson + "}"
+                ",\"jids\":" + jidsJson +
+                ",\"songTitle\":" + org.json.JSONObject.quote(songTitle) +
+                ",\"songArtist\":" + org.json.JSONObject.quote(songArtist) + "}"
             val c = (URL("$base/status/post").openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"; doOutput = true; connectTimeout = 4000
                 readTimeout = 420000
@@ -878,7 +880,10 @@ object GatewayClient {
         val mediaName: String? = null, val mediaType: String? = null, val thumb: String? = null, val ts: Long = 0L, val mine: Boolean = false, val id: String? = null, val bg: String? = null,
         // SD2: tombstone — this status was deleted on WhatsApp (gateway sends
         // sender + ts but no media). Rendered as "Status Deleted", never played.
-        val deleted: Boolean = false)
+        val deleted: Boolean = false,
+        // v276: official-style music sticker — song title/artist posted
+        // with the status; empty when no song was added.
+        val songTitle: String = "", val songArtist: String = "")
     /** (ok, error) — ok=true ONLY when the gateway confirms the revoke was sent to WhatsApp. */
     suspend fun deleteStatus(id: String): Pair<Boolean, String> = withContext(Dispatchers.IO) {
         val o = post("/status/delete", JSONObject().put("id", id))
@@ -915,17 +920,21 @@ object GatewayClient {
                     id = o.optString("id").ifEmpty { null },
                     bg = o.optString("bg").ifEmpty { null },
                     deleted = o.optBoolean("deleted", false),
+                    songTitle = o.optString("songTitle"),
+                    songArtist = o.optString("songArtist"),
                 )
             }
         } catch (e: Exception) { emptyList() }
     }
 
-    data class Presence(val online: Boolean, val lastSeen: Long)
+    // v276: raw presence string kept too — 'composing' (typing) and
+    // 'recording' used to be thrown away by the online-only mapping.
+    data class Presence(val online: Boolean, val lastSeen: Long, val state: String = "")
     suspend fun getPresence(jid: String): Presence = withContext(Dispatchers.IO) {
         try {
             val enc = java.net.URLEncoder.encode(jid, "UTF-8")
             val o = get("/presence?jid=$enc")
-            Presence(o.optString("presence") == "available", o.optLong("lastSeen", 0L))
+            Presence(o.optString("presence") == "available", o.optLong("lastSeen", 0L), o.optString("presence"))
         } catch (e: Exception) { Presence(false, 0L) }
     }
 

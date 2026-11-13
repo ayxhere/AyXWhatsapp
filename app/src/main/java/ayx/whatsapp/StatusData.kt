@@ -88,6 +88,8 @@ object StatusData {
                     id = o.optString("id").ifEmpty { null },
                     bg = o.optString("bg").ifEmpty { null },
                     deleted = o.optBoolean("deleted", false),
+                    songTitle = o.optString("songTitle"),
+                    songArtist = o.optString("songArtist"),
                 )
             }
         } catch (e: Exception) { emptyList() }
@@ -155,6 +157,8 @@ object StatusData {
                     put("id", s.id ?: "")
                     put("bg", s.bg ?: "")
                     put("deleted", s.deleted)
+                    put("songTitle", s.songTitle)
+                    put("songArtist", s.songArtist)
                 })
             }
             prefs?.edit()?.putString("items", arr.toString())?.apply()

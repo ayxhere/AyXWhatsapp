@@ -211,11 +211,11 @@ object MediaTools {
                 // Reveal plays across the whole line at the preview's
                 // own rate (dur x 0.82, no extra coerce); typewriter
                 // mid-line; whole-line styles take the preview's
-                // 450 ms entrance (StyledLyricLine) — was 420 ms here.
+                // 200 ms entrance (StyledLyricLine, v276 was 450 ms).
                 val window = when (animStyle) {
                     1 -> (lineDur * 0.82f).toLong().coerceAtLeast(1L)
                     4 -> (lineDur * 0.55f).toLong().coerceIn(700L, 2000L)
-                    else -> 450L
+                    else -> 200L
                 }
                 val phase = if (animStyle == 0) 1f else (elapsed.toFloat() / window.toFloat()).coerceIn(0f, 1f)
                 // redraw per word for Reveal, else quantize the phase to a handful of redraws

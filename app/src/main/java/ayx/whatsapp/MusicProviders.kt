@@ -39,10 +39,9 @@ import javax.crypto.spec.SecretKeySpec
  */
 object MusicProviders {
     const val SAAVN = "saavn"
-    const val ITUNES = "itunes"
     const val SPOTIFY = "spotify"
     val PROVIDERS: List<Pair<String, String>> = listOf(
-        SAAVN to "JioSaavn", ITUNES to "iTunes", SPOTIFY to "Spotify")
+        SAAVN to "JioSaavn", SPOTIFY to "Spotify")
 
     private const val UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
 
@@ -99,7 +98,6 @@ object MusicProviders {
         withContext(Dispatchers.IO) {
             try {
                 when (provider) {
-                    ITUNES -> searchItunesList(q) to ""
                     SPOTIFY -> searchSpotifyWithFallback(q) to ""
                     else -> searchSaavnList(q) to ""   // unknown/persisted ids (e.g. removed providers) land on JioSaavn
                 }
@@ -173,56 +171,15 @@ object MusicProviders {
         plain.replace("_96.mp4", "_320.mp4").takeIf { it.startsWith("http") }
     } catch (e: Exception) { null }
 
-    // ---------- iTunes (30 s preview) ----------
-    private fun searchItunesList(q: String): List<GatewayClient.Song> {
-        // v191: same page-1-only cap as JioSaavn (limit=30, no offset) —
-        // paginate with offset, same 5-page bound and short-page stop.
-        val out = ArrayList<GatewayClient.Song>()
-        val seen = HashSet<String>()
-        for (page in 0 until MAX_SEARCH_PAGES) {
-            val rows = runCatching { searchItunesPage(q, page * SEARCH_PAGE_SIZE) }.getOrDefault(emptyList())
-            for (s in rows) if (seen.add(s.url)) out.add(s)
-            if (rows.size < SEARCH_PAGE_SIZE) break
-        }
-        return out
-    }
-
-    private fun searchItunesPage(q: String, offset: Int): List<GatewayClient.Song> {
-        val url = Env.ITUNES_SEARCH_API + "?term=" + enc(q) + "&media=music&entity=song&limit=" + SEARCH_PAGE_SIZE + "&offset=" + offset
-        val data = JSONObject(httpText(url))
-        val results = data.optJSONArray("results") ?: return emptyList()
-        val out = ArrayList<GatewayClient.Song>()
-        for (i in 0 until results.length()) {
-            val it = results.optJSONObject(i) ?: continue
-            val preview = it.optString("previewUrl")
-            if (preview.isBlank()) continue
-            out.add(GatewayClient.Song(
-                it.optString("trackName"),
-                it.optString("artistName"),
-                it.optString("artworkUrl100").replace("100x100bb.jpg", "600x600bb.jpg").ifEmpty { null },
-                preview,
-                (it.optLong("trackTimeMillis", 0L) / 1000L).toInt()))
-        }
-        return out
-    }
-
     // ---------- v257: cover art for catalog rows + trending ----------
     // Catalog rows (Popular / Favourites / Saved) carry title+artist
-    // only — no artwork URL. Resolve one from iTunes (limit 1, light
-    // JSON) with a JioSaavn single-page search as fallback. Null when
-    // nothing matches; the caller keeps its placeholder tile.
+    // only — no artwork URL. Resolve one from a JioSaavn single-page
+    // search (v276: the iTunes leg was removed with the provider).
+    // Null when nothing matches; the caller keeps its placeholder tile.
     suspend fun resolveCoverArt(title: String, artist: String): String? = withContext(Dispatchers.IO) {
         runCatching {
             val q = (title + " " + artist).trim()
             if (q.isBlank()) return@runCatching null
-            val itUrl = Env.ITUNES_SEARCH_API + "?term=" + enc(q) + "&media=music&entity=song&limit=1"
-            val itData = JSONObject(httpText(itUrl))
-            val itRes = itData.optJSONArray("results")
-            if (itRes != null && itRes.length() > 0) {
-                val art = (itRes.optJSONObject(0)?.optString("artworkUrl100").orEmpty())
-                    .replace("100x100bb.jpg", "600x600bb.jpg")
-                if (art.isNotBlank()) return@runCatching art
-            }
             val rows = runCatching { searchSaavnPage(q, 1) }.getOrDefault(emptyList())
             rows.firstOrNull()?.image?.takeIf { it.isNotBlank() }
         }.getOrNull()
@@ -285,8 +242,8 @@ object MusicProviders {
         fun addAll(list: List<GatewayClient.Song>) {
             for (s in list) if (seen.add(songKey(s))) out.add(s)
         }
+        // v276: iTunes fallback removed with the provider — JioSaavn only.
         addAll(runCatching { searchSaavnList(q) }.getOrDefault(emptyList()))
-        addAll(runCatching { searchItunesList(q) }.getOrDefault(emptyList()))
         return out
     }
 
@@ -425,8 +382,8 @@ object MusicProviders {
 
     /**
      * A picked Spotify track → a Song with real audio: best JioSaavn
-     * match (same base title, closest duration), else the iTunes
-     * preview for the same title+artist, else null (picker toasts).
+     * match (same base title, closest duration), else null (picker
+     * toasts). v276: the iTunes-preview fallback is gone with iTunes.
      */
     suspend fun resolveSpotifyAudio(ctx: Context, song: GatewayClient.Song): GatewayClient.Song? =
         withContext(Dispatchers.IO) {
@@ -437,11 +394,6 @@ object MusicProviders {
                 if (best != null) return@withContext song.copy(
                     url = best.url,
                     durationSec = if (best.durationSec > 0) best.durationSec else song.durationSec)
-                val itunes = runCatching { searchItunesList(q) }.getOrDefault(emptyList())
-                val iBest = pickMatch(song, itunes) ?: itunes.firstOrNull()
-                if (iBest != null) return@withContext song.copy(
-                    url = iBest.url,
-                    durationSec = if (iBest.durationSec > 0) iBest.durationSec else song.durationSec)
                 null
             } catch (e: Exception) { null }
         }
@@ -460,39 +412,6 @@ object MusicProviders {
                 val best = pickMatch(song, saavn) ?: return@withContext null
                 song.copy(url = best.url,
                     durationSec = if (best.durationSec > 0) best.durationSec else song.durationSec)
-            } catch (e: Exception) { null }
-        }
-
-    /**
-     * v192 — iTunes rows ONLY: strict resolution. The loose pickMatch
-     * above (substring titles + fallback to non-agreeing artists when
-     * no hit agrees) could apply a different artist's same-title track,
-     * so the trimmer played ANOTHER song than the tapped iTunes row.
-     * Strict = normalized title must EQUAL (no substring), the artist
-     * must AGREE (blank target artist = no confident match), and a
-     * known target duration more than 10 s from every hit = no
-     * confident match. Null → the caller falls back to the row's own
-     * iTunes preview audio instead of a wrong full track. JioSaavn and
-     * Spotify rows keep pickMatch unchanged.
-     */
-    suspend fun resolveItunesFullAudio(ctx: Context, song: GatewayClient.Song): GatewayClient.Song? =
-        withContext(Dispatchers.IO) {
-            try {
-                val t = normTitle(song.title)
-                if (t.isBlank() || normArtist(song.artist).isEmpty()) return@withContext null
-                val q = (song.title + " " + song.artist).trim()
-                val saavn = runCatching { searchSaavnList(q) }.getOrDefault(emptyList())
-                val pool = saavn.filter { normTitle(it.title) == t && artistAgrees(song.artist, it.artist) }
-                if (pool.isEmpty()) return@withContext null
-                val best = if (song.durationSec > 0) {
-                    val near = pool.filter { it.durationSec <= 0 || kotlin.math.abs(it.durationSec - song.durationSec) <= 10 }
-                    if (near.isEmpty()) return@withContext null
-                    near.minByOrNull { kotlin.math.abs(it.durationSec - song.durationSec) }
-                } else pool.first()
-                best?.let {
-                    song.copy(url = it.url,
-                        durationSec = if (it.durationSec > 0) it.durationSec else song.durationSec)
-                }
             } catch (e: Exception) { null }
         }
 

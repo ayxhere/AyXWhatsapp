@@ -3058,7 +3058,9 @@ app.post('/status/post', async (req, res) => {
       fs.writeFileSync(path.join(MEDIA_DIR, mediaName), buf)
       const meJid = (sock && sock.user && sock.user.id) || 'me'
       statuses = statuses.filter(x => !(x.mine && x.id === id))
-      statuses.unshift({ sender: meJid, name: 'My Status', mine: true, id, text: caption, ts: Date.now(), mediaName, mediaType: type === 'video' ? 'video' : 'image' })
+      // v276: official-style music sticker — the posted song's title/
+      // artist ride on the status so viewers see the sticker.
+      statuses.unshift({ sender: meJid, name: 'My Status', mine: true, id, text: caption, ts: Date.now(), mediaName, mediaType: type === 'video' ? 'video' : 'image', songTitle: String(req.body?.songTitle || ''), songArtist: String(req.body?.songArtist || '') })
       if (statuses.length > 120) statuses.length = 120
       saveStatusesDebounced()
     } catch (_) {}
@@ -3786,6 +3788,7 @@ app.get('/statuses', (req, res) => {
     const out = { sender: s.sender, name: s.name || '', text: s.text || '', ts: s.ts, mine: !!s.mine, id: s.id || '' }
     if (mn) out.media = { name: mn, type: mt, thumb: th }
     if (s.bg) out.bg = s.bg   // coloured text status background
+    if (s.songTitle) { out.songTitle = s.songTitle; out.songArtist = s.songArtist || '' }   // v276: music sticker
     return out
   })
   // SD2: deleted statuses ride along as tombstones (deleted:true, NO media) so

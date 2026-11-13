@@ -26,7 +26,6 @@ object Env {
     // ---- Music search ----
     const val JIOSAAVN_API = "https://www.jiosaavn.com/api.php"
     const val JIOSAAVN_REFERER = "https://www.jiosaavn.com/"
-    const val ITUNES_SEARCH_API = "https://itunes.apple.com/search"
     const val SPOTIFY_SEARCH_API = "https://api.spotify.com/v1/search"
     const val SPOTIFY_EMBED_TRACK = "https://open.spotify.com/embed/track/4uLU6hMCjMI75M1A2tKUQC"
 
