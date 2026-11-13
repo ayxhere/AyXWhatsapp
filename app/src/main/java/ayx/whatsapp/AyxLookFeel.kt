@@ -206,8 +206,32 @@ fun lookFeelScheme(
     dark: Boolean,
 ): ColorScheme {
     val base: ColorScheme = when {
-        materialYou && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
-            if (dark) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)
+        // v271 FIX (user: Material You toggle did nothing): the dynamic
+        // scheme must be returned as-is. The old code built it and then
+        // painted the palette over every visible role (primary, background,
+        // surface, containers), so the toggle looked dead. Material You
+        // overrides the palette while it is on — picking a palette turns
+        // it off again (LookFeelStore.setPalette). Only OLED keeps its
+        // pure-black backgrounds on top of the dynamic colors.
+        materialYou && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+            val dynamic = if (dark) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)
+            if (theme == "oled") {
+                return dynamic.copy(
+                    background = Color.Black,
+                    surface = Color.Black,
+                    surfaceVariant = Color(0xFF242328),
+                    surfaceContainerLowest = Color.Black,
+                    surfaceContainerLow = Color(0xFF0E0E12),
+                    surfaceContainer = Color(0xFF151519),
+                    surfaceContainerHigh = Color(0xFF1B1B20),
+                    surfaceContainerHighest = Color(0xFF242328),
+                    surfaceDim = Color.Black,
+                    surfaceBright = Color(0xFF303035),
+                    outlineVariant = Color(0xFF3A3A42),
+                )
+            }
+            return dynamic
+        }
         dark -> darkColorScheme()
         else -> lightColorScheme()
     }
@@ -279,6 +303,42 @@ fun lookFeelScheme(
         )
     }
     return scheme
+}
+
+// ── Cookie shape (Orion's 9-sided "cookie") ──────────────────────────
+// Original geometry for AyX: 9 rounded lobes around a circle. Used by
+// the splash blob and by the selected palette swatch morph. Rotation is
+// visible on it (unlike a plain circle), which is what makes Orion's
+// blob spring-open-while-turning read as motion.
+
+fun ayxCookiePath(size: Float): androidx.compose.ui.graphics.Path {
+    val path = androidx.compose.ui.graphics.Path()
+    val cx = size / 2f
+    val cy = size / 2f
+    val lobes = 9
+    val rOuter = size / 2f
+    val rInner = size * 0.44f
+    fun pt(i: Int): androidx.compose.ui.geometry.Offset {
+        val angle = (i * (360f / (lobes * 2)) - 90f) * (Math.PI / 180f).toFloat()
+        val r = if (i % 2 == 0) rOuter else rInner
+        return androidx.compose.ui.geometry.Offset(
+            cx + r * kotlin.math.cos(angle),
+            cy + r * kotlin.math.sin(angle),
+        )
+    }
+    val n = lobes * 2
+    val start = androidx.compose.ui.geometry.Offset(
+        (pt(0).x + pt(n - 1).x) / 2f,
+        (pt(0).y + pt(n - 1).y) / 2f,
+    )
+    path.moveTo(start.x, start.y)
+    for (i in 0 until n) {
+        val p = pt(i)
+        val next = pt((i + 1) % n)
+        path.quadraticBezierTo(p.x, p.y, (p.x + next.x) / 2f, (p.y + next.y) / 2f)
+    }
+    path.close()
+    return path
 }
 
 // ── Haptics ──────────────────────────────────────────────────────────────

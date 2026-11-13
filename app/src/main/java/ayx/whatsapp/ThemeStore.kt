@@ -22,7 +22,10 @@ object ThemeStore {
     val mode = mutableStateOf("system")
     // key into [accents]; "palette" = the Look & feel palette's primary
     // (resolved in accentColor() via LookFeelStore).
-    val accent = mutableStateOf("purple")
+    // v271 (user): the old Accent Color page is gone — palettes are the
+    // only accent now, so "palette" is the default and any stored named
+    // accent migrates to it on init.
+    val accent = mutableStateOf("palette")
     // status viewer top progress style: default | wavy | squiggly
     // (Settings → Appearance → Status style). Default stays "squiggly" so
     // the shipped look never changes unless the user switches it.
@@ -72,7 +75,11 @@ object ThemeStore {
         mode.value = prefs!!.getString("mode", "system") ?: "system"
         // v270: "dark" is a selectable mode again (Look & feel) — no more
         // migration to AMOLED. A stored "dark" now stays "dark".
-        accent.value = prefs!!.getString("accent", "purple") ?: "purple"
+        // v271: the Accent Color page is gone — any stored named accent
+        // ("purple", "blue", ...) migrates to "palette" so the Look &
+        // feel palette owns the accent from here on.
+        accent.value = "palette"
+        prefs!!.edit().putString("accent", "palette").apply()
         statusProgressStyle.value = prefs!!.getString("status_progress_style", "squiggly") ?: "squiggly"
         voiceNoteStyle.value = prefs!!.getString("voice_note_style", "default") ?: "default"
         // Migrate legacy appearance_style to UiStyleStore if present
