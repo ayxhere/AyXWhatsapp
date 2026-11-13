@@ -4971,8 +4971,11 @@ private fun bubbleSpec(fromMe: Boolean, dark: Boolean): Triple<Color, Color, Sha
     return base
 }
 
-private fun styleSpec(fromMe: Boolean, dark: Boolean, recvGrey: Color, recvText: Color): Triple<Color, Color, Shape> {
-    return when (ChatStyle.bubbleStyle.value) {
+// v272: style is a parameter (default = current) so the Chat Settings
+// preview cards can draw EVERY style's real shape/colors without
+// touching the live chat rendering path (bubbleSpec unchanged).
+private fun styleSpec(fromMe: Boolean, dark: Boolean, recvGrey: Color, recvText: Color, style: String = ChatStyle.bubbleStyle.value): Triple<Color, Color, Shape> {
+    return when (style) {
         "whatsapp" ->
             if (fromMe) Triple(if (dark) Color(0xFF005C4B) else Color(0xFFD9FDD3), if (dark) Color.White else Color.Black, RoundedCornerShape(8.dp, 8.dp, 2.dp, 8.dp))
             else Triple(if (dark) Color(0xFF202C33) else Color.White, recvText, RoundedCornerShape(8.dp, 8.dp, 8.dp, 2.dp))
@@ -6829,11 +6832,39 @@ private fun ChatSettings(onOpenWallpaper: () -> Unit) {
                 Surface(color = outSpec.first, shape = outSpec.third) { Text("Looks great 🎉", color = outSpec.second, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)) }
             }
         }
+        // v272: every style shows its REAL bubbles (shape + colors) in a
+        // preview card instead of a plain text chip — no more guessing
+        // what "iOS Tail" vs "GB style" looks like before tapping it.
+        val recvGrey = if (dark) Color(0xFF2C2C2E) else Color(0xFFE9E9EB)
+        val recvText = if (dark) Color.White else Color.Black
         Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             ChatStyle.bubbleStyles.chunked(2).forEach { row ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     row.forEach { (k, lbl) ->
-                        FilterChip(selected = ChatStyle.bubbleStyle.value == k, onClick = { ChatStyle.setBubble(k) }, label = { Text(lbl) }, modifier = Modifier.weight(1f))
+                        val isSel = ChatStyle.bubbleStyle.value == k
+                        val sent = styleSpec(true, dark, recvGrey, recvText, k)
+                        val recv = styleSpec(false, dark, recvGrey, recvText, k)
+                        Surface(
+                            modifier = Modifier.weight(1f).clickable { ChatStyle.setBubble(k) },
+                            shape = RoundedCornerShape(18.dp),
+                            color = if (isSel) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f) else MaterialTheme.colorScheme.surface,
+                            border = androidx.compose.foundation.BorderStroke(if (isSel) 2.dp else 1.dp, if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
+                        ) {
+                            Box {
+                                Column(Modifier.padding(horizontal = 10.dp, vertical = 10.dp)) {
+                                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                        Surface(color = recv.first, shape = recv.third) { Text("Hey", color = recv.second, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) }
+                                        Spacer(Modifier.weight(1f))
+                                        Surface(color = sent.first, shape = sent.third) { Text("Hi", color = sent.second, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) }
+                                    }
+                                    Spacer(Modifier.height(6.dp))
+                                    Text(lbl, style = MaterialTheme.typography.labelLarge, fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Normal, color = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                                }
+                                if (isSel) Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(20.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) {
+                                    AyxIcon(Icons.Filled.Done, "selected", tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(12.dp))
+                                }
+                            }
+                        }
                     }
                     if (row.size == 1) Spacer(Modifier.weight(1f))
                 }
@@ -6895,8 +6926,13 @@ private fun BubbleColorRow(selected: Int, onPick: (Int) -> Unit) {
         ChatStyle.bubblePalette.forEach { argb ->
             val isSel = selected == argb
             val ring = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)
+            // v272: selected swatch pops (v271 overshoot spring); 44dp
+            // targets; trailing spacer stops the last swatch being
+            // clipped half off-screen (the user's screenshot).
+            val pop by animateFloatAsState(if (isSel) 1.12f else 1f,
+                animationSpec = spring(dampingRatio = 0.55f, stiffness = 320f), label = "bubbleSwatchPop")
             Box(
-                Modifier.size(38.dp).clip(CircleShape)
+                Modifier.size(44.dp).graphicsLayer { scaleX = pop; scaleY = pop }.clip(CircleShape)
                     .background(if (argb == 0) MaterialTheme.colorScheme.surfaceVariant else Color(argb))
                     .border(if (isSel) 3.dp else 1.dp, ring, CircleShape)
                     .clickable { onPick(argb) },
@@ -6906,6 +6942,7 @@ private fun BubbleColorRow(selected: Int, onPick: (Int) -> Unit) {
                 else if (isSel) AyxIcon(Icons.Filled.Done, "selected", tint = ChatStyle.textOn(argb), modifier = Modifier.size(18.dp))
             }
         }
+        Spacer(Modifier.width(16.dp))
     }
 }
 
@@ -12235,6 +12272,85 @@ private fun MusicSearchSheet(initialQuery: String = "", autoFocus: Boolean = fal
 }
 
 @Composable
+// v272: REAL waveform amplitudes — decodes the audio file (MediaExtractor
+// + MediaCodec) and returns RMS per bucket, normalized to 0.18..1. Runs
+// off the UI thread with a 20s guard; ANY failure returns null and the
+// trimmer keeps the seeded fallback bars, so a bad URL can never break
+// trimming. Codec/extractor are always released (try/finally).
+private suspend fun ayxWaveformBars(url: String, count: Int): FloatArray? = withContext(Dispatchers.IO) {
+    var extractor: android.media.MediaExtractor? = null
+    var codec: android.media.MediaCodec? = null
+    try {
+        extractor = android.media.MediaExtractor()
+        extractor.setDataSource(url)
+        var track = -1
+        var format: android.media.MediaFormat? = null
+        for (i in 0 until extractor.trackCount) {
+            val f = extractor.getTrackFormat(i)
+            if ((f.getString(android.media.MediaFormat.KEY_MIME) ?: "").startsWith("audio/")) { track = i; format = f; break }
+        }
+        if (track < 0 || format == null) return@withContext null
+        val mime = format.getString(android.media.MediaFormat.KEY_MIME) ?: return@withContext null
+        val durationUs = try { format.getLong(android.media.MediaFormat.KEY_DURATION) } catch (_: Exception) { 0L }
+        if (durationUs <= 0L) return@withContext null
+        extractor.selectTrack(track)
+        codec = android.media.MediaCodec.createDecoderByType(mime)
+        codec.configure(format, null, null, 0)
+        codec.start()
+        val buckets = DoubleArray(count)
+        val bucketSamples = LongArray(count)
+        val info = android.media.MediaCodec.BufferInfo()
+        val deadline = android.os.SystemClock.uptimeMillis() + 20000L
+        var inputEos = false
+        var outputEos = false
+        while (!outputEos && android.os.SystemClock.uptimeMillis() < deadline) {
+            if (!inputEos) {
+                val inIdx = codec.dequeueInputBuffer(10000L)
+                if (inIdx >= 0) {
+                    val inBuf = codec.getInputBuffer(inIdx)
+                    if (inBuf == null) { codec.queueInputBuffer(inIdx, 0, 0, 0, android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM); inputEos = true }
+                    else {
+                        val n = extractor.readSampleData(inBuf, 0)
+                        if (n < 0) { codec.queueInputBuffer(inIdx, 0, 0, 0, android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM); inputEos = true }
+                        else { codec.queueInputBuffer(inIdx, 0, n, extractor.sampleTime, 0); extractor.advance() }
+                    }
+                }
+            }
+            val outIdx = codec.dequeueOutputBuffer(info, 10000L)
+            if (outIdx >= 0) {
+                val outBuf = codec.getOutputBuffer(outIdx)
+                if (outBuf != null && info.size > 0) {
+                    val bi = ((info.presentationTimeUs.toDouble() / durationUs) * count).toInt().coerceIn(0, count - 1)
+                    outBuf.order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                    val samples = info.size / 2
+                    var sum = 0.0
+                    var s = 0
+                    while (s < samples) {
+                        val v = outBuf.getShort(info.offset + s * 2).toDouble() / 32768.0
+                        sum += v * v
+                        s++
+                    }
+                    buckets[bi] += sum
+                    bucketSamples[bi] += samples.toLong()
+                }
+                codec.releaseOutputBuffer(outIdx, false)
+                if (info.flags and android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) outputEos = true
+            }
+        }
+        if (bucketSamples.sum() == 0L) return@withContext null
+        val rms = DoubleArray(count) { i -> if (bucketSamples[i] > 0) kotlin.math.sqrt(buckets[i] / bucketSamples[i]) else 0.0 }
+        val peak = rms.maxOrNull() ?: 0.0
+        if (peak <= 0.0) return@withContext null
+        FloatArray(count) { i -> (0.18f + 0.82f * (rms[i] / peak)).toFloat().coerceIn(0.12f, 1f) }
+    } catch (_: Exception) {
+        null
+    } finally {
+        runCatching { codec?.stop() }
+        runCatching { codec?.release() }
+        runCatching { extractor?.release() }
+    }
+}
+
 private fun AudioTrimmer(song: GatewayClient.Song, initialStart: Long = 0L, initialEnd: Long = 0L, onDone: (Long, Long, List<Pair<Long, String>>) -> Unit, onCancel: () -> Unit) {
     val player = remember { MediaPlayer() }
     val scope = rememberCoroutineScope()
@@ -12260,7 +12376,16 @@ private fun AudioTrimmer(song: GatewayClient.Song, initialStart: Long = 0L, init
     // unchanged — it always accepted a duration; it now receives the true one.)
     var lyricsFetchDurSec by remember { mutableStateOf(song.durationSec) }
     var manualOpen by remember { mutableStateOf(false) }
-    val bars = remember(song.url) { val r = java.util.Random(song.url.hashCode().toLong()); FloatArray(64) { 0.22f + r.nextFloat() * 0.78f } }
+    // v272: the waveform is REAL now — decoded amplitudes from the file
+    // (ayxWaveformBars); the seeded random bars are only the first-paint
+    // fallback until the decode lands.
+    val fakeBars = remember(song.url) { val r = java.util.Random(song.url.hashCode().toLong()); FloatArray(64) { 0.22f + r.nextFloat() * 0.78f } }
+    var realBars by remember { mutableStateOf<FloatArray?>(null) }
+    LaunchedEffect(song.url) {
+        realBars = null
+        realBars = ayxWaveformBars(song.url, 64)
+    }
+    val bars = realBars ?: fakeBars
     DisposableEffect(Unit) {
         runCatching {
             player.setDataSource(song.url)
@@ -12352,11 +12477,13 @@ private fun AudioTrimmer(song: GatewayClient.Song, initialStart: Long = 0L, init
                 }
                 Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { if (playing) { runCatching { player.pause() }; playing = false } else runCatching { player.seekTo(startMs.toInt()); posMs = startMs; player.start(); playing = true } }, enabled = ready) {
-                        AyxIcon(if (playing) Icons.Filled.Close else Icons.Filled.PlayArrow, "play", tint = IOS_BLUE)
+                        AyxIcon(if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "play", tint = IOS_BLUE)
                     }
-                    Text(fmtMs(posMs - startMs) + " / " + fmtMs(endMs - startMs), color = Color.White, style = MaterialTheme.typography.labelMedium)
+                    Text(fmtMs(posMs) + " / " + fmtMs(durationMs), color = Color.White, style = MaterialTheme.typography.labelMedium)
                 }
-                WaveformTrimmer(bars, durationMs, startMs, endMs, posMs) { ns, ne ->
+                // v272: edge handles ON — the song trimmer can resize the
+                // window from its edges now, not just slide it around.
+                WaveformTrimmer(bars, durationMs, startMs, endMs, posMs, edgeHandles = true) { ns, ne ->
                     startMs = ns; endMs = ne
                     // The preview FOLLOWS the window the moment it moves:
                     // seek the player onto the new window start and put
@@ -12385,11 +12512,11 @@ private fun AudioTrimmer(song: GatewayClient.Song, initialStart: Long = 0L, init
                             // preview/playhead goes with it immediately.
                             if (ready) { runCatching { player.seekTo(startMs.toInt()) }; posMs = startMs }
                         }, valueRange = 5000f..maxLen.toFloat(), modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
-                        colors = SliderDefaults.colors(thumbColor = IOS_BLUE, activeTrackColor = IOS_BLUE))
+                        colors = SliderDefaults.colors(thumbColor = IOS_BLUE, activeTrackColor = IOS_BLUE, inactiveTrackColor = Color.White.copy(alpha = 0.25f)))
                         Text(fmtMs(selLen), color = Color.White, style = MaterialTheme.typography.labelMedium)
                     }
                 }
-                Text(fmtMs(startMs) + "  →  " + fmtMs(endMs) + "   •   swipe the waveform to move", color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
+                Text(fmtMs(startMs) + "  →  " + fmtMs(endMs) + "   •   drag edges to trim, swipe to move", color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
             }
         }
         if (manualOpen) ManualLyricsDialog(
