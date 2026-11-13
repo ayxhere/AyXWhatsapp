@@ -7043,10 +7043,17 @@ private fun LookFeelScreen(onOpenFont: () -> Unit) {
                                 }
                             }
                             if (sel) {
+                                // v271 fix #625: MaterialTheme.colorScheme is
+                                // @Composable — it may NOT be called inside a
+                                // Canvas draw lambda (non-composable scope), so
+                                // the color is read here and captured. translate
+                                // is a drawscope top-level fun — call it fully
+                                // qualified like Stroke below (no import).
+                                val primary = MaterialTheme.colorScheme.primary
                                 Canvas(Modifier.matchParentSize()) {
                                     val s = size.minDimension - 6.dp.toPx()
-                                    translate(3.dp.toPx(), 3.dp.toPx()) {
-                                        drawPath(ayxCookiePath(s), color = MaterialTheme.colorScheme.primary,
+                                    androidx.compose.ui.graphics.drawscope.translate(3.dp.toPx(), 3.dp.toPx()) {
+                                        drawPath(ayxCookiePath(s), color = primary,
                                             style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx()))
                                     }
                                 }
