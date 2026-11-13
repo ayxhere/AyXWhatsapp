@@ -1288,7 +1288,6 @@ fun PrivacyGate(onAgree: () -> Unit) {
 }
 
 // Smooth launch splash: gradient logo scales in over a soft breathing glow, name + three-dot pulse, then fades out.
-@Composable
 // v270 Look & feel (Orion-style splash, AX mark): staged pop-in — the
 // logo springs in with overshoot, name + dots fade a beat later — then a
 // 320ms exit where the logo scales to 1.6x while the whole splash fades
@@ -1347,6 +1346,7 @@ private fun rememberAyxTapCenter(): Pair<Modifier, () -> Offset> {
     return modifier to { center }
 }
 
+@Composable
 private fun SplashScreen(onDone: () -> Unit) {
     val ctx = LocalContext.current
     val calm = LookFeelStore.isCalm(ctx)
@@ -2483,6 +2483,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
         // render path on every remount (same class as the v268 fixes).
         Box(Modifier.fillMaxSize().then(if (homeBlur > 0.dp) Modifier.blur(homeBlur) else Modifier)) {
         if (openChat != null && status.registered) {
+            val ocChat = openChat!!
             // ===== Edge-to-edge chat: wallpaper + messages full-bleed, floating glass header on top =====
             // isChat = fade-only: a scale transition here lays old + new
             // chat out together (overlapping bubbles, ghost input text).
@@ -2490,12 +2491,12 @@ fun GatewayApp(updateBlur: Boolean = false) {
             // the slot's chat id, not the live openChat, so a direct chat
             // switch never double-attaches one chat's list state.
             AyxAnimatedScreen<String>(targetState = "chat|${openChat!!}", isChat = true) { slot ->
-            val ocChat = slot.removePrefix("chat|")
+            val slotChat = slot.removePrefix("chat|")
             ChatDetail(
-                chat = ocChat,
-                messages = messages.filter { it.chat == ocChat } + vvLocal.filter { it.chat == ocChat },
-                optimistic = optimistic.filter { it.chat == ocChat },
-                uploading = uploading.filter { it.chat == ocChat },
+                chat = slotChat,
+                messages = messages.filter { it.chat == slotChat } + vvLocal.filter { it.chat == slotChat },
+                optimistic = optimistic.filter { it.chat == slotChat },
+                uploading = uploading.filter { it.chat == slotChat },
                 // Send stays enabled when disconnected — the message is
                 // queued (banner + retry) instead of being blocked or
                 // faked as sent. Only a logged-out session blocks sends
@@ -2562,19 +2563,19 @@ fun GatewayApp(updateBlur: Boolean = false) {
                         val speakText = SarvamTts.extractText(text)
                         val ts = System.currentTimeMillis()
                         // 1) keep ".vv <text>" locally only (never sent)
-                        vvLocal.add(GatewayClient.Msg(ocChat, "", true, text.trim(), ts))
-                        VvLocal.add(ctx, ocChat, text.trim(), ts)
+                        vvLocal.add(GatewayClient.Msg(slotChat, "", true, text.trim(), ts))
+                        VvLocal.add(ctx, slotChat, text.trim(), ts)
                         // 2) gateway makes the voice + sends ONLY the voice note
                         scope.launch {
                             try {
                                 notify("Voice bana raha hai...")
-                                GatewayClient.sendVoice(ocChat, speakText)
+                                GatewayClient.sendVoice(slotChat, speakText)
                                 notify("Voice bheja gaya")
                             } catch (e: Exception) { notify("VV error: " + e.message) }
                         }
                     } else {
                     val ts = System.currentTimeMillis()
-                    val opt = OptMsg(ocChat, text, ts)
+                    val opt = OptMsg(slotChat, text, ts)
                     optimistic.add(opt)
                     scope.launch {
                         // Make sure the gateway is up before sending —
@@ -2587,7 +2588,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
                         // attempts AND the later queue flush, so the
                         // gateway dedupes instead of delivering twice.
                         val mid = GatewayClient.newClientMsgId()
-                        when (val r = GatewayClient.sendTextReliable(ocChat, text, clientMsgId = mid)) {
+                        when (val r = GatewayClient.sendTextReliable(slotChat, text, clientMsgId = mid)) {
                             is GatewayClient.SendOutcome.Sent -> {
                                 // Don't wait for the next poll cycle — pull messages NOW so the
                                 // optimistic bubble swaps to the real one (with ticks) in ~1s
@@ -2596,10 +2597,10 @@ fun GatewayApp(updateBlur: Boolean = false) {
                             }
                             is GatewayClient.SendOutcome.Queued -> {
                                 optimistic.remove(opt)
-                                SendQueue.enqueue(ctx, ocChat, text, null, mid)
+                                SendQueue.enqueue(ctx, slotChat, text, null, mid)
                                 // Keep the message visible but marked
                                 // queued — never fake it as sent.
-                                optimistic.add(OptMsg(ocChat, text, ts, queued = true))
+                                optimistic.add(OptMsg(slotChat, text, ts, queued = true))
                                 notify("Connecting… message queued — will send when reconnected")
                             }
                             is GatewayClient.SendOutcome.NeedRelogin -> {
@@ -2625,20 +2626,20 @@ fun GatewayApp(updateBlur: Boolean = false) {
                 onCamera = { openCamera() },
                 onReplySend = { text, qid, qtext ->
                     val ts = System.currentTimeMillis()
-                    val opt = OptMsg(ocChat, text, ts, qtext)
+                    val opt = OptMsg(slotChat, text, ts, qtext)
                     optimistic.add(opt)
                     scope.launch {
                         withContext(Dispatchers.IO) { NodeRuntime.ensureStarted(ctx.applicationContext) }
                         val mid = GatewayClient.newClientMsgId()
-                        when (val r = GatewayClient.sendTextReliable(ocChat, text, qid, clientMsgId = mid)) {
+                        when (val r = GatewayClient.sendTextReliable(slotChat, text, qid, clientMsgId = mid)) {
                             is GatewayClient.SendOutcome.Sent -> {
                                 // Immediate refresh — see onSend above.
                                 runCatching { messages = GatewayClient.getMessages() }
                             }
                             is GatewayClient.SendOutcome.Queued -> {
                                 optimistic.remove(opt)
-                                SendQueue.enqueue(ctx, ocChat, text, qid, mid)
-                                optimistic.add(OptMsg(ocChat, text, ts, qtext, queued = true))
+                                SendQueue.enqueue(ctx, slotChat, text, qid, mid)
+                                optimistic.add(OptMsg(slotChat, text, ts, qtext, queued = true))
                                 notify("Connecting… message queued — will send when reconnected")
                             }
                             is GatewayClient.SendOutcome.NeedRelogin -> {
@@ -2662,7 +2663,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
                 previewCache = previewCache,
                 dpCache = dpCache,
                 wallpaper = chatWp,
-                queuedCount = optimistic.count { it.chat == ocChat && it.queued },
+                queuedCount = optimistic.count { it.chat == slotChat && it.queued },
                 onRetryQueued = { scope.launch {
                     val delivered = GatewayClient.flushSendQueue(ctx)
                     delivered.forEach { q -> optimistic.removeAll { it.chat == q.jid && it.text == q.text && it.ts == q.ts } }
