@@ -1854,6 +1854,11 @@ fun GatewayApp(updateBlur: Boolean = false) {
     var searchMode by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var chatPresence by remember { mutableStateOf<GatewayClient.Presence?>(null) }
+    // v278: presence for the CHAT LIST rows (1:1 chats only) — a slow rotation
+    // poll, one JID per 1.5 s, so each row can show online / last seen next
+    // to the name without hammering the gateway. Hoisted here (not in the
+    // list) so it survives chat open/close — rows fill in as data arrives.
+    val listPresence = remember { mutableStateMapOf<String, GatewayClient.Presence>() }
     val blkPrefs = remember { ctx.getSharedPreferences("wagw", Context.MODE_PRIVATE) }
     LaunchedEffect(Unit) {
         ChatFlags.prefs = blkPrefs
@@ -1872,6 +1877,25 @@ fun GatewayApp(updateBlur: Boolean = false) {
             // v276: 2 s, not 5 s — typing bursts last ~5–10 s, a 5 s poll
             // could miss one entirely or show it long after it stopped.
             while (openChat == c) { chatPresence = GatewayClient.getPresence(c); delay(2000) }
+        }
+    }
+    // v278: chat-list presence rotation — runs only while the list is
+    // visible (openChat == null). Most-recent 1:1 chats first, one request
+    // per 1.5 s so the gateway sees the same load as the open-chat poll.
+    // A full cycle for 40 chats is ~60 s + 5 s pause; online/offline and
+    // last seen change slowly, so that freshness is enough for the list.
+    LaunchedEffect(openChat) {
+        while (openChat == null) {
+            val targets = messages.groupBy { it.chat }
+                .filterKeys { it.endsWith("@s.whatsapp.net") }
+                .mapValues { (_, ms) -> ms.maxOf { it.ts } }
+                .entries.sortedByDescending { it.value }.take(40).map { it.key }
+            for (jid in targets) {
+                if (openChat != null) break
+                runCatching { listPresence[jid] = GatewayClient.getPresence(jid) }
+                delay(1500)
+            }
+            delay(5000)
         }
     }
     // apply a pending deep-link/notification chat ONLY once WhatsApp is registered,
@@ -2715,6 +2739,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
                 onSelectionActions = { selActions = it },
                 searchOpen = chatSearchOpen,
                 onSearchOpenChange = { chatSearchOpen = it },
+                presence = chatPresence,
             )
             }
             val ocBlocked = ocChat in blockedJids
@@ -2822,6 +2847,7 @@ fun GatewayApp(updateBlur: Boolean = false) {
                     onSaveName = { n -> scope.launch { runCatching { GatewayClient.setProfileName(n) }.onSuccess { notify("name updated") }.onFailure { notify("name: ${it.message}") } } }) }
                 else -> ChatsWithStatus(messages, chats, statuses, dpCache, searchQuery, chatsPage, topInset = pad.calculateTopPadding(),
                     ayxSnippet = ayxSnippet,
+                    listPresence = listPresence,
                     searchMode = searchMode,
                     onSearchQuery = { searchQuery = it },
                     chatListState = homeChatListState,
@@ -3173,7 +3199,7 @@ private object HomeCascadeKey { val key: Long = System.nanoTime(); val at: Long 
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChatList(messages: List<GatewayClient.Msg>, chats: List<GatewayClient.ChatInfo> = emptyList(), dpCache: MutableMap<String, ImageBitmap?>, query: String, contentPad: androidx.compose.foundation.layout.PaddingValues, ayxSnippet: String, onToggleReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit, listState: LazyListState, clearedUnread: Map<String, Long> = emptyMap()) {
+private fun ChatList(messages: List<GatewayClient.Msg>, chats: List<GatewayClient.ChatInfo> = emptyList(), dpCache: MutableMap<String, ImageBitmap?>, query: String, contentPad: androidx.compose.foundation.layout.PaddingValues, ayxSnippet: String, onToggleReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit, listState: LazyListState, clearedUnread: Map<String, Long> = emptyMap(), listPresence: Map<String, GatewayClient.Presence> = emptyMap()) {
     // MERGED chat list (BUG FIX: rows used to come ONLY from messages, so
     // chats with no recent messages never appeared — fewer chats than the
     // original WhatsApp). Union of message-derived chats + gateway /chats.
@@ -3253,6 +3279,23 @@ private fun ChatList(messages: List<GatewayClient.Msg>, chats: List<GatewayClien
                         Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                             Text(name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, false))
                             if (ChatFlags.isMuted(entry.jid) || entry.info?.muted == true) { Spacer(Modifier.width(5.dp)); AyxIcon(Icons.Filled.NotificationsOff, "muted", modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+                            // v278: presence next to the name (1:1 chats only) —
+                            // online / typing / recording in green, last seen in grey.
+                            // No presence data yet → nothing, like original WhatsApp.
+                            if (!entry.isGroup) {
+                                listPresence[entry.jid]?.let { pr ->
+                                    val ptxt = when (pr.state) {
+                                        "composing" -> "typing..."
+                                        "recording" -> "recording..."
+                                        else -> if (pr.online) "online" else if (pr.lastSeen > 0) "last seen " + fmt(pr.lastSeen * 1000) else ""
+                                    }
+                                    if (ptxt.isNotEmpty()) {
+                                        Spacer(Modifier.width(5.dp))
+                                        Text(ptxt, style = MaterialTheme.typography.labelSmall, maxLines = 1,
+                                            color = if (pr.state == "composing" || pr.state == "recording" || pr.online) AYX_GREEN else MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
                         }
                         // No-message chats have no time yet — show nothing,
                         // never a 1970 epoch date.
@@ -3486,6 +3529,33 @@ private fun loadChatPos(ctx: Context, chat: String): Pair<String, Long>? {
 /** U2: actions ChatDetail hands up so the glass header can drive selection mode. */
 private data class SelActions(val selectAll: () -> Unit, val deleteSelected: () -> Unit)
 
+// v278: animated 3-dot typing bubble — shown above the type box (left side)
+// while the other side is composing. Dots fade in sequence via an infinite
+// transition; the bubble itself is a small surface-variant pill.
+@Composable
+private fun TypingDotsBubble() {
+    val transition = rememberInfiniteTransition(label = "typingDots")
+    Row(
+        Modifier.padding(top = 2.dp, bottom = 2.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.9f))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        repeat(3) { i ->
+            val alpha by transition.animateFloat(
+                initialValue = 0.25f, targetValue = 1f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(600, delayMillis = i * 180, easing = FastOutSlowInEasing),
+                    repeatMode = RepeatMode.Reverse
+                ), label = "typingDot$i"
+            )
+            Box(Modifier.size(7.dp).clip(CircleShape).background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha)))
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChatDetail(
@@ -3528,6 +3598,8 @@ private fun ChatDetail(
     /** In-chat message search bar visibility (hoisted — opened from the glass header's 3-dot "Search"). */
     searchOpen: Boolean = false,
     onSearchOpenChange: (Boolean) -> Unit = {},
+    /** v278: presence of the open chat — drives the typing bubble above the composer. */
+    presence: GatewayClient.Presence? = null,
 ) {
     val clipboard = LocalClipboardManager.current
     val ctx = LocalContext.current
@@ -4086,6 +4158,14 @@ private fun ChatDetail(
                 Text("⏳ $queuedCount message(s) queued — will send when reconnected", style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.weight(1f))
                 TextButton(onClick = onRetryQueued) { Text("Retry now") }
+            }
+        }
+        // v278: typing bubble above the type box, left side — shows while the
+        // other side is composing. Animated 3-dot bubble; recording stays
+        // header-only (it already shows "recording..." there).
+        if (presence?.state == "composing") {
+            Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 2.dp)) {
+                TypingDotsBubble()
             }
         }
         Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp).animateContentSize()
@@ -8814,7 +8894,7 @@ private fun NewChatScreen(contacts: List<DeviceContact>, loading: Boolean, dpCac
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, chats: List<GatewayClient.ChatInfo> = emptyList(), statuses: List<GatewayClient.StatusItem>, dpCache: MutableMap<String, ImageBitmap?>, query: String, page: Int, topInset: androidx.compose.ui.unit.Dp, ayxSnippet: String, onPageChange: (Int) -> Unit, onLoadStatuses: () -> Unit, onOpenStatus: (GatewayClient.StatusItem) -> Unit, onToggleStatusReveal: () -> Unit, onToggleChatReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit, chatListState: LazyListState, clearedUnread: Map<String, Long> = emptyMap(), updateBlur: Boolean = false, searchMode: Boolean = false, onSearchQuery: (String) -> Unit = {}) {
+private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, chats: List<GatewayClient.ChatInfo> = emptyList(), statuses: List<GatewayClient.StatusItem>, dpCache: MutableMap<String, ImageBitmap?>, query: String, page: Int, topInset: androidx.compose.ui.unit.Dp, ayxSnippet: String, onPageChange: (Int) -> Unit, onLoadStatuses: () -> Unit, onOpenStatus: (GatewayClient.StatusItem) -> Unit, onToggleStatusReveal: () -> Unit, onToggleChatReveal: () -> Unit, onDelete: (String) -> Unit, onOpen: (String) -> Unit, chatListState: LazyListState, clearedUnread: Map<String, Long> = emptyMap(), updateBlur: Boolean = false, searchMode: Boolean = false, onSearchQuery: (String) -> Unit = {}, listPresence: Map<String, GatewayClient.Presence> = emptyMap()) {
     val pager = rememberPagerState(initialPage = page) { 2 }
     // content scrolls BEHIND the glass header (topInset) and the floating bottom nav (bottom)
     val contentPad = androidx.compose.foundation.layout.PaddingValues(top = topInset + 6.dp, bottom = 118.dp)
@@ -8915,10 +8995,10 @@ private fun ChatsWithStatus(messages: List<GatewayClient.Msg>, chats: List<Gatew
                             }
                         }
                         Box(Modifier.weight(1f)) {
-                            ChatList(messages, chats, dpCache, query, androidx.compose.foundation.layout.PaddingValues(top = 6.dp, bottom = 118.dp), ayxSnippet, onToggleChatReveal, onDelete, onOpen, chatListState, clearedUnread)
+                            ChatList(messages, chats, dpCache, query, androidx.compose.foundation.layout.PaddingValues(top = 6.dp, bottom = 118.dp), ayxSnippet, onToggleChatReveal, onDelete, onOpen, chatListState, clearedUnread, listPresence)
                         }
                     }
-                } else ChatList(messages, chats, dpCache, query, contentPad, ayxSnippet, onToggleChatReveal, onDelete, onOpen, chatListState, clearedUnread)
+                } else ChatList(messages, chats, dpCache, query, contentPad, ayxSnippet, onToggleChatReveal, onDelete, onOpen, chatListState, clearedUnread, listPresence)
             }
             else StatusScreen(statuses, contentPad, onOpenStatus, dpCache, onToggleStatusReveal)
         }
